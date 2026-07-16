@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" role="img" aria-labelledby="title desc">
+  <title id="title">Attune logo concept sheet</title>
+  <desc id="desc">Three alternate logo concepts for Attune.</desc>
+  <rect width="960" height="360" fill="#141414" />
+
+  <defs>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#000000" flood-opacity="0.3" />
+    </filter>
+  </defs>
+
+  <g font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+    <g transform="translate(64 40)">
+      <rect width="240" height="240" rx="36" fill="#d5c38d" filter="url(#soft-shadow)" />
+      <g fill="none" stroke="#15140f" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M73 174 120 66l47 108" stroke-width="20" />
+        <path d="M92 134h39" stroke-width="14" />
+        <circle cx="154" cy="134" r="15" fill="#d5c38d" stroke-width="10" />
+      </g>
+      <text x="120" y="294" fill="#f1ead8" font-size="18" font-weight="750" text-anchor="middle">A Monogram</text>
+      <text x="120" y="319" fill="#aaa08d" font-size="13" text-anchor="middle">brand-first, tiny-size friendly</text>
+    </g>
+
+    <g transform="translate(360 40)">
+      <rect width="240" height="240" rx="36" fill="#d5c38d" filter="url(#soft-shadow)" />
+      <g fill="none" stroke="#15140f" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M89 76 54 120l35 44" stroke-width="14" />
+        <path d="m151 76 35 44-35 44" stroke-width="14" />
+        <path d="M82 122c17 0 17-39 34-39s17 78 34 78 17-39 34-39" stroke-width="14" />
+      </g>
+      <text x="120" y="294" fill="#f1ead8" font-size="18" font-weight="750" text-anchor="middle">Signal Brackets</text>
+      <text x="120" y="319" fill="#aaa08d" font-size="13" text-anchor="middle">code + resonance, less settings-y</text>
+    </g>
+
+    <g transform="translate(656 40)">
+      <rect width="240" height="240" rx="36" fill="#d5c38d" filter="url(#soft-shadow)" />
+      <g fill="none" stroke="#15140f" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M76 72h88c16 0 29 13 29 29v68H76z" stroke-width="13" />
+        <path d="M77 102h115" stroke-width="13" />
+        <path d="M119 123v48" stroke-width="16" />
+        <path d="M99 123v-20m40 20v-20" stroke-width="16" />
+        <circle cx="120" cy="184" r="12" fill="#15140f" stroke="none" />
+      </g>
+      <text x="120" y="294" fill="#f1ead8" font-size="18" font-weight="750" text-anchor="middle">Tuning Window</text>
+      <text x="120" y="319" fill="#aaa08d" font-size="13" text-anchor="middle">desktop app + calibration</text>
+    </g>
+  </g>
+</svg>

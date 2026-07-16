@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="attune-logo-title">
+  <title id="attune-logo-title">Attune logo</title>
+  <g fill="none" stroke="#15140f" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M93 59 47 128l46 69" stroke-width="16" />
+    <path d="m163 59 46 69-46 69" stroke-width="16" />
+
+    <path d="M91 94h24m25 0h25" stroke-width="8" />
+    <circle cx="127" cy="94" r="12" stroke-width="7" />
+
+    <path d="M91 128h45m25 0h4" stroke-width="8" />
+    <circle cx="149" cy="128" r="12" stroke-width="7" />
+
+    <path d="M91 162h7m25 0h42" stroke-width="8" />
+    <circle cx="110" cy="162" r="12" stroke-width="7" />
+  </g>
+</svg>

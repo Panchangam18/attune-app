@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="attune-waveform-title">
+  <title id="attune-waveform-title">Attune waveform brackets logo concept</title>
+  <rect width="256" height="256" rx="48" fill="#d5c38d" />
+  <g fill="#15140f">
+    <path d="M92 58 43 128l49 70-16-70z" />
+    <path d="m164 58 49 70-49 70 16-70z" />
+  </g>
+  <g fill="none" stroke="#15140f" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M76 128c20 0 19-30 40-30 27 0 14 62 42 62 20 0 19-32 39-32" stroke-width="15" />
+  </g>
+</svg>

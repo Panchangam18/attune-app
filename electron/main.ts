@@ -1,0 +1,664 @@
+import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import type {
+  ActionResult,
+  AttuneAppInfo,
+  EnvironmentInfo,
+  RuntimeKind,
+  SessionStatus,
+  Snapshot,
+  ThemeAdapterInfo,
+  ThemeInfo,
+  ThemeProfile,
+  ThemeTargetStatus,
+} from './types.js';
+
+interface DiscoveredApp {
+  name: string;
+  path: string;
+  bundleId: string | null;
+  runtime: RuntimeKind;
+}
+
+interface SessionRecord {
+  appId: string;
+  appPath: string;
+  appPid?: number;
+  port: number;
+  status: Exclude<SessionStatus, 'none'>;
+  targetCount: number;
+  updatedAt: string;
+  watcherPid: number;
+}
+
+interface ScanModule {
+  scanForSupportedApps(): DiscoveredApp[];
+  getAppId(appInfo: DiscoveredApp): string;
+  getAppExecutablePath(appInfo: DiscoveredApp): string;
+}
+
+interface ConfigModule {
+  setStylesheetSource(appId: string, sourcePath: string, css: string): void;
+}
+
+interface SessionModule {
+  getSession(appId: string): SessionRecord | null;
+  stopSession(appId: string): boolean;
+}
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const devServerUrl = process.env.ATTUNE_APP_DEV_SERVER_URL;
+const DEFAULT_THEME_ID = 'arrakis';
+const PROFILE_TARGET_APP_NAMES = ['ChatGPT', 'Visual Studio Code', 'Spotify', 'Slack'];
+const AUTO_WRAP_INTERVAL_MS = 2000;
+const AUTO_WRAP_COOLDOWN_MS = 15000;
+
+let mainWindow: BrowserWindow | null = null;
+let autoWrapTimer: NodeJS.Timeout | null = null;
+const wrappingAppIds = new Set<string>();
+const lastWrapAtByAppId = new Map<string, number>();
+const iconDataUrlByAppPath = new Map<string, Promise<string | null>>();
+
+app.whenReady().then(() => {
+  registerIpc();
+  createWindow();
+  startAutoWrapMonitor();
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
+
+function createWindow(): void {
+  mainWindow = new BrowserWindow({
+    width: 1180,
+    height: 760,
+    minWidth: 960,
+    minHeight: 620,
+    title: 'Attune',
+    backgroundColor: '#141414',
+    titleBarStyle: 'hiddenInset',
+    webPreferences: {
+      preload: join(__dirname, 'preload.cjs'),
+    },
+  });
+
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    console.log(`[renderer:${level}] ${message}`);
+  });
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[renderer] process gone', details);
+  });
+
+  if (devServerUrl) {
+    void mainWindow.loadURL(devServerUrl);
+  } else {
+    void mainWindow.loadFile(join(__dirname, '..', 'dist', 'index.html'));
+  }
+}
+
+function registerIpc(): void {
+  ipcMain.handle('attune:snapshot', async (): Promise<ActionResult<Snapshot>> => wrap(() => getSnapshot()));
+  ipcMain.handle('attune:build-runtime', async (): Promise<ActionResult<string>> => wrap(() => buildRuntime()));
+  ipcMain.handle('attune:apply-theme', async (_event, payload: { appId: string; themeId: string }) => (
+    wrap(() => applyTheme(payload.appId, payload.themeId))
+  ));
+  ipcMain.handle('attune:set-profile-enabled', async (_event, payload: { themeId: string; enabled: boolean }) => (
+    wrap(() => setProfileEnabled(payload.themeId, payload.enabled))
+  ));
+  ipcMain.handle('attune:set-auto-wrap-enabled', async (_event, payload: { enabled: boolean }) => (
+    wrap(() => setAutoWrapEnabled(payload.enabled))
+  ));
+  ipcMain.handle('attune:choose-css-file', async (_event, payload: { appId: string }) => (
+    wrap(() => chooseCssFile(payload.appId))
+  ));
+  ipcMain.handle('attune:launch', async (_event, payload: { appId: string }) => wrap(() => launchApp(payload.appId)));
+  ipcMain.handle('attune:stop', async (_event, payload: { appId: string }) => wrap(() => stopApp(payload.appId)));
+  ipcMain.handle('attune:open-path', async (_event, payload: { path: string }) => wrap(async () => {
+    await shell.openPath(payload.path);
+    return payload.path;
+  }));
+}
+
+async function wrap<T>(operation: () => T | Promise<T>): Promise<ActionResult<T>> {
+  try {
+    return { ok: true, data: await operation() };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+async function getSnapshot(): Promise<Snapshot> {
+  const startedAt = Date.now();
+  console.log('[attune] snapshot start');
+  const environment = getEnvironment();
+  const themes = discoverThemes(environment.attuneRoot);
+  const profile = readProfile();
+  const apps = environment.runtimeBuilt ? await discoverApps(themes, profile) : [];
+  const targets = buildTargetStatuses(apps, themes, profile);
+  console.log(`[attune] snapshot complete in ${Date.now() - startedAt}ms`);
+  return { environment, apps, themes, profile, targets };
+}
+
+function getEnvironment(): EnvironmentInfo {
+  const appRoot = resolve(__dirname, '..');
+  const attuneRoot = resolve(process.env.ATTUNE_ROOT || join(appRoot, '..', 'attune'));
+  const cliPath = resolve(process.env.ATTUNE_CLI_PATH || join(attuneRoot, 'dist', 'cli.js'));
+  const nodePath = process.env.ATTUNE_NODE_PATH || 'node';
+  return {
+    attuneRoot,
+    cliPath,
+    nodePath,
+    runtimeBuilt: existsSync(cliPath),
+  };
+}
+
+async function discoverApps(themes: ThemeInfo[], profile: ThemeProfile): Promise<AttuneAppInfo[]> {
+  const [scanModule, sessionModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<SessionModule>('session.js'),
+  ]);
+
+  const apps: AttuneAppInfo[] = [];
+  for (const appInfo of scanModule.scanForSupportedApps()) {
+    const id = scanModule.getAppId(appInfo);
+    const session = sessionModule.getSession(id);
+    apps.push({
+      id,
+      name: appInfo.name,
+      path: appInfo.path,
+      iconDataUrl: await getBundleIconDataUrl(appInfo.path, id),
+      bundleId: appInfo.bundleId,
+      runtime: appInfo.runtime,
+      status: session?.status ?? 'none',
+      targetCount: session?.targetCount ?? 0,
+      port: session?.port ?? null,
+      updatedAt: session?.updatedAt ?? null,
+      hasMatchingTheme: themes.some((theme) => findMatchingAdapter(theme, appInfo.name)),
+      themeEnabled: profile.enabled && profile.enabledAppIds.includes(id),
+      targetProfileApp: isProfileTarget(appInfo.name),
+    });
+  }
+  return apps;
+}
+
+async function getBundleIconDataUrl(appPath: string, appId: string): Promise<string | null> {
+  const cached = iconDataUrlByAppPath.get(appPath);
+  if (cached) return cached;
+
+  const iconTask = resolveBundleIconDataUrl(appPath, appId);
+  iconDataUrlByAppPath.set(appPath, iconTask);
+  return iconTask;
+}
+
+async function resolveBundleIconDataUrl(appPath: string, appId: string): Promise<string | null> {
+  try {
+    const plistPath = join(appPath, 'Contents', 'Info.plist');
+    const rawIconName = (await exec('/usr/bin/plutil', ['-extract', 'CFBundleIconFile', 'raw', '-o', '-', plistPath], {
+      cwd: appPath,
+      timeout: 3000,
+    })).trim();
+    const iconFileName = rawIconName.endsWith('.icns') ? rawIconName : `${rawIconName}.icns`;
+    const sourcePath = join(appPath, 'Contents', 'Resources', iconFileName);
+    if (!existsSync(sourcePath)) throw new Error(`Icon file not found: ${sourcePath}`);
+
+    const cacheDirectory = join(app.getPath('userData'), 'icon-cache');
+    mkdirSync(cacheDirectory, { recursive: true });
+    const outputPath = join(cacheDirectory, `${appId.replace(/[^a-z0-9]+/gi, '-')}.png`);
+    await exec('/usr/bin/sips', ['-z', '96', '96', sourcePath, '-s', 'format', 'png', '--out', outputPath], {
+      cwd: appPath,
+      timeout: 5000,
+    });
+
+    const dataUrl = `data:image/png;base64,${readFileSync(outputPath).toString('base64')}`;
+    return dataUrl;
+  } catch (error) {
+    console.warn(`[attune] unable to resolve icon for ${appPath}:`, error);
+    return null;
+  }
+}
+
+async function applyTheme(appId: string, themeId: string): Promise<string> {
+  const environment = getEnvironment();
+  const [scanModule, configModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<ConfigModule>('config.js'),
+  ]);
+  const appInfo = findDiscoveredApp(scanModule, appId);
+  const theme = discoverThemes(environment.attuneRoot).find((candidate) => candidate.id === themeId);
+  if (!theme) throw new Error(`Theme not found: ${themeId}`);
+
+  const adapter = findMatchingAdapter(theme, appInfo.name);
+  if (!adapter || !adapter.absolutePath) {
+    throw new Error(`${theme.name} does not include an available adapter for ${appInfo.name}.`);
+  }
+
+  const css = readFileSync(adapter.absolutePath, 'utf8');
+  configModule.setStylesheetSource(appId, adapter.absolutePath, css);
+  return `${theme.name} applied to ${appInfo.name}.`;
+}
+
+async function setProfileEnabled(themeId: string, enabled: boolean): Promise<string> {
+  const environment = getEnvironment();
+  const [scanModule, configModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<ConfigModule>('config.js'),
+  ]);
+  const theme = discoverThemes(environment.attuneRoot).find((candidate) => candidate.id === themeId);
+  if (!theme) throw new Error(`Theme not found: ${themeId}`);
+
+  const targetApps = scanModule.scanForSupportedApps()
+    .filter((appInfo) => isProfileTarget(appInfo.name))
+    .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo), adapter: findMatchingAdapter(theme, appInfo.name) }));
+
+  if (enabled) {
+    const missingAdapters = targetApps.filter((target) => !target.adapter?.absolutePath);
+    if (missingAdapters.length > 0) {
+      throw new Error(`Missing ${theme.name} adapter for ${missingAdapters.map((target) => target.appInfo.name).join(', ')}.`);
+    }
+
+    for (const target of targetApps) {
+      const cssPath = target.adapter?.absolutePath;
+      if (!cssPath) continue;
+      configModule.setStylesheetSource(target.appId, cssPath, readFileSync(cssPath, 'utf8'));
+    }
+
+    writeProfile({
+      activeThemeId: themeId,
+      enabled: true,
+      autoWrapEnabled: true,
+      enabledAppIds: targetApps.map((target) => target.appId),
+      targetAppNames: PROFILE_TARGET_APP_NAMES,
+    });
+    void runAutoWrapPass();
+
+    const foundNames = targetApps.map((target) => target.appInfo.name).join(', ');
+    return `${theme.name} enabled for ${foundNames || 'no installed target apps'}.`;
+  }
+
+  for (const target of targetApps) {
+    configModule.setStylesheetSource(target.appId, '', '');
+  }
+
+  writeProfile({
+    activeThemeId: themeId,
+    enabled: false,
+    autoWrapEnabled: readProfile().autoWrapEnabled,
+    enabledAppIds: [],
+    targetAppNames: PROFILE_TARGET_APP_NAMES,
+  });
+
+  return `${theme.name} disabled for the target apps.`;
+}
+
+function setAutoWrapEnabled(enabled: boolean): string {
+  const profile = readProfile();
+  writeProfile({ ...profile, autoWrapEnabled: enabled });
+  if (enabled) void runAutoWrapPass();
+  return enabled
+    ? 'Auto-wrap enabled. Normal launches of profile apps will be relaunched through Attune.'
+    : 'Auto-wrap disabled.';
+}
+
+async function chooseCssFile(appId: string): Promise<string> {
+  const [scanModule, configModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<ConfigModule>('config.js'),
+  ]);
+  const appInfo = findDiscoveredApp(scanModule, appId);
+  const dialogOptions: OpenDialogOptions = {
+    title: `Choose CSS for ${appInfo.name}`,
+    properties: ['openFile'],
+    filters: [{ name: 'CSS', extensions: ['css'] }],
+  };
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dialogOptions)
+    : await dialog.showOpenDialog(dialogOptions);
+  if (result.canceled || result.filePaths.length === 0) {
+    return 'No CSS file selected.';
+  }
+
+  const cssPath = result.filePaths[0];
+  const css = readFileSync(cssPath, 'utf8');
+  configModule.setStylesheetSource(appId, cssPath, css);
+  return `Custom CSS applied to ${appInfo.name}.`;
+}
+
+async function launchApp(appId: string): Promise<string> {
+  const environment = getEnvironment();
+  const scanModule = await loadAttuneModule<ScanModule>('scan.js');
+  const appInfo = findDiscoveredApp(scanModule, appId);
+  await ensureConfiguredForLaunch(appInfo, appId);
+  const output = await exec(environment.nodePath, [environment.cliPath, 'launch', appInfo.name], {
+    cwd: environment.attuneRoot,
+  });
+  return output.trim() || `${appInfo.name} launched with Attune.`;
+}
+
+async function ensureConfiguredForLaunch(appInfo: DiscoveredApp, appId: string): Promise<void> {
+  const profile = readProfile();
+  if (!profile.enabled || !profile.enabledAppIds.includes(appId)) return;
+
+  const environment = getEnvironment();
+  const theme = discoverThemes(environment.attuneRoot).find((candidate) => candidate.id === profile.activeThemeId);
+  if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
+
+  const adapter = findMatchingAdapter(theme, appInfo.name);
+  if (!adapter?.absolutePath) throw new Error(`${theme.name} has no available adapter for ${appInfo.name}.`);
+
+  const configModule = await loadAttuneModule<ConfigModule>('config.js');
+  configModule.setStylesheetSource(appId, adapter.absolutePath, readFileSync(adapter.absolutePath, 'utf8'));
+}
+
+async function stopApp(appId: string): Promise<string> {
+  const [scanModule, sessionModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<SessionModule>('session.js'),
+  ]);
+  const appInfo = findDiscoveredApp(scanModule, appId);
+  const stopped = sessionModule.stopSession(appId);
+  return stopped ? `Stopped Attune for ${appInfo.name}.` : `No Attune session is running for ${appInfo.name}.`;
+}
+
+function startAutoWrapMonitor(): void {
+  if (autoWrapTimer) return;
+  autoWrapTimer = setInterval(() => {
+    void runAutoWrapPass();
+  }, AUTO_WRAP_INTERVAL_MS);
+}
+
+async function runAutoWrapPass(): Promise<void> {
+  const profile = readProfile();
+  if (!profile.enabled || !profile.autoWrapEnabled || profile.enabledAppIds.length === 0) return;
+
+  const environment = getEnvironment();
+  if (!environment.runtimeBuilt) return;
+
+  try {
+    const [scanModule, sessionModule] = await Promise.all([
+      loadAttuneModule<ScanModule>('scan.js'),
+      loadAttuneModule<SessionModule>('session.js'),
+    ]);
+    const apps = scanModule.scanForSupportedApps()
+      .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }))
+      .filter((target) => profile.enabledAppIds.includes(target.appId));
+
+    for (const target of apps) {
+      const now = Date.now();
+      if (wrappingAppIds.has(target.appId)) continue;
+      if ((lastWrapAtByAppId.get(target.appId) ?? 0) + AUTO_WRAP_COOLDOWN_MS > now) continue;
+
+      const session = sessionModule.getSession(target.appId);
+      if (session && session.status !== 'waiting') continue;
+
+      const executablePath = scanModule.getAppExecutablePath(target.appInfo);
+      if (!await isProcessRunning(executablePath)) continue;
+
+      wrappingAppIds.add(target.appId);
+      lastWrapAtByAppId.set(target.appId, now);
+      void wrapNormalLaunch(target.appInfo, target.appId, executablePath).finally(() => {
+        wrappingAppIds.delete(target.appId);
+      });
+    }
+  } catch (error) {
+    console.error('[attune] auto-wrap pass failed', error);
+  }
+}
+
+async function wrapNormalLaunch(appInfo: DiscoveredApp, appId: string, executablePath: string): Promise<void> {
+  console.log(`[attune] auto-wrap detected normal launch: ${appInfo.name}`);
+  try {
+    await ensureConfiguredForLaunch(appInfo, appId);
+    await quitApp(appInfo);
+    await waitForProcessExit(executablePath, 10000);
+    await launchApp(appId);
+    console.log(`[attune] auto-wrap relaunched ${appInfo.name}`);
+    mainWindow?.webContents.send('attune:auto-wrap-event', { appId, appName: appInfo.name });
+  } catch (error) {
+    console.error(`[attune] auto-wrap failed for ${appInfo.name}`, error);
+  }
+}
+
+async function quitApp(appInfo: DiscoveredApp): Promise<void> {
+  if (appInfo.bundleId) {
+    await exec('osascript', ['-e', `tell application id "${escapeAppleScript(appInfo.bundleId)}" to quit`], {
+      cwd: process.cwd(),
+      timeout: 5000,
+    });
+    return;
+  }
+
+  await exec('osascript', ['-e', `tell application "${escapeAppleScript(appInfo.name)}" to quit`], {
+    cwd: process.cwd(),
+    timeout: 5000,
+  });
+}
+
+async function waitForProcessExit(executablePath: string, timeoutMs: number): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!await isProcessRunning(executablePath)) return;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for ${executablePath} to quit.`);
+}
+
+async function isProcessRunning(executablePath: string): Promise<boolean> {
+  try {
+    await exec('pgrep', ['-f', executablePath], { cwd: process.cwd(), timeout: 1500 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function escapeAppleScript(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+async function buildRuntime(): Promise<string> {
+  const environment = getEnvironment();
+  if (!existsSync(join(environment.attuneRoot, 'package.json'))) {
+    throw new Error(`No Attune runtime found at ${environment.attuneRoot}.`);
+  }
+
+  const buildOutput = await exec('npm', ['run', 'build'], { cwd: environment.attuneRoot, timeout: 120_000 });
+  const themeOutput = await exec('npm', ['run', 'build:arrakis'], { cwd: environment.attuneRoot, timeout: 120_000 });
+  return [buildOutput, themeOutput].filter(Boolean).join('\n').trim() || 'Attune runtime built.';
+}
+
+function discoverThemes(attuneRoot: string): ThemeInfo[] {
+  const themesDir = join(attuneRoot, 'themes');
+  if (!existsSync(themesDir)) return [];
+
+  return readdirSync(themesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readThemeManifest(attuneRoot, entry.name))
+    .filter((theme): theme is ThemeInfo => Boolean(theme));
+}
+
+function readThemeManifest(attuneRoot: string, themeId: string): ThemeInfo | null {
+  const manifestPath = join(attuneRoot, 'themes', themeId, 'manifest.json');
+  if (!existsSync(manifestPath)) return null;
+
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    name?: string;
+    description?: string;
+    adapters?: Record<string, {
+      source?: string;
+      output?: string;
+      runtime?: string;
+      canvas?: string;
+    }>;
+  };
+
+  const adapters = Object.entries(manifest.adapters ?? {}).map(([appName, adapter]) => {
+    const outputPath = adapter.output ? join(attuneRoot, adapter.output) : null;
+    const sourcePath = adapter.source ? join(attuneRoot, adapter.source) : null;
+    const absolutePath = outputPath && existsSync(outputPath)
+      ? outputPath
+      : sourcePath && existsSync(sourcePath)
+        ? sourcePath
+        : null;
+
+    return {
+      appName,
+      source: adapter.source ?? '',
+      output: adapter.output ?? null,
+      runtime: adapter.runtime ?? 'Attune-compatible renderer',
+      canvas: adapter.canvas ?? null,
+      available: Boolean(absolutePath),
+      absolutePath,
+    } satisfies ThemeAdapterInfo;
+  });
+
+  return {
+    id: themeId,
+    name: manifest.name ?? themeId,
+    description: manifest.description ?? '',
+    adapters,
+  };
+}
+
+function findMatchingAdapter(theme: ThemeInfo, appName: string): ThemeAdapterInfo | undefined {
+  const normalizedApp = normalizeAppName(appName);
+  return theme.adapters.find((adapter) => {
+    const normalizedAdapter = normalizeAppName(adapter.appName);
+    return adapter.available && (
+      normalizedAdapter === normalizedApp
+      || normalizedApp.includes(normalizedAdapter)
+      || normalizedAdapter.includes(normalizedApp)
+    );
+  });
+}
+
+function buildTargetStatuses(
+  apps: AttuneAppInfo[],
+  themes: ThemeInfo[],
+  profile: ThemeProfile,
+): ThemeTargetStatus[] {
+  const theme = themes.find((candidate) => candidate.id === profile.activeThemeId);
+  return profile.targetAppNames.map((targetName) => {
+    const appInfo = apps.find((candidate) => namesMatch(candidate.name, targetName));
+    return {
+      name: targetName,
+      found: Boolean(appInfo),
+      enabled: Boolean(appInfo && profile.enabled && profile.enabledAppIds.includes(appInfo.id)),
+      adapterAvailable: Boolean(theme && findMatchingAdapter(theme, targetName)),
+      appId: appInfo?.id ?? null,
+      appName: appInfo?.name ?? null,
+      status: appInfo?.status ?? 'none',
+    };
+  });
+}
+
+function readProfile(): ThemeProfile {
+  const defaultProfile: ThemeProfile = {
+    activeThemeId: DEFAULT_THEME_ID,
+    enabled: false,
+    autoWrapEnabled: false,
+    enabledAppIds: [],
+    targetAppNames: PROFILE_TARGET_APP_NAMES,
+  };
+
+  try {
+    const raw = JSON.parse(readFileSync(getPreferencesPath(), 'utf8')) as Partial<ThemeProfile>;
+    return {
+      activeThemeId: typeof raw.activeThemeId === 'string' ? raw.activeThemeId : defaultProfile.activeThemeId,
+      enabled: typeof raw.enabled === 'boolean' ? raw.enabled : defaultProfile.enabled,
+      autoWrapEnabled: typeof raw.autoWrapEnabled === 'boolean' ? raw.autoWrapEnabled : defaultProfile.autoWrapEnabled,
+      enabledAppIds: Array.isArray(raw.enabledAppIds)
+        ? raw.enabledAppIds.filter((id): id is string => typeof id === 'string')
+        : defaultProfile.enabledAppIds,
+      targetAppNames: defaultProfile.targetAppNames,
+    };
+  } catch {
+    return defaultProfile;
+  }
+}
+
+function writeProfile(profile: ThemeProfile): void {
+  const preferencesPath = getPreferencesPath();
+  mkdirSync(dirname(preferencesPath), { recursive: true });
+  writeFileSync(preferencesPath, JSON.stringify(profile, null, 2));
+}
+
+function getPreferencesPath(): string {
+  return join(app.getPath('userData'), 'preferences.json');
+}
+
+function isProfileTarget(appName: string): boolean {
+  return PROFILE_TARGET_APP_NAMES.some((targetName) => namesMatch(appName, targetName));
+}
+
+function namesMatch(left: string, right: string): boolean {
+  const normalizedLeft = normalizeAppName(left);
+  const normalizedRight = normalizeAppName(right);
+  return normalizedLeft === normalizedRight
+    || normalizedLeft.includes(normalizedRight)
+    || normalizedRight.includes(normalizedLeft);
+}
+
+function normalizeAppName(value: string): string {
+  return value.toLowerCase()
+    .replace(/\bvisual studio code\b/g, 'vscode')
+    .replace(/\bvs code\b/g, 'vscode')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function findDiscoveredApp(scanModule: ScanModule, appId: string): DiscoveredApp {
+  const appInfo = scanModule.scanForSupportedApps().find((candidate) => scanModule.getAppId(candidate) === appId);
+  if (!appInfo) throw new Error(`App not found: ${appId}`);
+  return appInfo;
+}
+
+async function loadAttuneModule<T>(distFileName: string): Promise<T> {
+  const environment = getEnvironment();
+  if (!environment.runtimeBuilt) {
+    throw new Error(`Attune runtime is not built. Expected ${environment.cliPath}.`);
+  }
+
+  const modulePath = join(environment.attuneRoot, 'dist', distFileName);
+  if (!existsSync(modulePath)) {
+    throw new Error(`Missing Attune module: ${modulePath}`);
+  }
+
+  return import(pathToFileURL(modulePath).href) as Promise<T>;
+}
+
+function exec(
+  command: string,
+  args: string[],
+  options: { cwd: string; timeout?: number },
+): Promise<string> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(command, args, {
+      cwd: options.cwd,
+      timeout: options.timeout ?? 30_000,
+      env: process.env,
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024 * 4,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error((stderr || stdout || error.message).trim()));
+        return;
+      }
+      resolvePromise([stdout, stderr].filter(Boolean).join('\n'));
+    });
+  });
+}
