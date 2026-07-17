@@ -5,8 +5,12 @@ import {
   CirclePause,
   CirclePlay,
   CircleAlert,
+  Copy,
   Loader2,
+  Plus,
+  RefreshCw,
   Settings,
+  X,
 } from 'lucide-react';
 import chatgptIcon from './assets/apps/chatgpt.png';
 import slackIcon from './assets/apps/slack.png';
@@ -29,12 +33,18 @@ export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null | undefined>(undefined);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [addThemeOpen, setAddThemeOpen] = useState(false);
+  const [themePromptCopied, setThemePromptCopied] = useState(false);
   const [busy, setBusy] = useState<BusyAction | null>(null);
   const [notice, setNotice] = useState<{ kind: 'good' | 'bad' | 'info'; text: string } | null>(null);
 
   const selectedTheme = useMemo(() => (
     snapshot?.themes.find((theme) => theme.id === selectedThemeId) ?? null
   ), [selectedThemeId, snapshot?.themes]);
+  const addThemePrompt = useMemo(
+    () => buildAddThemePrompt(snapshot?.environment.userThemesRoot),
+    [snapshot?.environment.userThemesRoot],
+  );
 
   useEffect(() => {
     void refresh();
@@ -81,6 +91,15 @@ export function App() {
       setNotice({ kind: 'bad', text: error instanceof Error ? error.message : 'Action failed.' });
     }
     setBusy(null);
+  }
+
+  async function copyAddThemePrompt() {
+    try {
+      await navigator.clipboard.writeText(addThemePrompt);
+      setThemePromptCopied(true);
+    } catch {
+      setNotice({ kind: 'bad', text: 'Unable to copy. Select the prompt text instead.' });
+    }
   }
 
   const runtimeReady = snapshot?.environment.runtimeBuilt ?? false;
@@ -158,6 +177,12 @@ export function App() {
                     }}
                   />
                 ))}
+                <AddThemeCard
+                  onOpen={() => {
+                    setThemePromptCopied(false);
+                    setAddThemeOpen(true);
+                  }}
+                />
               </div>
             </section>
 
@@ -188,6 +213,17 @@ export function App() {
               )}
             </section>
           </>
+        )}
+
+        {addThemeOpen && (
+          <AddThemeDialog
+            copied={themePromptCopied}
+            prompt={addThemePrompt}
+            themesRoot={snapshot?.environment.userThemesRoot}
+            onClose={() => setAddThemeOpen(false)}
+            onCopy={copyAddThemePrompt}
+            onRefreshThemes={refresh}
+          />
         )}
       </section>
     </main>
@@ -233,6 +269,80 @@ function ThemePreview({ themeId }: { themeId: string }) {
     <span className={`theme-preview theme-preview-${themeId}`} aria-hidden="true">
       <i /><i /><i />
     </span>
+  );
+}
+
+function AddThemeCard({ onOpen }: { onOpen(): void }) {
+  return (
+    <button
+      className="theme-card add-theme-card"
+      type="button"
+      onClick={onOpen}
+    >
+      <span className="theme-preview add-theme-preview" aria-hidden="true">
+        <Plus size={30} />
+      </span>
+      <span>Add theme</span>
+    </button>
+  );
+}
+
+function AddThemeDialog({
+  copied,
+  prompt,
+  themesRoot,
+  onClose,
+  onCopy,
+  onRefreshThemes,
+}: {
+  copied: boolean;
+  prompt: string;
+  themesRoot: string | undefined;
+  onClose(): void;
+  onCopy(): void;
+  onRefreshThemes(): void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="theme-instructions"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-theme-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="modal-head">
+          <div>
+            <h2 id="add-theme-title">Add a theme with your agent</h2>
+            <p>Fill in the theme request, then give any coding agent the prompt.</p>
+          </div>
+          <button className="icon-button" type="button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="instruction-stack">
+          <textarea
+            className="prompt-box"
+            value={prompt}
+            readOnly
+            spellCheck={false}
+            aria-label="Agent prompt for adding an Attune theme"
+          />
+
+          <div className="modal-actions">
+            <button className="button" type="button" onClick={onCopy}>
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+              {copied ? 'Copied' : 'Copy prompt'}
+            </button>
+            <button className="button primary" type="button" onClick={onRefreshThemes}>
+              <RefreshCw size={16} />
+              Refresh themes
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -304,4 +414,17 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: stri
       (error: unknown) => { window.clearTimeout(timeout); reject(error); },
     );
   });
+}
+
+function buildAddThemePrompt(themesRoot: string | undefined): string {
+  const themePath = themesRoot ?? '~/Library/Application Support/Attune/themes';
+
+  return `Create a custom Attune theme.
+
+Theme request: [replace this with the style, mood, colors, or source of inspiration]
+Themes folder: ${themePath}
+Editable Arrakis theme: ${themePath}/arrakis
+Arrakis image: ${themePath}/arrakis/arrakis-dune-thumbnail.png
+
+Read the editable Arrakis theme first. To adjust Arrakis, edit that folder directly. To create a new theme, create a new sibling folder with manifest.json, tokens.css, base-layout.css, and adapters for ChatGPT, Slack, Spotify, Visual Studio Code, and Claude. Do not edit the signed app bundle. Use relative adapter paths like "adapters/chatgpt.css". When done, tell me to click Refresh themes in Attune App.`;
 }

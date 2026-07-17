@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron';
 import { execFile } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   ActionResult,
@@ -52,15 +52,61 @@ interface SessionModule {
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.ATTUNE_APP_DEV_SERVER_URL;
 const DEFAULT_THEME_ID = 'arrakis';
+const USER_DATA_FOLDER_NAME = 'Attune';
 const PROFILE_TARGET_APP_NAMES = ['ChatGPT', 'Visual Studio Code', 'Spotify', 'Slack'];
 const AUTO_WRAP_INTERVAL_MS = 2000;
 const AUTO_WRAP_COOLDOWN_MS = 15000;
+const USER_THEMES_README = `# Attune User Themes
+
+Attune App loads custom themes from this folder.
+
+Arrakis is seeded here as an editable built-in theme, including
+arrakis-dune-thumbnail.png. Changes to arrakis appear in Attune App after
+refreshing themes.
+
+Create a folder for each theme:
+
+\`\`\`
+my-theme/
+  manifest.json
+  tokens.css
+  base-layout.css
+  adapters/
+    chatgpt.css
+    slack.css
+    spotify.css
+    vscode.css
+    claude.css
+\`\`\`
+
+Manifest adapter paths can be relative to the theme folder:
+
+\`\`\`json
+{
+  "name": "My Theme",
+  "description": "A personal Attune theme.",
+  "tokens": "tokens.css",
+  "baseLayout": "base-layout.css",
+  "adapters": {
+    "ChatGPT": { "source": "adapters/chatgpt.css", "canvas": "light" },
+    "Slack": { "source": "adapters/slack.css", "canvas": "dark" },
+    "Spotify": { "source": "adapters/spotify.css", "canvas": "dark" },
+    "Visual Studio Code": { "source": "adapters/vscode.css", "canvas": "dark" },
+    "Claude": { "source": "adapters/claude.css", "canvas": "light" }
+  }
+}
+\`\`\`
+
+Refresh Attune App after adding or editing a theme.
+`;
 
 let mainWindow: BrowserWindow | null = null;
 let autoWrapTimer: NodeJS.Timeout | null = null;
 const wrappingAppIds = new Set<string>();
 const lastWrapAtByAppId = new Map<string, number>();
 const iconDataUrlByAppPath = new Map<string, Promise<string | null>>();
+
+configureUserDataPath();
 
 app.whenReady().then(() => {
   registerIpc();
@@ -76,6 +122,12 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+function configureUserDataPath(): void {
+  const userDataPath = join(app.getPath('home'), 'Library', 'Application Support', USER_DATA_FOLDER_NAME);
+  mkdirSync(userDataPath, { recursive: true });
+  app.setPath('userData', userDataPath);
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -149,7 +201,7 @@ async function getSnapshot(): Promise<Snapshot> {
   const startedAt = Date.now();
   console.log('[attune] snapshot start');
   const environment = getEnvironment();
-  const themes = discoverThemes(environment.attuneRoot);
+  const themes = discoverThemes(environment);
   const profile = readProfile();
   const apps = environment.runtimeBuilt ? await discoverApps(themes, profile) : [];
   const targets = buildTargetStatuses(apps, themes, profile);
@@ -160,14 +212,59 @@ async function getSnapshot(): Promise<Snapshot> {
 function getEnvironment(): EnvironmentInfo {
   const appRoot = resolve(__dirname, '..');
   const attuneRoot = resolve(process.env.ATTUNE_ROOT || join(appRoot, '..', 'attune'));
+  const userThemesRoot = ensureUserThemesRoot(process.env.ATTUNE_USER_THEMES_ROOT
+    ? resolve(process.env.ATTUNE_USER_THEMES_ROOT)
+    : join(app.getPath('userData'), 'themes'), attuneRoot);
   const cliPath = resolve(process.env.ATTUNE_CLI_PATH || join(attuneRoot, 'dist', 'cli.js'));
   const nodePath = process.env.ATTUNE_NODE_PATH || 'node';
   return {
     attuneRoot,
+    userThemesRoot,
     cliPath,
     nodePath,
     runtimeBuilt: existsSync(cliPath),
   };
+}
+
+function ensureUserThemesRoot(themesRoot: string, attuneRoot: string): string {
+  mkdirSync(themesRoot, { recursive: true });
+
+  const readmePath = join(themesRoot, 'README.md');
+  if (!existsSync(readmePath)) {
+    writeFileSync(readmePath, USER_THEMES_README);
+  }
+
+  seedEditableArrakisTheme(themesRoot, attuneRoot);
+
+  return themesRoot;
+}
+
+function seedEditableArrakisTheme(themesRoot: string, attuneRoot: string): void {
+  const arrakisSource = join(attuneRoot, 'themes', DEFAULT_THEME_ID);
+  if (!existsSync(arrakisSource)) return;
+
+  const arrakisTheme = join(themesRoot, DEFAULT_THEME_ID);
+  if (!existsSync(arrakisTheme)) {
+    const oldReference = join(themesRoot, '_reference', DEFAULT_THEME_ID);
+    const seedSource = existsSync(oldReference) ? oldReference : arrakisSource;
+    cpSync(seedSource, arrakisTheme, {
+      recursive: true,
+      force: false,
+      errorOnExist: false,
+    });
+  }
+
+  const arrakisImageSource = getBundledArrakisImagePath();
+  const arrakisImageTarget = join(arrakisTheme, 'arrakis-dune-thumbnail.png');
+  if (arrakisImageSource && !existsSync(arrakisImageTarget)) {
+    copyFileSync(arrakisImageSource, arrakisImageTarget);
+  }
+}
+
+function getBundledArrakisImagePath(): string | null {
+  const assetRoot = join(__dirname, '..', devServerUrl ? 'public' : 'dist', 'wallpapers');
+  const imagePath = join(assetRoot, 'arrakis-dune-thumbnail.png');
+  return existsSync(imagePath) ? imagePath : null;
 }
 
 async function discoverApps(themes: ThemeInfo[], profile: ThemeProfile): Promise<AttuneAppInfo[]> {
@@ -242,7 +339,7 @@ async function applyTheme(appId: string, themeId: string): Promise<string> {
     loadAttuneModule<ConfigModule>('config.js'),
   ]);
   const appInfo = findDiscoveredApp(scanModule, appId);
-  const theme = discoverThemes(environment.attuneRoot).find((candidate) => candidate.id === themeId);
+  const theme = discoverThemes(environment).find((candidate) => candidate.id === themeId);
   if (!theme) throw new Error(`Theme not found: ${themeId}`);
 
   const adapter = findMatchingAdapter(theme, appInfo.name);
@@ -261,7 +358,7 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
     loadAttuneModule<ScanModule>('scan.js'),
     loadAttuneModule<ConfigModule>('config.js'),
   ]);
-  const theme = discoverThemes(environment.attuneRoot).find((candidate) => candidate.id === themeId);
+  const theme = discoverThemes(environment).find((candidate) => candidate.id === themeId);
   if (!theme) throw new Error(`Theme not found: ${themeId}`);
 
   const targetApps = scanModule.scanForSupportedApps()
@@ -337,7 +434,7 @@ async function setProfileAppEnabled(appId: string, enabled: boolean): Promise<st
   const appInfo = findDiscoveredApp(scanModule, appId);
   if (!isProfileTarget(appInfo.name)) throw new Error(`${appInfo.name} is not included in this theme profile.`);
 
-  const theme = discoverThemes(environment.attuneRoot).find((candidate) => candidate.id === profile.activeThemeId);
+  const theme = discoverThemes(environment).find((candidate) => candidate.id === profile.activeThemeId);
   if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
   const adapter = findMatchingAdapter(theme, appInfo.name);
   if (!adapter?.absolutePath) throw new Error(`${theme.name} has no available adapter for ${appInfo.name}.`);
@@ -477,8 +574,12 @@ function getThemeWallpaperPath(themeId: string): string | null {
   };
   const fileName = fileNameByTheme[themeId];
   if (!fileName) return null;
-  const assetRoot = join(__dirname, '..', devServerUrl ? 'public' : 'dist', 'wallpapers');
-  return join(assetRoot, fileName);
+  const environment = getEnvironment();
+  const userThemeImage = join(environment.userThemesRoot, themeId, fileName);
+  if (existsSync(userThemeImage)) return userThemeImage;
+
+  const bundledImage = getBundledArrakisImagePath();
+  return bundledImage ?? null;
 }
 
 async function getDesktopWallpaperPaths(): Promise<string[]> {
@@ -578,7 +679,7 @@ async function ensureConfiguredForLaunch(appInfo: DiscoveredApp, appId: string):
   if (!profile.enabled || !profile.enabledAppIds.includes(appId)) return;
 
   const environment = getEnvironment();
-  const theme = discoverThemes(environment.attuneRoot).find((candidate) => candidate.id === profile.activeThemeId);
+  const theme = discoverThemes(environment).find((candidate) => candidate.id === profile.activeThemeId);
   if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
 
   const adapter = findMatchingAdapter(theme, appInfo.name);
@@ -713,18 +814,31 @@ async function buildRuntime(): Promise<string> {
   return [buildOutput, themeOutput].filter(Boolean).join('\n').trim() || 'Attune runtime built.';
 }
 
-function discoverThemes(attuneRoot: string): ThemeInfo[] {
-  const themesDir = join(attuneRoot, 'themes');
+function discoverThemes(environment: EnvironmentInfo): ThemeInfo[] {
+  const themesById = new Map<string, ThemeInfo>();
+
+  for (const theme of discoverThemesFromDirectory(join(environment.attuneRoot, 'themes'), environment.attuneRoot)) {
+    themesById.set(theme.id, theme);
+  }
+
+  for (const theme of discoverThemesFromDirectory(environment.userThemesRoot, dirname(environment.userThemesRoot))) {
+    themesById.set(theme.id, theme);
+  }
+
+  return [...themesById.values()];
+}
+
+function discoverThemesFromDirectory(themesDir: string, pathBase: string): ThemeInfo[] {
   if (!existsSync(themesDir)) return [];
 
   return readdirSync(themesDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => readThemeManifest(attuneRoot, entry.name))
+    .map((entry) => readThemeManifest(pathBase, join(themesDir, entry.name), entry.name))
     .filter((theme): theme is ThemeInfo => Boolean(theme));
 }
 
-function readThemeManifest(attuneRoot: string, themeId: string): ThemeInfo | null {
-  const manifestPath = join(attuneRoot, 'themes', themeId, 'manifest.json');
+function readThemeManifest(pathBase: string, themeDirectory: string, themeId: string): ThemeInfo | null {
+  const manifestPath = join(themeDirectory, 'manifest.json');
   if (!existsSync(manifestPath)) return null;
 
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
@@ -739,8 +853,8 @@ function readThemeManifest(attuneRoot: string, themeId: string): ThemeInfo | nul
   };
 
   const adapters = Object.entries(manifest.adapters ?? {}).map(([appName, adapter]) => {
-    const outputPath = adapter.output ? join(attuneRoot, adapter.output) : null;
-    const sourcePath = adapter.source ? join(attuneRoot, adapter.source) : null;
+    const outputPath = adapter.output ? resolveThemePath(pathBase, themeDirectory, adapter.output) : null;
+    const sourcePath = adapter.source ? resolveThemePath(pathBase, themeDirectory, adapter.source) : null;
     const absolutePath = outputPath && existsSync(outputPath)
       ? outputPath
       : sourcePath && existsSync(sourcePath)
@@ -764,6 +878,12 @@ function readThemeManifest(attuneRoot: string, themeId: string): ThemeInfo | nul
     description: manifest.description ?? '',
     adapters,
   };
+}
+
+function resolveThemePath(pathBase: string, themeDirectory: string, pathValue: string): string {
+  if (isAbsolute(pathValue)) return pathValue;
+  if (pathValue.startsWith('themes/')) return join(pathBase, pathValue);
+  return join(themeDirectory, pathValue);
 }
 
 function findMatchingAdapter(theme: ThemeInfo, appName: string): ThemeAdapterInfo | undefined {

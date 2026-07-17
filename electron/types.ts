@@ -36,6 +36,7 @@ export interface ThemeInfo {
 
 export interface EnvironmentInfo {
   attuneRoot: string;
+  userThemesRoot: string;
   cliPath: string;
   nodePath: string;
   runtimeBuilt: boolean;
