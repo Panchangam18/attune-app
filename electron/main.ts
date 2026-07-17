@@ -59,6 +59,7 @@ const AUTO_WRAP_COOLDOWN_MS = 15000;
 const BUILT_IN_THEME_WALLPAPERS: Record<string, string> = {
   arrakis: 'arrakis.jpg',
   cyberpunk: 'cyberpunk.jpg',
+  matrix: 'matrix.jpg',
 };
 const USER_THEMES_README = `# Attune User Themes
 
@@ -1044,7 +1045,9 @@ function readProfile(): ThemeProfile {
   try {
     const raw = JSON.parse(readFileSync(getPreferencesPath(), 'utf8')) as Partial<ThemeProfile>;
     return {
-      activeThemeId: typeof raw.activeThemeId === 'string' ? raw.activeThemeId : defaultProfile.activeThemeId,
+      activeThemeId: raw.activeThemeId === 'newsprint'
+        ? DEFAULT_THEME_ID
+        : typeof raw.activeThemeId === 'string' ? raw.activeThemeId : defaultProfile.activeThemeId,
       enabled: typeof raw.enabled === 'boolean' ? raw.enabled : defaultProfile.enabled,
       autoWrapEnabled: typeof raw.autoWrapEnabled === 'boolean' ? raw.autoWrapEnabled : defaultProfile.autoWrapEnabled,
       enabledAppIds: Array.isArray(raw.enabledAppIds)

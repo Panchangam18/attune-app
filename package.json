@@ -1,6 +1,6 @@
 {
   "name": "attune-app",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "author": "Madhavan Panchangam",
   "description": "Desktop control panel for the Attune live CSS runtime",

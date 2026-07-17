@@ -26,6 +26,14 @@
   font-weight: 700;
 }
 
+@font-face {
+  font-family: "OCRA";
+  src: url("./assets/fonts/OCRA.ttf") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
 :root {
   color: #ebe9e4;
   background: #101211;
@@ -116,32 +124,23 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
   font-family: "Rajdhani", "SF Mono", Menlo, monospace;
 }
 
-.workspace.theme-newsprint {
-  --bg: #f3eee2;
-  --surface: #fcf8ef;
-  --surface-2: #e8dfcd;
-  --line: #c8bda9;
-  --muted: #6b6256;
-  --text: #27221a;
-  --spice: #ad392f;
-  --spice-soft: #ead0c7;
-  --sand: #315967;
-  --green: #547a5a;
-  --theme-accent: #ad392f;
-  --theme-muted: #e8dfcd;
-  --theme-line: #c8bda9;
-  --theme-row-hover: #eee6d7;
-  --theme-symbol: #f7f1e5;
-  color: var(--text);
-  font-family: Georgia, "Times New Roman", serif;
-}
-
-.workspace.theme-newsprint .toolbar h1,
-.workspace.theme-newsprint h2,
-.workspace.theme-newsprint .theme-card,
-.workspace.theme-newsprint .setting-row,
-.workspace.theme-newsprint .app-copy strong {
-  font-family: Georgia, "Times New Roman", serif;
+.workspace.theme-matrix {
+  --bg: #020702;
+  --surface: #061105;
+  --surface-2: #091a07;
+  --line: #1a5015;
+  --muted: #7ba86e;
+  --text: #d9ffd0;
+  --spice: #65ff24;
+  --spice-soft: #0c220b;
+  --sand: #22c55e;
+  --green: #a6ff70;
+  --theme-accent: #65ff24;
+  --theme-muted: #071307;
+  --theme-line: #1a5015;
+  --theme-row-hover: #0c220b;
+  --theme-symbol: #061105;
+  font-family: "OCRA", "SF Mono", Menlo, monospace;
 }
 
 .toolbar {
@@ -223,14 +222,6 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
 .theme-preview-cyberpunk i:nth-child(1) { top: 20%; background: #00e5ff; }
 .theme-preview-cyberpunk i:nth-child(2) { top: 48%; background: #ff3da6; }
 .theme-preview-cyberpunk i:nth-child(3) { top: 74%; background: #b6f35c; }
-.theme-preview-newsprint {
-  background: #f3eee2;
-  box-shadow: inset 0 0 0 1px #c8bda9, inset 0 -7px 0 #ad392f;
-}
-.theme-preview-newsprint i { left: 16%; width: 68%; height: 5%; transform: none; }
-.theme-preview-newsprint i:nth-child(1) { top: 22%; background: #27221a; }
-.theme-preview-newsprint i:nth-child(2) { top: 44%; background: #315967; }
-.theme-preview-newsprint i:nth-child(3) { top: 68%; background: #27221a; }
 .theme-check { position: absolute; top: 8px; right: 8px; color: #16160f; background: var(--theme-accent); }
 .add-theme-preview {
   display: grid;

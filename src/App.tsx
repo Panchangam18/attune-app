@@ -18,6 +18,7 @@ import spotifyIcon from './assets/apps/spotify.png';
 import vscodeIcon from './assets/apps/vscode.png';
 import arrakisPreview from './assets/themes/arrakis.jpg';
 import cyberpunkPreview from './assets/themes/cyberpunk.jpg';
+import matrixPreview from './assets/themes/matrix.jpg';
 import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo } from './vite-env';
 
 type BusyAction = 'refresh' | 'build' | 'profile' | 'wallpaper' | `profile-app:${string}`;
@@ -265,6 +266,7 @@ function ThemePreview({ themeId }: { themeId: string }) {
   const imagePreview = {
     arrakis: arrakisPreview,
     cyberpunk: cyberpunkPreview,
+    matrix: matrixPreview,
   }[themeId];
 
   if (imagePreview) {
