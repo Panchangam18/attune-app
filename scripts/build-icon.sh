@@ -4,7 +4,7 @@ set -euo pipefail
 iconset_dir="build/icon.iconset"
 mkdir -p "$iconset_dir"
 
-rsvg-convert --width 1024 --height 1024 build/icon.svg --output build/icon.png
+electron scripts/render-icon.cjs
 sips -z 16 16 build/icon.png --out "$iconset_dir/icon_16x16.png" >/dev/null
 sips -z 32 32 build/icon.png --out "$iconset_dir/icon_16x16@2x.png" >/dev/null
 sips -z 32 32 build/icon.png --out "$iconset_dir/icon_32x32.png" >/dev/null
