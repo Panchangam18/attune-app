@@ -1,6 +1,8 @@
 node_modules/
 dist/
 dist-electron/
+release/
+build/icon.iconset/
+build/icon.png
 .DS_Store
 *.log
-

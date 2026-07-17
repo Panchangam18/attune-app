@@ -2,19 +2,24 @@
   "name": "attune-app",
   "version": "0.1.0",
   "private": true,
+  "author": "Madhavan Panchangam",
   "description": "Desktop control panel for the Attune live CSS runtime",
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build && npm run build:electron",
     "build:electron": "rm -rf dist-electron && tsc -p tsconfig.node.json",
+    "build:runtime": "npm --prefix ../attune run build && npm --prefix ../attune run build:themes",
     "dev": "npm run build:electron && concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && ATTUNE_APP_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
-    "start": "npm run build && electron ."
+    "start": "npm run build && electron .",
+    "build:icon": "bash scripts/build-icon.sh",
+    "package:mac": "npm run build && npm run build:runtime && npm run build:icon && electron-builder --mac dmg --universal --publish never",
+    "notarize:mac": "bash scripts/notarize-mac.sh",
+    "release:mac": "npm run package:mac && npm run notarize:mac"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
-    "electron": "^43.1.1",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -25,6 +30,45 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.7.2"
+  },
+  "build": {
+    "appId": "com.madpanch.attune",
+    "productName": "Attune",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../attune",
+        "to": "attune",
+        "filter": [
+          "dist/**/*",
+          "themes/**/*",
+          "examples/**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "hardenedRuntime": true,
+      "forceCodeSigning": true,
+      "gatekeeperAssess": false,
+      "notarize": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.inherit.plist"
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-mac-universal.${ext}"
+    }
   }
 }

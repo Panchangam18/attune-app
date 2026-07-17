@@ -211,13 +211,15 @@ async function getSnapshot(): Promise<Snapshot> {
 }
 
 function getEnvironment(): EnvironmentInfo {
-  const appRoot = resolve(__dirname, '..');
-  const attuneRoot = resolve(process.env.ATTUNE_ROOT || join(appRoot, '..', 'attune'));
+  const bundledAttuneRoot = app.isPackaged
+    ? join(process.resourcesPath, 'attune')
+    : join(resolve(__dirname, '..'), '..', 'attune');
+  const attuneRoot = resolve(process.env.ATTUNE_ROOT || bundledAttuneRoot);
   const userThemesRoot = ensureUserThemesRoot(process.env.ATTUNE_USER_THEMES_ROOT
     ? resolve(process.env.ATTUNE_USER_THEMES_ROOT)
     : join(app.getPath('userData'), 'themes'), attuneRoot);
   const cliPath = resolve(process.env.ATTUNE_CLI_PATH || join(attuneRoot, 'dist', 'cli.js'));
-  const nodePath = process.env.ATTUNE_NODE_PATH || 'node';
+  const nodePath = process.env.ATTUNE_NODE_PATH || (app.isPackaged ? process.execPath : 'node');
   return {
     attuneRoot,
     userThemesRoot,
@@ -500,6 +502,7 @@ async function attachRunningSessionIfAvailable(
   await exec(environment.nodePath, [environment.cliPath, 'attach', appInfo.name, String(port)], {
     cwd: environment.attuneRoot,
     timeout: 5000,
+    env: runtimeNodeEnvironment(environment),
   });
 }
 
@@ -701,6 +704,7 @@ async function launchApp(appId: string): Promise<string> {
   await ensureConfiguredForLaunch(appInfo, appId);
   const output = await exec(environment.nodePath, [environment.cliPath, 'launch', appInfo.name], {
     cwd: environment.attuneRoot,
+    env: runtimeNodeEnvironment(environment),
   });
   return output.trim() || `${appInfo.name} launched with Attune.`;
 }
@@ -1107,13 +1111,13 @@ async function loadAttuneModule<T>(distFileName: string): Promise<T> {
 function exec(
   command: string,
   args: string[],
-  options: { cwd: string; timeout?: number },
+  options: { cwd: string; timeout?: number; env?: NodeJS.ProcessEnv },
 ): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     execFile(command, args, {
       cwd: options.cwd,
       timeout: options.timeout ?? 30_000,
-      env: process.env,
+      env: options.env ?? process.env,
       encoding: 'utf8',
       maxBuffer: 1024 * 1024 * 4,
     }, (error, stdout, stderr) => {
@@ -1124,4 +1128,9 @@ function exec(
       resolvePromise([stdout, stderr].filter(Boolean).join('\n'));
     });
   });
+}
+
+function runtimeNodeEnvironment(environment: EnvironmentInfo): NodeJS.ProcessEnv {
+  if (environment.nodePath !== process.execPath) return process.env;
+  return { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
 }
