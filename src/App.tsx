@@ -16,7 +16,8 @@ import chatgptIcon from './assets/apps/chatgpt.png';
 import slackIcon from './assets/apps/slack.png';
 import spotifyIcon from './assets/apps/spotify.png';
 import vscodeIcon from './assets/apps/vscode.png';
-import arrakisDunePreview from './assets/themes/arrakis-dune-thumbnail.png';
+import arrakisPreview from './assets/themes/arrakis.jpg';
+import cyberpunkPreview from './assets/themes/cyberpunk.jpg';
 import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo } from './vite-env';
 
 type BusyAction = 'refresh' | 'build' | 'profile' | 'wallpaper' | `profile-app:${string}`;
@@ -261,10 +262,15 @@ function ThemeCard({
 }
 
 function ThemePreview({ themeId }: { themeId: string }) {
-  if (themeId === 'arrakis') {
+  const imagePreview = {
+    arrakis: arrakisPreview,
+    cyberpunk: cyberpunkPreview,
+  }[themeId];
+
+  if (imagePreview) {
     return (
-      <span className="theme-preview theme-preview-arrakis" aria-hidden="true">
-        <img src={arrakisDunePreview} alt="" />
+      <span className={`theme-preview theme-preview-${themeId}`} aria-hidden="true">
+        <img src={imagePreview} alt="" />
       </span>
     );
   }
@@ -428,7 +434,7 @@ function buildAddThemePrompt(themesRoot: string | undefined): string {
 Theme request: [replace this with the style, mood, colors, or source of inspiration]
 Themes folder: ${themePath}
 Editable Arrakis theme: ${themePath}/arrakis
-Arrakis image: ${themePath}/arrakis/arrakis-dune-thumbnail.png
+Arrakis image: ${themePath}/arrakis/arrakis.jpg
 
 Read the editable Arrakis theme first. To adjust Arrakis, edit that folder directly. To create a new theme, create a new sibling folder with manifest.json, tokens.css, base-layout.css, and adapters for ChatGPT, Slack, Spotify, Visual Studio Code, and Claude. Do not edit the signed app bundle. Use relative adapter paths like "adapters/chatgpt.css". When done, tell me to click Refresh themes in Attune App.`;
 }

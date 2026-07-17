@@ -56,12 +56,16 @@ const USER_DATA_FOLDER_NAME = 'Attune';
 const PROFILE_TARGET_APP_NAMES = ['ChatGPT', 'Visual Studio Code', 'Spotify', 'Slack'];
 const AUTO_WRAP_INTERVAL_MS = 2000;
 const AUTO_WRAP_COOLDOWN_MS = 15000;
+const BUILT_IN_THEME_WALLPAPERS: Record<string, string> = {
+  arrakis: 'arrakis.jpg',
+  cyberpunk: 'cyberpunk.jpg',
+};
 const USER_THEMES_README = `# Attune User Themes
 
 Attune App loads custom themes from this folder.
 
 Arrakis is seeded here as an editable built-in theme, including
-arrakis-dune-thumbnail.png. Changes to arrakis appear in Attune App after
+arrakis.jpg. Changes to arrakis appear in Attune App after
 refreshing themes.
 
 Create a folder for each theme:
@@ -257,16 +261,18 @@ function seedEditableArrakisTheme(themesRoot: string, attuneRoot: string): void 
     });
   }
 
-  const arrakisImageSource = getBundledArrakisImagePath();
-  const arrakisImageTarget = join(arrakisTheme, 'arrakis-dune-thumbnail.png');
+  const arrakisImageSource = getBundledThemeWallpaperPath(DEFAULT_THEME_ID, attuneRoot);
+  const arrakisImageTarget = join(arrakisTheme, BUILT_IN_THEME_WALLPAPERS[DEFAULT_THEME_ID]);
   if (arrakisImageSource && !existsSync(arrakisImageTarget)) {
     copyFileSync(arrakisImageSource, arrakisImageTarget);
   }
 }
 
-function getBundledArrakisImagePath(): string | null {
-  const assetRoot = join(__dirname, '..', devServerUrl ? 'public' : 'dist', 'wallpapers');
-  const imagePath = join(assetRoot, 'arrakis-dune-thumbnail.png');
+function getBundledThemeWallpaperPath(themeId: string, attuneRoot = getEnvironment().attuneRoot): string | null {
+  const fileName = BUILT_IN_THEME_WALLPAPERS[themeId];
+  if (!fileName) return null;
+
+  const imagePath = join(attuneRoot, 'themes', themeId, fileName);
   return existsSync(imagePath) ? imagePath : null;
 }
 
@@ -603,17 +609,19 @@ function getWallpaperStorePath(): string {
 }
 
 function getThemeWallpaperPath(themeId: string): string | null {
-  const fileNameByTheme: Record<string, string> = {
-    arrakis: 'arrakis-dune-thumbnail.png',
-  };
-  const fileName = fileNameByTheme[themeId];
+  const fileName = BUILT_IN_THEME_WALLPAPERS[themeId];
   if (!fileName) return null;
   const environment = getEnvironment();
   const userThemeImage = join(environment.userThemesRoot, themeId, fileName);
   if (existsSync(userThemeImage)) return userThemeImage;
 
-  const bundledImage = getBundledArrakisImagePath();
-  return bundledImage ?? null;
+  // Preserve Arrakis artwork customized with the previous file name.
+  if (themeId === DEFAULT_THEME_ID) {
+    const legacyUserImage = join(environment.userThemesRoot, themeId, 'arrakis-dune-thumbnail.png');
+    if (existsSync(legacyUserImage)) return legacyUserImage;
+  }
+
+  return getBundledThemeWallpaperPath(themeId);
 }
 
 async function getDesktopWallpaperPaths(): Promise<string[]> {

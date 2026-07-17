@@ -11,16 +11,16 @@
 }
 
 @font-face {
-  font-family: "Interceptor";
-  src: url("./assets/fonts/Interceptor.otf") format("opentype");
+  font-family: "Rajdhani";
+  src: url("./assets/fonts/Rajdhani-Medium.ttf") format("truetype");
   font-display: swap;
   font-style: normal;
   font-weight: 400;
 }
 
 @font-face {
-  font-family: "Interceptor";
-  src: url("./assets/fonts/Interceptor-Bold.otf") format("opentype");
+  font-family: "Rajdhani";
+  src: url("./assets/fonts/Rajdhani-Bold.ttf") format("truetype");
   font-display: swap;
   font-style: normal;
   font-weight: 700;
@@ -113,7 +113,7 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
   --theme-line: #513265;
   --theme-row-hover: #211333;
   --theme-symbol: #1a1028;
-  font-family: "Interceptor", "SF Mono", Menlo, monospace;
+  font-family: "Rajdhani", "SF Mono", Menlo, monospace;
 }
 
 .workspace.theme-newsprint {
