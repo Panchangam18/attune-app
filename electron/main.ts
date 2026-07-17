@@ -474,7 +474,6 @@ function getWallpaperStorePath(): string {
 function getThemeWallpaperPath(themeId: string): string | null {
   const fileNameByTheme: Record<string, string> = {
     arrakis: 'arrakis-dune-thumbnail.png',
-    gryffindor: 'gryffindor-thumbnail.png',
   };
   const fileName = fileNameByTheme[themeId];
   if (!fileName) return null;

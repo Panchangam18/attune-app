@@ -13,7 +13,6 @@ import slackIcon from './assets/apps/slack.png';
 import spotifyIcon from './assets/apps/spotify.png';
 import vscodeIcon from './assets/apps/vscode.png';
 import arrakisDunePreview from './assets/themes/arrakis-dune-thumbnail.png';
-import gryffindorPreview from './assets/themes/gryffindor-thumbnail.png';
 import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo } from './vite-env';
 
 type BusyAction = 'refresh' | 'build' | 'profile' | 'wallpaper' | `profile-app:${string}`;
@@ -226,14 +225,6 @@ function ThemePreview({ themeId }: { themeId: string }) {
     return (
       <span className="theme-preview theme-preview-arrakis" aria-hidden="true">
         <img src={arrakisDunePreview} alt="" />
-      </span>
-    );
-  }
-
-  if (themeId === 'gryffindor') {
-    return (
-      <span className="theme-preview theme-preview-gryffindor" aria-hidden="true">
-        <img src={gryffindorPreview} alt="" />
       </span>
     );
   }
