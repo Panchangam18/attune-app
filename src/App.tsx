@@ -118,7 +118,7 @@ export function App() {
       <div className="window-drag-zone" aria-hidden="true" />
       <section className={`workspace theme-${selectedTheme?.id ?? 'default'}`}>
         <header className="toolbar">
-          <h1>Good day to <span className="attune-word">Attune</span></h1>
+          <h1>Tis a good day to <span className="attune-word">Attune</span></h1>
           <button
             className={settingsOpen ? 'icon-button settings-trigger active' : 'icon-button settings-trigger'}
             type="button"
