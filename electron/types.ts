@@ -47,6 +47,9 @@ export interface ThemeProfile {
   autoWrapEnabled: boolean;
   enabledAppIds: string[];
   targetAppNames: string[];
+  wallpaperRestorePaths: string[];
+  wallpaperRestoreBackupPath: string | null;
+  wallpaperEnabled: boolean;
 }
 
 export interface ThemeTargetStatus {

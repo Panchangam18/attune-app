@@ -1,24 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AppWindow,
-  Brush,
   Check,
+  CirclePause,
+  CirclePlay,
   CircleAlert,
-  FolderOpen,
-  Hammer,
   Loader2,
-  MoreHorizontal,
-  Play,
-  Square,
+  Settings,
 } from 'lucide-react';
 import chatgptIcon from './assets/apps/chatgpt.png';
 import slackIcon from './assets/apps/slack.png';
 import spotifyIcon from './assets/apps/spotify.png';
 import vscodeIcon from './assets/apps/vscode.png';
 import arrakisDunePreview from './assets/themes/arrakis-dune-thumbnail.png';
+import gryffindorPreview from './assets/themes/gryffindor-thumbnail.png';
 import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo } from './vite-env';
 
-type BusyAction = 'refresh' | 'build' | 'profile' | `apply:${string}` | `launch:${string}` | `stop:${string}` | `css:${string}`;
+type BusyAction = 'refresh' | 'build' | 'profile' | 'wallpaper' | `profile-app:${string}`;
 
 const statusLabels: Record<AttuneAppInfo['status'], string> = {
   attached: 'Open',
@@ -31,17 +29,13 @@ const statusLabels: Record<AttuneAppInfo['status'], string> = {
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null | undefined>(undefined);
-  const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [busy, setBusy] = useState<BusyAction | null>(null);
   const [notice, setNotice] = useState<{ kind: 'good' | 'bad' | 'info'; text: string } | null>(null);
 
   const selectedTheme = useMemo(() => (
     snapshot?.themes.find((theme) => theme.id === selectedThemeId) ?? null
   ), [selectedThemeId, snapshot?.themes]);
-
-  const selectedApp = useMemo(() => (
-    snapshot?.apps.find((appInfo) => appInfo.id === selectedAppId) ?? null
-  ), [selectedAppId, snapshot?.apps]);
 
   useEffect(() => {
     void refresh();
@@ -91,12 +85,15 @@ export function App() {
   }
 
   const runtimeReady = snapshot?.environment.runtimeBuilt ?? false;
+  const wallpaperEnabled = snapshot?.profile.wallpaperEnabled ?? true;
   const visibleApps = useMemo(() => (
     [...(snapshot?.apps ?? [])].sort((left, right) => {
-      if (left.themeEnabled !== right.themeEnabled) return left.themeEnabled ? -1 : 1;
+      const leftInThemeScope = selectedTheme !== null && left.targetProfileApp;
+      const rightInThemeScope = selectedTheme !== null && right.targetProfileApp;
+      if (leftInThemeScope !== rightInThemeScope) return leftInThemeScope ? -1 : 1;
       return left.name.localeCompare(right.name);
     })
-  ), [snapshot?.apps]);
+  ), [selectedTheme, snapshot?.apps]);
 
   return (
     <main className="shell">
@@ -104,7 +101,32 @@ export function App() {
       <section className={`workspace theme-${selectedTheme?.id ?? 'default'}`}>
         <header className="toolbar">
           <h1>Good day to <span className="attune-word">Attune</span></h1>
+          <button
+            className={settingsOpen ? 'icon-button settings-trigger active' : 'icon-button settings-trigger'}
+            type="button"
+            title="Settings"
+            aria-label="Settings"
+            aria-expanded={settingsOpen}
+            onClick={() => setSettingsOpen((open) => !open)}
+          >
+            <Settings size={18} />
+          </button>
         </header>
+
+        {settingsOpen && (
+          <section className="settings-panel" aria-label="Settings">
+            <label className="setting-row">
+              <span>Change desktop wallpaper with themes</span>
+              <input
+                className="wallpaper-toggle"
+                type="checkbox"
+                checked={wallpaperEnabled}
+                disabled={busy !== null}
+                onChange={(event) => runAction('wallpaper', () => window.attune.setWallpaperEnabled(event.target.checked), true, false)}
+              />
+            </label>
+          </section>
+        )}
 
         {notice && (
           <div className={`notice ${notice.kind}`}>
@@ -114,14 +136,8 @@ export function App() {
         )}
 
         {!runtimeReady && (
-          <div className="empty-state">
-            <div className="empty-icon"><Hammer size={24} /></div>
-            <h2>Runtime needs a quick build</h2>
-            <p>Compile the sibling Attune runtime, then this screen will find your compatible apps.</p>
-            <button className="button primary" type="button" disabled={busy !== null} onClick={() => runAction('build', window.attune.buildRuntime)}>
-              {busy === 'build' ? <Loader2 className="spin" size={17} /> : <Hammer size={17} />}
-              Build runtime
-            </button>
+          <div className="loading-state" role="status" aria-label="Loading">
+            <Loader2 className="loading-spinner spin" size={32} aria-hidden="true" />
           </div>
         )}
 
@@ -159,15 +175,14 @@ export function App() {
                     <AppRow
                       key={appInfo.id}
                       appInfo={appInfo}
-                      theme={selectedTheme}
                       busy={busy}
-                      expanded={selectedApp?.id === appInfo.id}
-                      onToggle={() => setSelectedAppId(selectedApp?.id === appInfo.id ? null : appInfo.id)}
-                      onApplyTheme={(appId, themeId) => runAction(`apply:${appId}`, () => window.attune.applyTheme(appId, themeId))}
-                      onCustomCss={(appId) => runAction(`css:${appId}`, () => window.attune.chooseCssFile(appId))}
-                      onLaunch={(appId) => runAction(`launch:${appId}`, () => window.attune.launch(appId))}
-                      onStop={(appId) => runAction(`stop:${appId}`, () => window.attune.stop(appId))}
-                      onOpenPath={(path) => window.attune.openPath(path)}
+                      themeActive={selectedTheme !== null && appInfo.targetProfileApp}
+                      onToggleTheme={(appId, enabled) => runAction(
+                        `profile-app:${appId}`,
+                        () => window.attune.setProfileAppEnabled(appId, enabled),
+                        true,
+                        false,
+                      )}
                     />
                   ))}
                 </div>
@@ -215,8 +230,16 @@ function ThemePreview({ themeId }: { themeId: string }) {
     );
   }
 
+  if (themeId === 'gryffindor') {
+    return (
+      <span className="theme-preview theme-preview-gryffindor" aria-hidden="true">
+        <img src={gryffindorPreview} alt="" />
+      </span>
+    );
+  }
+
   return (
-    <span className="theme-preview" aria-hidden="true">
+    <span className={`theme-preview theme-preview-${themeId}`} aria-hidden="true">
       <i /><i /><i />
     </span>
   );
@@ -224,75 +247,45 @@ function ThemePreview({ themeId }: { themeId: string }) {
 
 function AppRow({
   appInfo,
-  theme,
   busy,
-  expanded,
-  onToggle,
-  onApplyTheme,
-  onCustomCss,
-  onLaunch,
-  onStop,
-  onOpenPath,
+  themeActive,
+  onToggleTheme,
 }: {
   appInfo: AttuneAppInfo;
-  theme: ThemeInfo | null;
   busy: BusyAction | null;
-  expanded: boolean;
-  onToggle(): void;
-  onApplyTheme(appId: string, themeId: string): void;
-  onCustomCss(appId: string): void;
-  onLaunch(appId: string): void;
-  onStop(appId: string): void;
-  onOpenPath(path: string): void;
+  themeActive: boolean;
+  onToggleTheme(appId: string, enabled: boolean): void;
 }) {
-  const adapter = theme?.adapters.find((candidate) => {
-    const left = normalize(candidate.appName);
-    const right = normalize(appInfo.name);
-    return candidate.available && (left === right || left.includes(right) || right.includes(left));
-  });
   const icon = appInfo.iconDataUrl ?? appIcon(appInfo.name);
+  const actionBusy = busy === `profile-app:${appInfo.id}`;
 
   return (
-    <div className={expanded ? 'app-entry expanded' : 'app-entry'}>
-      <button className="app-row" type="button" onClick={onToggle} aria-expanded={expanded}>
+    <div className="app-entry">
+      <div className="app-row">
         <span className={`app-symbol ${appInfo.status}`}>
           {icon
             ? <img src={icon} alt="" />
             : appInitials(appInfo.name)}
         </span>
         <span className="app-copy">
-          <strong>{appInfo.name}</strong>
-          <small>{appInfo.runtime === 'electron' ? 'Electron' : 'Chromium'} · {adapter ? `${theme?.name} ready` : 'Custom CSS'}</small>
+          <span className="app-name-line">
+            <strong>{appInfo.name}</strong>
+            {themeActive && (
+              <button
+                className="icon-button session-button"
+                title={appInfo.themeEnabled ? `Pause ${appInfo.name} theme` : `Play ${appInfo.name} theme`}
+                type="button"
+                disabled={busy !== null}
+                onClick={() => onToggleTheme(appInfo.id, !appInfo.themeEnabled)}
+              >
+                {actionBusy ? <Loader2 className="spin" size={17} /> : appInfo.themeEnabled ? <CirclePause size={18} /> : <CirclePlay size={18} />}
+              </button>
+            )}
+          </span>
         </span>
         <span className={`status ${appInfo.status}`}><i />{statusLabels[appInfo.status]}</span>
         <span className="theme-state">{appInfo.themeEnabled ? <><Check size={14} /> Themed</> : 'Not themed'}</span>
-        <MoreHorizontal className="more-icon" size={18} />
-      </button>
-
-      {expanded && (
-        <div className="app-details">
-          <div className="app-meta">
-            <span><small>Bundle</small>{appInfo.bundleId ?? '-'}</span>
-            <span><small>Targets</small>{appInfo.targetCount}</span>
-            <span><small>Port</small>{appInfo.port ?? '-'}</span>
-          </div>
-          <div className="row-actions">
-            <button className="button primary" type="button" disabled={!theme || !adapter || busy !== null} onClick={() => theme && onApplyTheme(appInfo.id, theme.id)}>
-              {busy === `apply:${appInfo.id}` ? <Loader2 className="spin" size={16} /> : <Brush size={16} />} Apply
-            </button>
-            <button className="icon-button" title="Choose CSS file" type="button" disabled={busy !== null} onClick={() => onCustomCss(appInfo.id)}>
-              {busy === `css:${appInfo.id}` ? <Loader2 className="spin" size={16} /> : <FolderOpen size={16} />}
-            </button>
-            <button className="icon-button" title="Launch with Attune" type="button" disabled={busy !== null} onClick={() => onLaunch(appInfo.id)}>
-              {busy === `launch:${appInfo.id}` ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
-            </button>
-            <button className="icon-button" title="Stop session" type="button" disabled={busy !== null} onClick={() => onStop(appInfo.id)}>
-              {busy === `stop:${appInfo.id}` ? <Loader2 className="spin" size={16} /> : <Square size={15} />}
-            </button>
-            <button className="path-button" type="button" onClick={() => onOpenPath(appInfo.path)}>{appInfo.path}</button>
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -310,14 +303,6 @@ function appIcon(name: string): string | null {
     'Visual Studio Code': vscodeIcon,
   };
   return icons[name] ?? null;
-}
-
-function normalize(value: string): string {
-  return value.toLowerCase()
-    .replace(/\bvisual studio code\b/g, 'vscode')
-    .replace(/\bvs code\b/g, 'vscode')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
 }
 
 function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: string): Promise<T> {

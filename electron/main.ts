@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron';
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
@@ -66,6 +66,7 @@ app.whenReady().then(() => {
   registerIpc();
   createWindow();
   startAutoWrapMonitor();
+  void syncActiveThemeWallpaper();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -112,6 +113,12 @@ function registerIpc(): void {
   ));
   ipcMain.handle('attune:set-profile-enabled', async (_event, payload: { themeId: string; enabled: boolean }) => (
     wrap(() => setProfileEnabled(payload.themeId, payload.enabled))
+  ));
+  ipcMain.handle('attune:set-wallpaper-enabled', async (_event, payload: { enabled: boolean }) => (
+    wrap(() => setWallpaperEnabled(payload.enabled))
+  ));
+  ipcMain.handle('attune:set-profile-app-enabled', async (_event, payload: { appId: string; enabled: boolean }) => (
+    wrap(() => setProfileAppEnabled(payload.appId, payload.enabled))
   ));
   ipcMain.handle('attune:set-auto-wrap-enabled', async (_event, payload: { enabled: boolean }) => (
     wrap(() => setAutoWrapEnabled(payload.enabled))
@@ -267,6 +274,14 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
       throw new Error(`Missing ${theme.name} adapter for ${missingAdapters.map((target) => target.appInfo.name).join(', ')}.`);
     }
 
+    const profile = readProfile();
+    const wallpaperRestoreBackupPath = profile.wallpaperEnabled
+      ? profile.wallpaperRestoreBackupPath ?? backupWallpaperConfiguration()
+      : null;
+    const wallpaperRestorePaths = profile.wallpaperEnabled
+      ? await applyThemeWallpaper(themeId, profile.wallpaperRestorePaths)
+      : [];
+
     for (const target of targetApps) {
       const cssPath = target.adapter?.absolutePath;
       if (!cssPath) continue;
@@ -279,6 +294,9 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
       autoWrapEnabled: true,
       enabledAppIds: targetApps.map((target) => target.appId),
       targetAppNames: PROFILE_TARGET_APP_NAMES,
+      wallpaperRestorePaths,
+      wallpaperRestoreBackupPath,
+      wallpaperEnabled: profile.wallpaperEnabled,
     });
     void runAutoWrapPass();
 
@@ -290,15 +308,226 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
     configModule.setStylesheetSource(target.appId, '', '');
   }
 
+  const profile = readProfile();
+  await restoreDesktopWallpapers(profile.wallpaperRestorePaths);
+  await restoreWallpaperConfiguration(profile.wallpaperRestoreBackupPath);
   writeProfile({
     activeThemeId: themeId,
     enabled: false,
-    autoWrapEnabled: readProfile().autoWrapEnabled,
+    autoWrapEnabled: profile.autoWrapEnabled,
     enabledAppIds: [],
     targetAppNames: PROFILE_TARGET_APP_NAMES,
+    wallpaperRestorePaths: [],
+    wallpaperRestoreBackupPath: null,
+    wallpaperEnabled: profile.wallpaperEnabled,
   });
 
   return `${theme.name} disabled for the target apps.`;
+}
+
+async function setProfileAppEnabled(appId: string, enabled: boolean): Promise<string> {
+  const profile = readProfile();
+  if (!profile.enabled) throw new Error('Select a theme before changing an application.');
+
+  const environment = getEnvironment();
+  const [scanModule, configModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<ConfigModule>('config.js'),
+  ]);
+  const appInfo = findDiscoveredApp(scanModule, appId);
+  if (!isProfileTarget(appInfo.name)) throw new Error(`${appInfo.name} is not included in this theme profile.`);
+
+  const theme = discoverThemes(environment.attuneRoot).find((candidate) => candidate.id === profile.activeThemeId);
+  if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
+  const adapter = findMatchingAdapter(theme, appInfo.name);
+  if (!adapter?.absolutePath) throw new Error(`${theme.name} has no available adapter for ${appInfo.name}.`);
+
+  const enabledAppIds = new Set(profile.enabledAppIds);
+  if (enabled) {
+    configModule.setStylesheetSource(appId, adapter.absolutePath, readFileSync(adapter.absolutePath, 'utf8'));
+    enabledAppIds.add(appId);
+  } else {
+    configModule.setStylesheetSource(appId, '', '');
+    enabledAppIds.delete(appId);
+  }
+
+  writeProfile({ ...profile, enabledAppIds: [...enabledAppIds] });
+  await attachRunningSessionIfAvailable(appInfo, appId, environment, scanModule);
+  return enabled ? `${theme.name} enabled for ${appInfo.name}.` : `${theme.name} disabled for ${appInfo.name}.`;
+}
+
+async function attachRunningSessionIfAvailable(
+  appInfo: DiscoveredApp,
+  appId: string,
+  environment: EnvironmentInfo,
+  scanModule: ScanModule,
+): Promise<void> {
+  const sessionModule = await loadAttuneModule<SessionModule>('session.js');
+  if (sessionModule.getSession(appId)) return;
+
+  const executablePath = scanModule.getAppExecutablePath(appInfo);
+  const port = await findRemoteDebuggingPort(executablePath);
+  if (!port) return;
+
+  await exec(environment.nodePath, [environment.cliPath, 'attach', appInfo.name, String(port)], {
+    cwd: environment.attuneRoot,
+    timeout: 5000,
+  });
+}
+
+async function findRemoteDebuggingPort(executablePath: string): Promise<number | null> {
+  try {
+    const processList = await exec('ps', ['-ax', '-o', 'command='], { cwd: process.cwd(), timeout: 3000 });
+    const matchingProcess = processList
+      .split('\n')
+      .find((command) => command.includes(executablePath) && /--remote-debugging-port=\d+/.test(command));
+    const port = matchingProcess?.match(/--remote-debugging-port=(\d+)/)?.[1];
+    return port ? Number(port) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function setWallpaperEnabled(enabled: boolean): Promise<string> {
+  const profile = readProfile();
+  if (!enabled) {
+    await restoreDesktopWallpapers(profile.wallpaperRestorePaths);
+    await restoreWallpaperConfiguration(profile.wallpaperRestoreBackupPath);
+    writeProfile({
+      ...profile,
+      wallpaperEnabled: false,
+      wallpaperRestorePaths: [],
+      wallpaperRestoreBackupPath: null,
+    });
+    return 'Theme wallpaper disabled.';
+  }
+
+  if (!profile.enabled) {
+    writeProfile({ ...profile, wallpaperEnabled: true });
+    return 'Theme wallpaper enabled.';
+  }
+
+  const wallpaperRestoreBackupPath = profile.wallpaperRestoreBackupPath ?? backupWallpaperConfiguration();
+  const wallpaperRestorePaths = await applyThemeWallpaper(profile.activeThemeId, profile.wallpaperRestorePaths);
+  writeProfile({
+    ...profile,
+    wallpaperEnabled: true,
+    wallpaperRestorePaths,
+    wallpaperRestoreBackupPath,
+  });
+  return 'Theme wallpaper enabled.';
+}
+
+async function syncActiveThemeWallpaper(): Promise<void> {
+  const profile = readProfile();
+  if (!profile.enabled || !profile.wallpaperEnabled || profile.wallpaperRestorePaths.length > 0 || profile.wallpaperRestoreBackupPath) return;
+
+  try {
+    const wallpaperRestoreBackupPath = profile.wallpaperRestoreBackupPath ?? backupWallpaperConfiguration();
+    const wallpaperRestorePaths = await applyThemeWallpaper(profile.activeThemeId, []);
+    if (wallpaperRestorePaths.length > 0 || wallpaperRestoreBackupPath) {
+      writeProfile({ ...profile, wallpaperRestorePaths, wallpaperRestoreBackupPath });
+    }
+  } catch (error) {
+    console.warn('[attune] unable to sync theme wallpaper:', error);
+  }
+}
+
+async function applyThemeWallpaper(themeId: string, restorePaths: string[]): Promise<string[]> {
+  const wallpaperPath = getThemeWallpaperPath(themeId);
+  if (!wallpaperPath) return restorePaths;
+  if (!existsSync(wallpaperPath)) throw new Error(`Theme wallpaper not found: ${wallpaperPath}`);
+
+  const savedRestorePaths = restorePaths.length > 0 ? restorePaths : await getDesktopWallpaperPaths();
+  await setAllDesktopWallpapers(wallpaperPath);
+  return savedRestorePaths;
+}
+
+async function restoreDesktopWallpapers(paths: string[]): Promise<void> {
+  if (paths.length === 0) return;
+  await Promise.all(paths.map((wallpaperPath, index) => setDesktopWallpaper(index + 1, wallpaperPath)));
+}
+
+function backupWallpaperConfiguration(): string | null {
+  const sourcePath = getWallpaperStorePath();
+  if (!existsSync(sourcePath)) return null;
+
+  const backupPath = join(app.getPath('userData'), 'wallpaper-restore.plist');
+  copyFileSync(sourcePath, backupPath);
+  return backupPath;
+}
+
+async function restoreWallpaperConfiguration(backupPath: string | null): Promise<void> {
+  if (!backupPath || !existsSync(backupPath)) return;
+  copyFileSync(backupPath, getWallpaperStorePath());
+  try {
+    await exec('killall', ['WallpaperAgent'], { cwd: process.cwd(), timeout: 3000 });
+  } catch {
+    // macOS restarts this agent automatically when it is present.
+  }
+}
+
+function getWallpaperStorePath(): string {
+  return join(app.getPath('home'), 'Library', 'Application Support', 'com.apple.wallpaper', 'Store', 'Index.plist');
+}
+
+function getThemeWallpaperPath(themeId: string): string | null {
+  const fileNameByTheme: Record<string, string> = {
+    arrakis: 'arrakis-dune-thumbnail.png',
+    gryffindor: 'gryffindor-thumbnail.png',
+  };
+  const fileName = fileNameByTheme[themeId];
+  if (!fileName) return null;
+  const assetRoot = join(__dirname, '..', devServerUrl ? 'public' : 'dist', 'wallpapers');
+  return join(assetRoot, fileName);
+}
+
+async function getDesktopWallpaperPaths(): Promise<string[]> {
+  const script = `
+tell application "System Events"
+  set wallpaperPaths to {}
+  repeat with desktopItem in desktops
+    try
+      set pictureFile to picture of desktopItem
+      if pictureFile is not missing value then
+        set end of wallpaperPaths to POSIX path of pictureFile
+      end if
+    end try
+  end repeat
+  set AppleScript's text item delimiters to linefeed
+  return wallpaperPaths as text
+end tell`;
+  const output = await exec('osascript', ['-e', script], { cwd: process.cwd(), timeout: 5000 });
+  return output.split(/\r?\n/).map((path) => path.trim()).filter(Boolean);
+}
+
+async function setAllDesktopWallpapers(wallpaperPath: string): Promise<void> {
+  const encodedPath = Buffer.from(wallpaperPath).toString('base64');
+  const script = `
+import AppKit
+import Foundation
+let data = Data(base64Encoded: "${encodedPath}")!
+let path = String(data: data, encoding: .utf8)!
+let wallpaperURL = URL(fileURLWithPath: path)
+for screen in NSScreen.screens {
+  try NSWorkspace.shared.setDesktopImageURL(wallpaperURL, for: screen, options: [:])
+}`;
+  await exec('/usr/bin/swift', ['-e', script], { cwd: process.cwd(), timeout: 30000 });
+}
+
+async function setDesktopWallpaper(desktopIndex: number, wallpaperPath: string): Promise<void> {
+  if (!existsSync(wallpaperPath)) return;
+  const encodedPath = Buffer.from(wallpaperPath).toString('base64');
+  const script = `
+import AppKit
+import Foundation
+let data = Data(base64Encoded: "${encodedPath}")!
+let path = String(data: data, encoding: .utf8)!
+let screens = NSScreen.screens
+if screens.indices.contains(${desktopIndex - 1}) {
+  try NSWorkspace.shared.setDesktopImageURL(URL(fileURLWithPath: path), for: screens[${desktopIndex - 1}], options: [:])
+}`;
+  await exec('/usr/bin/swift', ['-e', script], { cwd: process.cwd(), timeout: 30000 });
 }
 
 function setAutoWrapEnabled(enabled: boolean): string {
@@ -477,7 +706,11 @@ async function buildRuntime(): Promise<string> {
   }
 
   const buildOutput = await exec('npm', ['run', 'build'], { cwd: environment.attuneRoot, timeout: 120_000 });
-  const themeOutput = await exec('npm', ['run', 'build:arrakis'], { cwd: environment.attuneRoot, timeout: 120_000 });
+  const packageJson = JSON.parse(readFileSync(join(environment.attuneRoot, 'package.json'), 'utf8')) as {
+    scripts?: Record<string, string>;
+  };
+  const themeBuildScript = packageJson.scripts?.['build:themes'] ? 'build:themes' : 'build:arrakis';
+  const themeOutput = await exec('npm', ['run', themeBuildScript], { cwd: environment.attuneRoot, timeout: 120_000 });
   return [buildOutput, themeOutput].filter(Boolean).join('\n').trim() || 'Attune runtime built.';
 }
 
@@ -573,6 +806,9 @@ function readProfile(): ThemeProfile {
     autoWrapEnabled: false,
     enabledAppIds: [],
     targetAppNames: PROFILE_TARGET_APP_NAMES,
+    wallpaperRestorePaths: [],
+    wallpaperRestoreBackupPath: null,
+    wallpaperEnabled: true,
   };
 
   try {
@@ -585,6 +821,15 @@ function readProfile(): ThemeProfile {
         ? raw.enabledAppIds.filter((id): id is string => typeof id === 'string')
         : defaultProfile.enabledAppIds,
       targetAppNames: defaultProfile.targetAppNames,
+      wallpaperRestorePaths: Array.isArray(raw.wallpaperRestorePaths)
+        ? raw.wallpaperRestorePaths.filter((path): path is string => typeof path === 'string')
+        : defaultProfile.wallpaperRestorePaths,
+      wallpaperRestoreBackupPath: typeof raw.wallpaperRestoreBackupPath === 'string'
+        ? raw.wallpaperRestoreBackupPath
+        : defaultProfile.wallpaperRestoreBackupPath,
+      wallpaperEnabled: typeof raw.wallpaperEnabled === 'boolean'
+        ? raw.wallpaperEnabled
+        : defaultProfile.wallpaperEnabled,
     };
   } catch {
     return defaultProfile;

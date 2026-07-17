@@ -49,6 +49,9 @@ export interface ThemeProfile {
   autoWrapEnabled: boolean;
   enabledAppIds: string[];
   targetAppNames: string[];
+  wallpaperRestorePaths: string[];
+  wallpaperRestoreBackupPath: string | null;
+  wallpaperEnabled: boolean;
 }
 
 export interface ThemeTargetStatus {
@@ -80,6 +83,8 @@ interface AttuneApi {
   buildRuntime(): Promise<ActionResult<string>>;
   applyTheme(appId: string, themeId: string): Promise<ActionResult<string>>;
   setProfileEnabled(themeId: string, enabled: boolean): Promise<ActionResult<string>>;
+  setWallpaperEnabled(enabled: boolean): Promise<ActionResult<string>>;
+  setProfileAppEnabled(appId: string, enabled: boolean): Promise<ActionResult<string>>;
   setAutoWrapEnabled(enabled: boolean): Promise<ActionResult<string>>;
   chooseCssFile(appId: string): Promise<ActionResult<string>>;
   launch(appId: string): Promise<ActionResult<string>>;
