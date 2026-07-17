@@ -34,6 +34,22 @@
   font-weight: 400;
 }
 
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  src: url("./assets/fonts/ZenKakuGothicNew-Regular.ttf") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Zen Kaku Gothic New";
+  src: url("./assets/fonts/ZenKakuGothicNew-Bold.ttf") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 700;
+}
+
 :root {
   color: #ebe9e4;
   background: #101211;
@@ -141,6 +157,26 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
   --theme-row-hover: #0c220b;
   --theme-symbol: #061105;
   font-family: "OCRA", "SF Mono", Menlo, monospace;
+}
+
+.workspace.theme-tama-river {
+  --bg: #d9d6b6;
+  --surface: #d1ceb0;
+  --surface-2: #c0c5ac;
+  --line: #9eaa97;
+  --muted: #40717b;
+  --text: #0d3456;
+  --spice: #204960;
+  --spice-soft: #adb69f;
+  --sand: #588087;
+  --green: #306374;
+  --theme-accent: #204960;
+  --theme-muted: #c0c5ac;
+  --theme-line: #9eaa97;
+  --theme-row-hover: #adb69f;
+  --theme-symbol: #d1ceb0;
+  color: var(--text);
+  font-family: "Zen Kaku Gothic New", sans-serif;
 }
 
 .toolbar {

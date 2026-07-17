@@ -19,6 +19,7 @@ import vscodeIcon from './assets/apps/vscode.png';
 import arrakisPreview from './assets/themes/arrakis.jpg';
 import cyberpunkPreview from './assets/themes/cyberpunk.jpg';
 import matrixPreview from './assets/themes/matrix.jpg';
+import tamaRiverPreview from './assets/themes/tama-river.jpg';
 import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo } from './vite-env';
 
 type BusyAction = 'refresh' | 'build' | 'profile' | 'wallpaper' | `profile-app:${string}`;
@@ -267,6 +268,7 @@ function ThemePreview({ themeId }: { themeId: string }) {
     arrakis: arrakisPreview,
     cyberpunk: cyberpunkPreview,
     matrix: matrixPreview,
+    'tama-river': tamaRiverPreview,
   }[themeId];
 
   if (imagePreview) {

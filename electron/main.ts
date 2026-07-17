@@ -60,6 +60,7 @@ const BUILT_IN_THEME_WALLPAPERS: Record<string, string> = {
   arrakis: 'arrakis.jpg',
   cyberpunk: 'cyberpunk.jpg',
   matrix: 'matrix.jpg',
+  'tama-river': 'tama-river.jpg',
 };
 const USER_THEMES_README = `# Attune User Themes
 
