@@ -17,7 +17,12 @@ async function renderIcon() {
   });
 
   await window.loadFile(join(__dirname, '..', 'build', 'icon.html'));
-  await window.webContents.executeJavaScript('document.fonts.ready');
+  await window.webContents.executeJavaScript(`
+    (async () => {
+      await document.fonts.ready;
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    })();
+  `);
   const image = await window.webContents.capturePage({ x: 0, y: 0, width: 1024, height: 1024 });
   await writeFile(join(__dirname, '..', 'build', 'icon.png'), image.toPNG());
   await app.quit();
