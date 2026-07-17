@@ -224,12 +224,17 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
 .themes-overview { margin-bottom: 34px; }
 .themes-overview h2,
 .section-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: 0; }
-.theme-gallery { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; }
+.theme-gallery {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 14px;
+}
 .theme-card {
   position: relative;
   display: grid;
   gap: 8px;
-  width: 184px;
+  width: 100%;
   padding: 0;
   border: 0;
   border-radius: 0;
