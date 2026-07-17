@@ -81,6 +81,52 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
   --theme-symbol: #2c2b21;
 }
 
+.workspace.theme-cyberpunk {
+  --bg: #090711;
+  --surface: #100b1a;
+  --surface-2: #1a1028;
+  --line: #513265;
+  --muted: #bcaec9;
+  --text: #f5efff;
+  --spice: #ff3da6;
+  --spice-soft: #3d1532;
+  --sand: #00e5ff;
+  --green: #b6f35c;
+  --theme-accent: #00e5ff;
+  --theme-muted: #130d20;
+  --theme-line: #513265;
+  --theme-row-hover: #211333;
+  --theme-symbol: #1a1028;
+}
+
+.workspace.theme-newsprint {
+  --bg: #f3eee2;
+  --surface: #fcf8ef;
+  --surface-2: #e8dfcd;
+  --line: #c8bda9;
+  --muted: #6b6256;
+  --text: #27221a;
+  --spice: #ad392f;
+  --spice-soft: #ead0c7;
+  --sand: #315967;
+  --green: #547a5a;
+  --theme-accent: #ad392f;
+  --theme-muted: #e8dfcd;
+  --theme-line: #c8bda9;
+  --theme-row-hover: #eee6d7;
+  --theme-symbol: #f7f1e5;
+  color: var(--text);
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.workspace.theme-newsprint .toolbar h1,
+.workspace.theme-newsprint h2,
+.workspace.theme-newsprint .theme-card,
+.workspace.theme-newsprint .setting-row,
+.workspace.theme-newsprint .app-copy strong {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
 .toolbar {
   display: flex;
   align-items: center;
@@ -152,6 +198,22 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
 .theme-preview i:nth-child(2) { top: 32%; left: -17%; background: #d8c88f; }
 .theme-preview i:nth-child(3) { top: 71%; left: -12%; background: #546e63; }
 .theme-preview img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.theme-preview-cyberpunk {
+  background: #090711;
+  box-shadow: inset 0 0 0 1px #00e5ff, inset 0 -7px 0 #ff3da6;
+}
+.theme-preview-cyberpunk i { left: 12%; width: 76%; height: 6%; transform: none; }
+.theme-preview-cyberpunk i:nth-child(1) { top: 20%; background: #00e5ff; }
+.theme-preview-cyberpunk i:nth-child(2) { top: 48%; background: #ff3da6; }
+.theme-preview-cyberpunk i:nth-child(3) { top: 74%; background: #b6f35c; }
+.theme-preview-newsprint {
+  background: #f3eee2;
+  box-shadow: inset 0 0 0 1px #c8bda9, inset 0 -7px 0 #ad392f;
+}
+.theme-preview-newsprint i { left: 16%; width: 68%; height: 5%; transform: none; }
+.theme-preview-newsprint i:nth-child(1) { top: 22%; background: #27221a; }
+.theme-preview-newsprint i:nth-child(2) { top: 44%; background: #315967; }
+.theme-preview-newsprint i:nth-child(3) { top: 68%; background: #27221a; }
 .theme-check { position: absolute; top: 8px; right: 8px; color: #16160f; background: var(--theme-accent); }
 .add-theme-preview {
   display: grid;
