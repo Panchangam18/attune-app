@@ -18,7 +18,7 @@ import spotifyIcon from './assets/apps/spotify.png';
 import vscodeIcon from './assets/apps/vscode.png';
 import arrakisPreview from './assets/themes/arrakis.jpg';
 import cyberpunkPreview from './assets/themes/cyberpunk.jpg';
-import matrixPreview from './assets/themes/matrix.jpg';
+import starryNightPreview from './assets/themes/starry-night.jpg';
 import tamaRiverPreview from './assets/themes/tama-river.jpg';
 import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo } from './vite-env';
 
@@ -267,7 +267,7 @@ function ThemePreview({ themeId }: { themeId: string }) {
   const imagePreview = {
     arrakis: arrakisPreview,
     cyberpunk: cyberpunkPreview,
-    matrix: matrixPreview,
+    'starry-night': starryNightPreview,
     'tama-river': tamaRiverPreview,
   }[themeId];
 

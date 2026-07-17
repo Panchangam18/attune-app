@@ -27,14 +27,6 @@
 }
 
 @font-face {
-  font-family: "OCRA";
-  src: url("./assets/fonts/OCRA.ttf") format("truetype");
-  font-display: swap;
-  font-style: normal;
-  font-weight: 400;
-}
-
-@font-face {
   font-family: "Zen Kaku Gothic New";
   src: url("./assets/fonts/ZenKakuGothicNew-Regular.ttf") format("truetype");
   font-display: swap;
@@ -48,6 +40,14 @@
   font-display: swap;
   font-style: normal;
   font-weight: 700;
+}
+
+@font-face {
+  font-family: "Playfair Display";
+  src: url("./assets/fonts/PlayfairDisplay[wght].ttf") format("truetype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400 900;
 }
 
 :root {
@@ -140,23 +140,23 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
   font-family: "Rajdhani", "SF Mono", Menlo, monospace;
 }
 
-.workspace.theme-matrix {
-  --bg: #020702;
-  --surface: #061105;
-  --surface-2: #091a07;
-  --line: #1a5015;
-  --muted: #7ba86e;
-  --text: #d9ffd0;
-  --spice: #65ff24;
-  --spice-soft: #0c220b;
-  --sand: #22c55e;
-  --green: #a6ff70;
-  --theme-accent: #65ff24;
-  --theme-muted: #071307;
-  --theme-line: #1a5015;
-  --theme-row-hover: #0c220b;
-  --theme-symbol: #061105;
-  font-family: "OCRA", "SF Mono", Menlo, monospace;
+.workspace.theme-starry-night {
+  --bg: #191823;
+  --surface: #192b4e;
+  --surface-2: #224580;
+  --line: #326293;
+  --muted: #c1dbbf;
+  --text: #ebf2ca;
+  --spice: #ebe17d;
+  --spice-soft: #31475d;
+  --sand: #80bbc9;
+  --green: #ebe17d;
+  --theme-accent: #ebe17d;
+  --theme-muted: #192b4e;
+  --theme-line: #326293;
+  --theme-row-hover: #224580;
+  --theme-symbol: #31475d;
+  font-family: "Playfair Display", Georgia, serif;
 }
 
 .workspace.theme-tama-river {
@@ -181,6 +181,10 @@ button:focus-visible { outline: 2px solid var(--sand); outline-offset: 2px; }
 
 .shell:has(.workspace.theme-tama-river) {
   background: #d9d6b6;
+}
+
+.shell:has(.workspace.theme-starry-night) {
+  background: #191823;
 }
 
 .toolbar {
