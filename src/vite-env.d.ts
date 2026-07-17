@@ -22,6 +22,7 @@ export interface AttuneAppInfo {
 export interface ThemeAdapterInfo {
   appName: string;
   source: string;
+  sourcePath: string | null;
   output: string | null;
   runtime: string;
   canvas: string | null;
@@ -33,6 +34,8 @@ export interface ThemeInfo {
   id: string;
   name: string;
   description: string;
+  tokensPath: string | null;
+  baseLayoutPath: string | null;
   adapters: ThemeAdapterInfo[];
 }
 
@@ -81,6 +84,7 @@ export interface ActionResult<T = unknown> {
 
 interface AttuneApi {
   snapshot(): Promise<ActionResult<Snapshot>>;
+  refreshThemes(): Promise<ActionResult<string>>;
   buildRuntime(): Promise<ActionResult<string>>;
   applyTheme(appId: string, themeId: string): Promise<ActionResult<string>>;
   setProfileEnabled(themeId: string, enabled: boolean): Promise<ActionResult<string>>;

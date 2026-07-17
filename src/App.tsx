@@ -72,6 +72,10 @@ export function App() {
     setBusy(null);
   }
 
+  async function refreshThemes() {
+    await runAction('refresh', () => window.attune.refreshThemes(), true, false);
+  }
+
   async function runAction<T>(
     action: BusyAction,
     operation: () => Promise<ActionResult<T>>,
@@ -222,7 +226,7 @@ export function App() {
             themesRoot={snapshot?.environment.userThemesRoot}
             onClose={() => setAddThemeOpen(false)}
             onCopy={copyAddThemePrompt}
-            onRefreshThemes={refresh}
+            onRefreshThemes={refreshThemes}
           />
         )}
       </section>

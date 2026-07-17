@@ -20,6 +20,7 @@ export interface AttuneAppInfo {
 export interface ThemeAdapterInfo {
   appName: string;
   source: string;
+  sourcePath: string | null;
   output: string | null;
   runtime: string;
   canvas: string | null;
@@ -31,6 +32,8 @@ export interface ThemeInfo {
   id: string;
   name: string;
   description: string;
+  tokensPath: string | null;
+  baseLayoutPath: string | null;
   adapters: ThemeAdapterInfo[];
 }
 

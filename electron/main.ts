@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron';
 import { execFile } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   ActionResult,
@@ -159,6 +159,7 @@ function createWindow(): void {
 
 function registerIpc(): void {
   ipcMain.handle('attune:snapshot', async (): Promise<ActionResult<Snapshot>> => wrap(() => getSnapshot()));
+  ipcMain.handle('attune:refresh-themes', async (): Promise<ActionResult<string>> => wrap(() => refreshThemes()));
   ipcMain.handle('attune:build-runtime', async (): Promise<ActionResult<string>> => wrap(() => buildRuntime()));
   ipcMain.handle('attune:apply-theme', async (_event, payload: { appId: string; themeId: string }) => (
     wrap(() => applyTheme(payload.appId, payload.themeId))
@@ -347,9 +348,38 @@ async function applyTheme(appId: string, themeId: string): Promise<string> {
     throw new Error(`${theme.name} does not include an available adapter for ${appInfo.name}.`);
   }
 
-  const css = readFileSync(adapter.absolutePath, 'utf8');
-  configModule.setStylesheetSource(appId, adapter.absolutePath, css);
+  const stylesheet = compileThemeStylesheet(theme, adapter);
+  configModule.setStylesheetSource(appId, stylesheet.path, stylesheet.css);
   return `${theme.name} applied to ${appInfo.name}.`;
+}
+
+async function refreshThemes(): Promise<string> {
+  const profile = readProfile();
+  if (!profile.enabled) return 'Themes refreshed.';
+
+  const environment = getEnvironment();
+  const [scanModule, configModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<ConfigModule>('config.js'),
+  ]);
+  const theme = discoverThemes(environment).find((candidate) => candidate.id === profile.activeThemeId);
+  if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
+
+  const enabledApps = scanModule.scanForSupportedApps()
+    .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }))
+    .filter((target) => profile.enabledAppIds.includes(target.appId));
+
+  for (const target of enabledApps) {
+    const adapter = findMatchingAdapter(theme, target.appInfo.name);
+    if (!adapter?.absolutePath) {
+      throw new Error(`${theme.name} has no available adapter for ${target.appInfo.name}.`);
+    }
+    const stylesheet = compileThemeStylesheet(theme, adapter);
+    configModule.setStylesheetSource(target.appId, stylesheet.path, stylesheet.css);
+  }
+
+  void runAutoWrapPass();
+  return `${theme.name} refreshed for ${enabledApps.length} ${enabledApps.length === 1 ? 'app' : 'apps'}.`;
 }
 
 async function setProfileEnabled(themeId: string, enabled: boolean): Promise<string> {
@@ -380,9 +410,9 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
       : [];
 
     for (const target of targetApps) {
-      const cssPath = target.adapter?.absolutePath;
-      if (!cssPath) continue;
-      configModule.setStylesheetSource(target.appId, cssPath, readFileSync(cssPath, 'utf8'));
+      if (!target.adapter?.absolutePath) continue;
+      const stylesheet = compileThemeStylesheet(theme, target.adapter);
+      configModule.setStylesheetSource(target.appId, stylesheet.path, stylesheet.css);
     }
 
     writeProfile({
@@ -441,7 +471,8 @@ async function setProfileAppEnabled(appId: string, enabled: boolean): Promise<st
 
   const enabledAppIds = new Set(profile.enabledAppIds);
   if (enabled) {
-    configModule.setStylesheetSource(appId, adapter.absolutePath, readFileSync(adapter.absolutePath, 'utf8'));
+    const stylesheet = compileThemeStylesheet(theme, adapter);
+    configModule.setStylesheetSource(appId, stylesheet.path, stylesheet.css);
     enabledAppIds.add(appId);
   } else {
     configModule.setStylesheetSource(appId, '', '');
@@ -686,7 +717,8 @@ async function ensureConfiguredForLaunch(appInfo: DiscoveredApp, appId: string):
   if (!adapter?.absolutePath) throw new Error(`${theme.name} has no available adapter for ${appInfo.name}.`);
 
   const configModule = await loadAttuneModule<ConfigModule>('config.js');
-  configModule.setStylesheetSource(appId, adapter.absolutePath, readFileSync(adapter.absolutePath, 'utf8'));
+  const stylesheet = compileThemeStylesheet(theme, adapter);
+  configModule.setStylesheetSource(appId, stylesheet.path, stylesheet.css);
 }
 
 async function stopApp(appId: string): Promise<string> {
@@ -844,6 +876,8 @@ function readThemeManifest(pathBase: string, themeDirectory: string, themeId: st
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
     name?: string;
     description?: string;
+    tokens?: string;
+    baseLayout?: string;
     adapters?: Record<string, {
       source?: string;
       output?: string;
@@ -864,6 +898,7 @@ function readThemeManifest(pathBase: string, themeDirectory: string, themeId: st
     return {
       appName,
       source: adapter.source ?? '',
+      sourcePath,
       output: adapter.output ?? null,
       runtime: adapter.runtime ?? 'Attune-compatible renderer',
       canvas: adapter.canvas ?? null,
@@ -876,6 +911,8 @@ function readThemeManifest(pathBase: string, themeDirectory: string, themeId: st
     id: themeId,
     name: manifest.name ?? themeId,
     description: manifest.description ?? '',
+    tokensPath: manifest.tokens ? resolveThemePath(pathBase, themeDirectory, manifest.tokens) : null,
+    baseLayoutPath: manifest.baseLayout ? resolveThemePath(pathBase, themeDirectory, manifest.baseLayout) : null,
     adapters,
   };
 }
@@ -884,6 +921,68 @@ function resolveThemePath(pathBase: string, themeDirectory: string, pathValue: s
   if (isAbsolute(pathValue)) return pathValue;
   if (pathValue.startsWith('themes/')) return join(pathBase, pathValue);
   return join(themeDirectory, pathValue);
+}
+
+function compileThemeStylesheet(
+  theme: ThemeInfo,
+  adapter: ThemeAdapterInfo,
+): { path: string; css: string } {
+  const componentPaths = adapter.sourcePath
+    ? [theme.tokensPath, theme.baseLayoutPath, adapter.sourcePath]
+      .filter((path): path is string => Boolean(path && existsSync(path)))
+    : [];
+  const sourcePaths = componentPaths.length > 0
+    ? componentPaths
+    : adapter.absolutePath
+      ? [adapter.absolutePath]
+      : [];
+
+  if (sourcePaths.length === 0) {
+    throw new Error(`${theme.name} has no readable stylesheet for ${adapter.appName}.`);
+  }
+
+  const css = [
+    `/* Compiled by Attune from editable theme ${theme.id}. */`,
+    ...sourcePaths.map((sourcePath) => readThemeCssSource(sourcePath)),
+  ].join('\n\n');
+  const outputDirectory = join(app.getPath('userData'), 'compiled-themes', safeFileName(theme.id));
+  mkdirSync(outputDirectory, { recursive: true });
+  const outputPath = join(outputDirectory, `${safeFileName(adapter.appName)}.css`);
+  writeFileSync(outputPath, css);
+
+  return { path: outputPath, css };
+}
+
+function readThemeCssSource(sourcePath: string): string {
+  const css = readFileSync(sourcePath, 'utf8');
+  return css.replace(/url\((["']?)([^"')]+)\1\)/g, (fullMatch, _quote: string, rawUrl: string) => {
+    if (/^(?:data:|https?:|file:|#)/i.test(rawUrl)) return fullMatch;
+
+    const assetPath = resolve(dirname(sourcePath), rawUrl);
+    const mediaType = mediaTypeFor(assetPath);
+    if (!mediaType || !existsSync(assetPath)) return fullMatch;
+    return `url("data:${mediaType};base64,${readFileSync(assetPath).toString('base64')}")`;
+  });
+}
+
+function mediaTypeFor(filePath: string): string | null {
+  switch (extname(filePath).toLowerCase()) {
+    case '.ttf': return 'font/ttf';
+    case '.otf': return 'font/otf';
+    case '.woff': return 'font/woff';
+    case '.woff2': return 'font/woff2';
+    case '.png': return 'image/png';
+    case '.jpg':
+    case '.jpeg': return 'image/jpeg';
+    case '.webp': return 'image/webp';
+    case '.gif': return 'image/gif';
+    case '.svg': return 'image/svg+xml';
+    default: return null;
+  }
+}
+
+function safeFileName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^\.+/, '') || 'theme';
 }
 
 function findMatchingAdapter(theme: ThemeInfo, appName: string): ThemeAdapterInfo | undefined {

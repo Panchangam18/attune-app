@@ -4,6 +4,7 @@ const invoke = <T,>(channel: string, payload?: unknown): Promise<T> => ipcRender
 
 contextBridge.exposeInMainWorld('attune', {
   snapshot: () => invoke('attune:snapshot'),
+  refreshThemes: () => invoke('attune:refresh-themes'),
   buildRuntime: () => invoke('attune:build-runtime'),
   applyTheme: (appId: string, themeId: string) => invoke('attune:apply-theme', { appId, themeId }),
   setProfileEnabled: (themeId: string, enabled: boolean) => invoke('attune:set-profile-enabled', { themeId, enabled }),
