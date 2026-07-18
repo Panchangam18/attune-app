@@ -418,11 +418,11 @@ const CODEX_GIT_ACTIONS_CSS = `/* Attune managed: codex-git-actions */
     const summary = summaryButton();
     if (!summary) return;
     const existing = document.getElementById('attune-codex-git-actions');
-    if (existing?.dataset.attuneVersion === '4') return;
+    if (existing?.dataset.attuneVersion === '5') return;
     existing?.remove();
     const root = document.createElement('span');
     root.id = 'attune-codex-git-actions';
-    root.dataset.attuneVersion = '4';
+    root.dataset.attuneVersion = '5';
     root.setAttribute('role', 'group');
     root.setAttribute('aria-label', 'Git actions');
     const button = document.createElement('button');
@@ -437,11 +437,13 @@ const CODEX_GIT_ACTIONS_CSS = `/* Attune managed: codex-git-actions */
   render();
   clearInterval(window.__attuneCodexGitActions);
   window.__attuneCodexGitActions = setInterval(render, 1000);
-  window.__attuneCodexGitActionsCleanup = () => {
+  const cleanup = () => {
     clearInterval(window.__attuneCodexGitActions);
     document.getElementById('attune-codex-git-actions')?.remove();
     document.getElementById('attune-codex-git-modal')?.remove();
   };
+  window.__attuneCodexGitActionsCleanup = cleanup;
+  window.__attuneRegisterCleanup?.(cleanup);
 })();
 @end-attune-script */
 `;
