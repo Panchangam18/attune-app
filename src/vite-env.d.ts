@@ -17,6 +17,9 @@ export interface AttuneAppInfo {
   hasMatchingTheme: boolean;
   themeEnabled: boolean;
   targetProfileApp: boolean;
+  hasMatchingWorkspace: boolean;
+  workspaceEnabled: boolean;
+  targetWorkspaceApp: boolean;
 }
 
 export interface ThemeAdapterInfo {
@@ -39,9 +42,26 @@ export interface ThemeInfo {
   adapters: ThemeAdapterInfo[];
 }
 
+export interface WorkspacePatchInfo {
+  appName: string;
+  source: string;
+  sourcePath: string | null;
+  intent: string;
+  available: boolean;
+  absolutePath: string | null;
+}
+
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  description: string;
+  patches: WorkspacePatchInfo[];
+}
+
 export interface EnvironmentInfo {
   attuneRoot: string;
   userThemesRoot: string;
+  userWorkspacesRoot: string;
   cliPath: string;
   nodePath: string;
   runtimeBuilt: boolean;
@@ -56,6 +76,9 @@ export interface ThemeProfile {
   wallpaperRestorePaths: string[];
   wallpaperRestoreBackupPath: string | null;
   wallpaperEnabled: boolean;
+  activeWorkspaceId: string | null;
+  workspaceEnabled: boolean;
+  enabledWorkspaceAppIds: string[];
 }
 
 export interface ThemeTargetStatus {
@@ -72,6 +95,7 @@ export interface Snapshot {
   environment: EnvironmentInfo;
   apps: AttuneAppInfo[];
   themes: ThemeInfo[];
+  workspaces: WorkspaceInfo[];
   profile: ThemeProfile;
   targets: ThemeTargetStatus[];
 }
@@ -85,11 +109,14 @@ export interface ActionResult<T = unknown> {
 interface AttuneApi {
   snapshot(): Promise<ActionResult<Snapshot>>;
   refreshThemes(): Promise<ActionResult<string>>;
+  refreshWorkspaces(): Promise<ActionResult<string>>;
   buildRuntime(): Promise<ActionResult<string>>;
   applyTheme(appId: string, themeId: string): Promise<ActionResult<string>>;
   setProfileEnabled(themeId: string, enabled: boolean): Promise<ActionResult<string>>;
   setWallpaperEnabled(enabled: boolean): Promise<ActionResult<string>>;
   setProfileAppEnabled(appId: string, enabled: boolean): Promise<ActionResult<string>>;
+  setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promise<ActionResult<string>>;
+  setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<ActionResult<string>>;
   setAutoWrapEnabled(enabled: boolean): Promise<ActionResult<string>>;
   chooseCssFile(appId: string): Promise<ActionResult<string>>;
   launch(appId: string): Promise<ActionResult<string>>;

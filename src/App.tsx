@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AppWindow,
+  BriefcaseBusiness,
   Check,
   CirclePause,
   CirclePlay,
   CircleAlert,
   Copy,
+  FolderOpen,
+  LayoutPanelLeft,
   Loader2,
   Plus,
   RefreshCw,
@@ -20,9 +23,17 @@ import arrakisPreview from './assets/themes/arrakis.jpg';
 import cyberpunkPreview from './assets/themes/cyberpunk.jpg';
 import starryNightPreview from './assets/themes/starry-night.jpg';
 import tamaRiverPreview from './assets/themes/tama-river.jpg';
-import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo } from './vite-env';
+import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo, WorkspaceInfo } from './vite-env';
 
-type BusyAction = 'refresh' | 'build' | 'profile' | 'wallpaper' | `profile-app:${string}`;
+type BusyAction =
+  | 'refresh'
+  | 'build'
+  | 'profile'
+  | 'workspace'
+  | 'wallpaper'
+  | 'open-workspaces'
+  | `profile-app:${string}`
+  | `workspace-app:${string}`;
 
 const statusLabels: Record<AttuneAppInfo['status'], string> = {
   attached: 'Open',
@@ -35,18 +46,28 @@ const statusLabels: Record<AttuneAppInfo['status'], string> = {
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [selectedThemeId, setSelectedThemeId] = useState<string | null | undefined>(undefined);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null | undefined>(undefined);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [addThemeOpen, setAddThemeOpen] = useState(false);
+  const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
   const [themePromptCopied, setThemePromptCopied] = useState(false);
+  const [workspacePromptCopied, setWorkspacePromptCopied] = useState(false);
   const [busy, setBusy] = useState<BusyAction | null>(null);
   const [notice, setNotice] = useState<{ kind: 'good' | 'bad' | 'info'; text: string } | null>(null);
 
   const selectedTheme = useMemo(() => (
     snapshot?.themes.find((theme) => theme.id === selectedThemeId) ?? null
   ), [selectedThemeId, snapshot?.themes]);
+  const selectedWorkspace = useMemo(() => (
+    snapshot?.workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null
+  ), [selectedWorkspaceId, snapshot?.workspaces]);
   const addThemePrompt = useMemo(
     () => buildAddThemePrompt(snapshot?.environment.userThemesRoot),
     [snapshot?.environment.userThemesRoot],
+  );
+  const addWorkspacePrompt = useMemo(
+    () => buildAddWorkspacePrompt(snapshot?.environment.userWorkspacesRoot),
+    [snapshot?.environment.userWorkspacesRoot],
   );
 
   useEffect(() => {
@@ -58,6 +79,12 @@ export function App() {
       setSelectedThemeId(snapshot.profile.enabled ? snapshot.profile.activeThemeId : null);
     }
   }, [selectedThemeId, snapshot]);
+
+  useEffect(() => {
+    if (selectedWorkspaceId === undefined && snapshot) {
+      setSelectedWorkspaceId(snapshot.profile.workspaceEnabled ? snapshot.profile.activeWorkspaceId : null);
+    }
+  }, [selectedWorkspaceId, snapshot]);
 
   async function refresh() {
     setBusy('refresh');
@@ -77,6 +104,10 @@ export function App() {
 
   async function refreshThemes() {
     await runAction('refresh', () => window.attune.refreshThemes(), true, false);
+  }
+
+  async function refreshWorkspaces() {
+    await runAction('refresh', () => window.attune.refreshWorkspaces(), true, false);
   }
 
   async function runAction<T>(
@@ -109,6 +140,15 @@ export function App() {
     }
   }
 
+  async function copyAddWorkspacePrompt() {
+    try {
+      await navigator.clipboard.writeText(addWorkspacePrompt);
+      setWorkspacePromptCopied(true);
+    } catch {
+      setNotice({ kind: 'bad', text: 'Unable to copy. Select the prompt text instead.' });
+    }
+  }
+
   const runtimeReady = snapshot?.environment.runtimeBuilt ?? false;
   const wallpaperEnabled = snapshot?.profile.wallpaperEnabled ?? true;
   const visibleApps = useMemo(() => (
@@ -116,9 +156,12 @@ export function App() {
       const leftInThemeScope = selectedTheme !== null && left.targetProfileApp;
       const rightInThemeScope = selectedTheme !== null && right.targetProfileApp;
       if (leftInThemeScope !== rightInThemeScope) return leftInThemeScope ? -1 : 1;
+      const leftInWorkspaceScope = selectedWorkspace !== null && left.targetWorkspaceApp;
+      const rightInWorkspaceScope = selectedWorkspace !== null && right.targetWorkspaceApp;
+      if (leftInWorkspaceScope !== rightInWorkspaceScope) return leftInWorkspaceScope ? -1 : 1;
       return left.name.localeCompare(right.name);
     })
-  ), [selectedTheme, snapshot?.apps]);
+  ), [selectedTheme, selectedWorkspace, snapshot?.apps]);
 
   return (
     <main className="shell">
@@ -150,6 +193,20 @@ export function App() {
                 onChange={(event) => runAction('wallpaper', () => window.attune.setWallpaperEnabled(event.target.checked), true, false)}
               />
             </label>
+            <button
+              className="setting-row setting-action"
+              type="button"
+              disabled={busy !== null || !snapshot?.environment.userWorkspacesRoot}
+              onClick={() => runAction(
+                'open-workspaces',
+                () => window.attune.openPath(snapshot?.environment.userWorkspacesRoot ?? ''),
+                false,
+                false,
+              )}
+            >
+              <span>Open workspaces folder</span>
+              <FolderOpen size={16} />
+            </button>
           </section>
         )}
 
@@ -193,6 +250,31 @@ export function App() {
               </div>
             </section>
 
+            <section className="workspaces-overview">
+              <h2>Workspaces</h2>
+              <div className="workspace-gallery">
+                {snapshot.workspaces.map((workspace) => (
+                  <WorkspaceCard
+                    key={workspace.id}
+                    workspace={workspace}
+                    selected={workspace.id === selectedWorkspaceId}
+                    disabled={busy !== null}
+                    onSelect={() => {
+                      const enabled = workspace.id !== selectedWorkspaceId;
+                      setSelectedWorkspaceId(enabled ? workspace.id : null);
+                      void runAction('workspace', () => window.attune.setWorkspaceEnabled(workspace.id, enabled), true, false);
+                    }}
+                  />
+                ))}
+                <AddWorkspaceCard
+                  onOpen={() => {
+                    setWorkspacePromptCopied(false);
+                    setAddWorkspaceOpen(true);
+                  }}
+                />
+              </div>
+            </section>
+
             <section className="apps-section">
               <div className="section-head">
                 <h2>Applications</h2>
@@ -208,9 +290,16 @@ export function App() {
                       appInfo={appInfo}
                       busy={busy}
                       themeActive={selectedTheme !== null && appInfo.targetProfileApp}
+                      workspaceActive={selectedWorkspace !== null && appInfo.targetWorkspaceApp}
                       onToggleTheme={(appId, enabled) => runAction(
                         `profile-app:${appId}`,
                         () => window.attune.setProfileAppEnabled(appId, enabled),
+                        true,
+                        false,
+                      )}
+                      onToggleWorkspace={(appId, enabled) => runAction(
+                        `workspace-app:${appId}`,
+                        () => window.attune.setWorkspaceAppEnabled(appId, enabled),
                         true,
                         false,
                       )}
@@ -230,6 +319,17 @@ export function App() {
             onClose={() => setAddThemeOpen(false)}
             onCopy={copyAddThemePrompt}
             onRefreshThemes={refreshThemes}
+          />
+        )}
+
+        {addWorkspaceOpen && (
+          <AddWorkspaceDialog
+            copied={workspacePromptCopied}
+            prompt={addWorkspacePrompt}
+            workspacesRoot={snapshot?.environment.userWorkspacesRoot}
+            onClose={() => setAddWorkspaceOpen(false)}
+            onCopy={copyAddWorkspacePrompt}
+            onRefreshWorkspaces={refreshWorkspaces}
           />
         )}
       </section>
@@ -301,6 +401,58 @@ function AddThemeCard({ onOpen }: { onOpen(): void }) {
   );
 }
 
+function WorkspaceCard({
+  workspace,
+  selected,
+  disabled,
+  onSelect,
+}: {
+  workspace: WorkspaceInfo;
+  selected: boolean;
+  disabled: boolean;
+  onSelect(): void;
+}) {
+  const patchCount = workspace.patches.filter((patch) => patch.available).length;
+
+  return (
+    <button
+      className={selected ? 'workspace-card selected' : 'workspace-card'}
+      type="button"
+      aria-pressed={selected}
+      disabled={disabled}
+      onClick={onSelect}
+    >
+      <span className="workspace-preview" aria-hidden="true">
+        <i /><i /><i />
+        <BriefcaseBusiness size={24} />
+      </span>
+      <span className="workspace-card-copy">
+        <strong>{workspace.name}</strong>
+        <small>{patchCount} {patchCount === 1 ? 'patch' : 'patches'}</small>
+      </span>
+      {selected && <Check className="workspace-check" size={15} />}
+    </button>
+  );
+}
+
+function AddWorkspaceCard({ onOpen }: { onOpen(): void }) {
+  return (
+    <button
+      className="workspace-card add-workspace-card"
+      type="button"
+      onClick={onOpen}
+    >
+      <span className="workspace-preview add-workspace-preview" aria-hidden="true">
+        <Plus size={26} />
+      </span>
+      <span className="workspace-card-copy">
+        <strong>Add workspace</strong>
+        <small>CSS layouts and embeds</small>
+      </span>
+    </button>
+  );
+}
+
 function AddThemeDialog({
   copied,
   prompt,
@@ -360,19 +512,83 @@ function AddThemeDialog({
   );
 }
 
+function AddWorkspaceDialog({
+  copied,
+  prompt,
+  workspacesRoot,
+  onClose,
+  onCopy,
+  onRefreshWorkspaces,
+}: {
+  copied: boolean;
+  prompt: string;
+  workspacesRoot: string | undefined;
+  onClose(): void;
+  onCopy(): void;
+  onRefreshWorkspaces(): void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+      <section
+        className="theme-instructions"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="add-workspace-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header className="modal-head">
+          <div>
+            <h2 id="add-workspace-title">Add a workspace with your agent</h2>
+            <p>Describe the app layout changes and embeds you want, then give any coding agent the prompt.</p>
+          </div>
+          <button className="icon-button" type="button" title="Close" aria-label="Close" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </header>
+
+        <div className="instruction-stack">
+          <textarea
+            className="prompt-box"
+            value={prompt}
+            readOnly
+            spellCheck={false}
+            aria-label="Agent prompt for adding an Attune workspace"
+          />
+
+          <div className="modal-actions">
+            <button className="button" type="button" onClick={onCopy}>
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+              {copied ? 'Copied' : 'Copy prompt'}
+            </button>
+            <button className="button primary" type="button" onClick={onRefreshWorkspaces}>
+              <RefreshCw size={16} />
+              Refresh workspaces
+            </button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function AppRow({
   appInfo,
   busy,
   themeActive,
+  workspaceActive,
   onToggleTheme,
+  onToggleWorkspace,
 }: {
   appInfo: AttuneAppInfo;
   busy: BusyAction | null;
   themeActive: boolean;
+  workspaceActive: boolean;
   onToggleTheme(appId: string, enabled: boolean): void;
+  onToggleWorkspace(appId: string, enabled: boolean): void;
 }) {
   const icon = appInfo.iconDataUrl ?? appIcon(appInfo.name);
   const actionBusy = busy === `profile-app:${appInfo.id}`;
+  const workspaceBusy = busy === `workspace-app:${appInfo.id}`;
 
   return (
     <div className="app-entry">
@@ -396,10 +612,25 @@ function AppRow({
                 {actionBusy ? <Loader2 className="spin" size={17} /> : appInfo.themeEnabled ? <CirclePause size={18} /> : <CirclePlay size={18} />}
               </button>
             )}
+            {workspaceActive && (
+              <button
+                className="icon-button session-button workspace-session-button"
+                title={appInfo.workspaceEnabled ? `Pause ${appInfo.name} workspace` : `Play ${appInfo.name} workspace`}
+                type="button"
+                disabled={busy !== null}
+                onClick={() => onToggleWorkspace(appInfo.id, !appInfo.workspaceEnabled)}
+              >
+                {workspaceBusy ? <Loader2 className="spin" size={17} /> : <LayoutPanelLeft size={18} />}
+              </button>
+            )}
           </span>
         </span>
         <span className={`status ${appInfo.status}`}><i />{statusLabels[appInfo.status]}</span>
-        <span className="theme-state">{appInfo.themeEnabled ? <><Check size={14} /> Themed</> : 'Not themed'}</span>
+        <span className="theme-state">
+          {appInfo.themeEnabled || appInfo.workspaceEnabled
+            ? <><Check size={14} /> {[appInfo.themeEnabled ? 'Theme' : null, appInfo.workspaceEnabled ? 'Workspace' : null].filter(Boolean).join(' + ')}</>
+            : 'No profile'}
+        </span>
       </div>
     </div>
   );
@@ -441,4 +672,27 @@ Editable Arrakis theme: ${themePath}/arrakis
 Arrakis image: ${themePath}/arrakis/arrakis.jpg
 
 Read the editable Arrakis theme first. To adjust Arrakis, edit that folder directly. To create a new theme, create a new sibling folder with manifest.json, tokens.css, base-layout.css, and adapters for ChatGPT, Slack, Spotify, Visual Studio Code, and Claude. Do not edit the signed app bundle. Use relative adapter paths like "adapters/chatgpt.css". When done, tell me to click Refresh themes in Attune App.`;
+}
+
+function buildAddWorkspacePrompt(workspacesRoot: string | undefined): string {
+  const workspacePath = workspacesRoot ?? '~/Library/Application Support/Attune/workspaces';
+
+  return `Create a custom Attune workspace.
+
+Workspace request: [replace this with the app layout changes, hidden sections, resized panes, or embeds I want]
+Workspaces folder: ${workspacePath}
+Editable example workspace: ${workspacePath}/focus-flow
+
+Read the editable Focus Flow workspace first. To adjust it, edit that folder directly. To create a new workspace, create a new sibling folder with manifest.json and an apps/ folder containing CSS patches. The manifest should use a "patches" object keyed by app name, with relative source paths like "apps/spotify-quiet-home.css".
+
+For simple layout changes, write CSS only. For app embeds, put idempotent JavaScript inside a CSS comment block:
+
+/* @attune-script
+(() => {
+  // Publisher apps can POST JSON to http://127.0.0.1:47655/v1/my-key
+  // Consumer apps can GET JSON from the same key and render a compact UI.
+})();
+@end-attune-script */
+
+Do not edit the signed app bundle. Keep scripts local-only, defensive, and safe to re-run. When done, tell me to click Refresh workspaces in Attune App.`;
 }

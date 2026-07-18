@@ -14,6 +14,8 @@ import type {
   ThemeInfo,
   ThemeProfile,
   ThemeTargetStatus,
+  WorkspaceInfo,
+  WorkspacePatchInfo,
 } from './types.js';
 
 interface DiscoveredApp {
@@ -105,6 +107,200 @@ Manifest adapter paths can be relative to the theme folder:
 
 Refresh Attune App after adding or editing a theme.
 `;
+const USER_WORKSPACES_README = `# Attune User Workspaces
+
+Workspaces are saved layout presets for apps. They can hide, resize, or
+rearrange parts of an app with CSS. A workspace file may also include an
+optional script block for cross-app UI bridges:
+
+\`\`\`css
+.some-target { display: none; }
+
+/* @attune-script
+(() => {
+  // Keep scripts idempotent. Attune re-runs them while the app is attached.
+})();
+@end-attune-script */
+\`\`\`
+
+Create a folder for each workspace:
+
+\`\`\`
+focus-flow/
+  manifest.json
+  apps/
+    spotify-quiet-home.css
+    linear-source.css
+    codex-linear-brief.css
+\`\`\`
+
+Manifest patch paths are relative to the workspace folder:
+
+\`\`\`json
+{
+  "name": "Focus Flow",
+  "description": "Remove noisy surfaces and pull Linear context into Codex.",
+  "patches": {
+    "Spotify": {
+      "source": "apps/spotify-quiet-home.css",
+      "intent": "Hide bulky recommendation shelves."
+    },
+    "Linear": {
+      "source": "apps/linear-source.css",
+      "intent": "Publish visible Linear issue context for other workspace panes."
+    },
+    "Codex": {
+      "source": "apps/codex-linear-brief.css",
+      "intent": "Render a compact Linear brief inside Codex."
+    }
+  }
+}
+\`\`\`
+
+Refresh Attune App after adding or editing a workspace.
+`;
+const SEEDED_WORKSPACE_ID = 'focus-flow';
+const SEEDED_WORKSPACE_MANIFEST = `{
+  "name": "Focus Flow",
+  "description": "Quiet noisy app surfaces and bring Linear context into Codex.",
+  "patches": {
+    "Spotify": {
+      "source": "apps/spotify-quiet-home.css",
+      "intent": "Hide bulky recommendations and keep the library, search, and player in view."
+    },
+    "Linear": {
+      "source": "apps/linear-source.css",
+      "intent": "Publish visible issue titles from Linear for workspace embeds."
+    },
+    "Codex": {
+      "source": "apps/codex-linear-brief.css",
+      "intent": "Render a compact Linear brief inside Codex."
+    }
+  }
+}
+`;
+const SEEDED_SPOTIFY_WORKSPACE_CSS = `/* Focus Flow: Spotify quiet home */
+[data-testid="home-page"] section:has([href*="/playlist/"]),
+[data-testid="home-page"] section:has([href*="/genre/"]),
+[data-testid="home-page"] section:has([href*="/section/"]),
+main section[aria-label*="Recommended" i],
+main section[aria-label*="Jump back in" i],
+main section[aria-label*="Made For" i],
+main section[aria-label*="Episodes" i] {
+  display: none !important;
+}
+
+[data-testid="root"] main {
+  --attune-workspace-gap: 14px;
+}
+
+[data-testid="now-playing-widget"] {
+  min-width: min(430px, 42vw) !important;
+}
+`;
+const SEEDED_LINEAR_SOURCE_CSS = `/* Focus Flow: Linear source. This keeps Linear visually intact and publishes visible issues. */
+
+/* @attune-script
+(() => {
+  const collect = () => {
+    const rows = [...document.querySelectorAll('[data-testid*="issue"], a[href*="/issue/"], a[href*="/team/"]')]
+      .map((node) => {
+        const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+        const key = text.match(/[A-Z][A-Z0-9]+-\\d+/)?.[0] || '';
+        const title = text.replace(key, '').trim();
+        return { key, title: title || text };
+      })
+      .filter((item) => item.title && item.title.length > 5)
+      .slice(0, 8);
+    fetch('http://127.0.0.1:47655/v1/linear-visible-issues', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ issues: rows }),
+    }).catch(() => {});
+  };
+  clearInterval(window.__attuneLinearCollector);
+  window.__attuneLinearCollector = setInterval(collect, 2500);
+  collect();
+})();
+@end-attune-script */
+`;
+const SEEDED_CODEX_LINEAR_CSS = `/* Focus Flow: Codex Linear brief */
+#attune-linear-brief {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483647;
+  width: min(360px, calc(100vw - 36px));
+  max-height: min(430px, calc(100vh - 80px));
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, Canvas 94%, CanvasText 6%);
+  color: CanvasText;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 24%);
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#attune-linear-brief header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  font-weight: 700;
+}
+
+#attune-linear-brief ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#attune-linear-brief li {
+  padding: 10px 11px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+#attune-linear-brief li:last-child { border-bottom: 0; }
+#attune-linear-brief strong { display: block; margin-bottom: 4px; color: color-mix(in srgb, CanvasText 88%, #66d9ef); }
+#attune-linear-brief small { color: color-mix(in srgb, CanvasText 62%, transparent); }
+
+/* @attune-script
+(() => {
+  const render = async () => {
+    let bridge = null;
+    try {
+      bridge = await fetch('http://127.0.0.1:47655/v1/linear-visible-issues', { cache: 'no-store' }).then((response) => response.json());
+    } catch {}
+    const issues = Array.isArray(bridge?.payload?.issues) ? bridge.payload.issues : [];
+    let root = document.getElementById('attune-linear-brief');
+    if (!root) {
+      root = document.createElement('aside');
+      root.id = 'attune-linear-brief';
+      document.body.append(root);
+    }
+    const rows = issues.length
+      ? issues.map((issue) => '<li><strong>' + escapeHtml(issue.key || 'Linear') + '</strong><span>' + escapeHtml(issue.title || '') + '</span></li>').join('')
+      : '<li><small>Open Linear with this workspace enabled to populate this brief.</small></li>';
+    const updated = bridge?.updatedAt ? new Date(bridge.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'waiting';
+    root.innerHTML = '<header><span>Linear Brief</span><small>' + updated + '</small></header><ol>' + rows + '</ol>';
+  };
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char]);
+  clearInterval(window.__attuneCodexLinearBrief);
+  window.__attuneCodexLinearBrief = setInterval(render, 2500);
+  render();
+})();
+@end-attune-script */
+`;
 
 let mainWindow: BrowserWindow | null = null;
 let autoWrapTimer: NodeJS.Timeout | null = null;
@@ -166,6 +362,7 @@ function createWindow(): void {
 function registerIpc(): void {
   ipcMain.handle('attune:snapshot', async (): Promise<ActionResult<Snapshot>> => wrap(() => getSnapshot()));
   ipcMain.handle('attune:refresh-themes', async (): Promise<ActionResult<string>> => wrap(() => refreshThemes()));
+  ipcMain.handle('attune:refresh-workspaces', async (): Promise<ActionResult<string>> => wrap(() => refreshWorkspaces()));
   ipcMain.handle('attune:build-runtime', async (): Promise<ActionResult<string>> => wrap(() => buildRuntime()));
   ipcMain.handle('attune:apply-theme', async (_event, payload: { appId: string; themeId: string }) => (
     wrap(() => applyTheme(payload.appId, payload.themeId))
@@ -178,6 +375,12 @@ function registerIpc(): void {
   ));
   ipcMain.handle('attune:set-profile-app-enabled', async (_event, payload: { appId: string; enabled: boolean }) => (
     wrap(() => setProfileAppEnabled(payload.appId, payload.enabled))
+  ));
+  ipcMain.handle('attune:set-workspace-enabled', async (_event, payload: { workspaceId: string; enabled: boolean }) => (
+    wrap(() => setWorkspaceEnabled(payload.workspaceId, payload.enabled))
+  ));
+  ipcMain.handle('attune:set-workspace-app-enabled', async (_event, payload: { appId: string; enabled: boolean }) => (
+    wrap(() => setWorkspaceAppEnabled(payload.appId, payload.enabled))
   ));
   ipcMain.handle('attune:set-auto-wrap-enabled', async (_event, payload: { enabled: boolean }) => (
     wrap(() => setAutoWrapEnabled(payload.enabled))
@@ -209,11 +412,12 @@ async function getSnapshot(): Promise<Snapshot> {
   console.log('[attune] snapshot start');
   const environment = getEnvironment();
   const themes = discoverThemes(environment);
+  const workspaces = discoverWorkspaces(environment);
   const profile = readProfile();
-  const apps = environment.runtimeBuilt ? await discoverApps(themes, profile) : [];
+  const apps = environment.runtimeBuilt ? await discoverApps(themes, workspaces, profile) : [];
   const targets = buildTargetStatuses(apps, themes, profile);
   console.log(`[attune] snapshot complete in ${Date.now() - startedAt}ms`);
-  return { environment, apps, themes, profile, targets };
+  return { environment, apps, themes, workspaces, profile, targets };
 }
 
 function getEnvironment(): EnvironmentInfo {
@@ -224,11 +428,15 @@ function getEnvironment(): EnvironmentInfo {
   const userThemesRoot = ensureUserThemesRoot(process.env.ATTUNE_USER_THEMES_ROOT
     ? resolve(process.env.ATTUNE_USER_THEMES_ROOT)
     : join(app.getPath('userData'), 'themes'), attuneRoot);
+  const userWorkspacesRoot = ensureUserWorkspacesRoot(process.env.ATTUNE_USER_WORKSPACES_ROOT
+    ? resolve(process.env.ATTUNE_USER_WORKSPACES_ROOT)
+    : join(app.getPath('userData'), 'workspaces'));
   const cliPath = resolve(process.env.ATTUNE_CLI_PATH || join(attuneRoot, 'dist', 'cli.js'));
   const nodePath = process.env.ATTUNE_NODE_PATH || (app.isPackaged ? process.execPath : 'node');
   return {
     attuneRoot,
     userThemesRoot,
+    userWorkspacesRoot,
     cliPath,
     nodePath,
     runtimeBuilt: existsSync(cliPath),
@@ -246,6 +454,35 @@ function ensureUserThemesRoot(themesRoot: string, attuneRoot: string): string {
   seedEditableArrakisTheme(themesRoot, attuneRoot);
 
   return themesRoot;
+}
+
+function ensureUserWorkspacesRoot(workspacesRoot: string): string {
+  mkdirSync(workspacesRoot, { recursive: true });
+
+  const readmePath = join(workspacesRoot, 'README.md');
+  if (!existsSync(readmePath)) {
+    writeFileSync(readmePath, USER_WORKSPACES_README);
+  }
+
+  seedFocusFlowWorkspace(workspacesRoot);
+  return workspacesRoot;
+}
+
+function seedFocusFlowWorkspace(workspacesRoot: string): void {
+  const workspaceRoot = join(workspacesRoot, SEEDED_WORKSPACE_ID);
+  const appsRoot = join(workspaceRoot, 'apps');
+  mkdirSync(appsRoot, { recursive: true });
+
+  writeSeedFile(join(workspaceRoot, 'manifest.json'), SEEDED_WORKSPACE_MANIFEST);
+  writeSeedFile(join(appsRoot, 'spotify-quiet-home.css'), SEEDED_SPOTIFY_WORKSPACE_CSS);
+  writeSeedFile(join(appsRoot, 'linear-source.css'), SEEDED_LINEAR_SOURCE_CSS);
+  writeSeedFile(join(appsRoot, 'codex-linear-brief.css'), SEEDED_CODEX_LINEAR_CSS);
+}
+
+function writeSeedFile(filePath: string, contents: string): void {
+  if (!existsSync(filePath)) {
+    writeFileSync(filePath, contents);
+  }
 }
 
 function seedEditableArrakisTheme(themesRoot: string, attuneRoot: string): void {
@@ -307,16 +544,22 @@ function getBundledThemeWallpaperPath(themeId: string, attuneRoot = getEnvironme
   return existsSync(imagePath) ? imagePath : null;
 }
 
-async function discoverApps(themes: ThemeInfo[], profile: ThemeProfile): Promise<AttuneAppInfo[]> {
+async function discoverApps(
+  themes: ThemeInfo[],
+  workspaces: WorkspaceInfo[],
+  profile: ThemeProfile,
+): Promise<AttuneAppInfo[]> {
   const [scanModule, sessionModule] = await Promise.all([
     loadAttuneModule<ScanModule>('scan.js'),
     loadAttuneModule<SessionModule>('session.js'),
   ]);
 
   const apps: AttuneAppInfo[] = [];
+  const activeWorkspace = workspaces.find((workspace) => workspace.id === profile.activeWorkspaceId);
   for (const appInfo of scanModule.scanForSupportedApps()) {
     const id = scanModule.getAppId(appInfo);
     const session = sessionModule.getSession(id);
+    const workspacePatch = activeWorkspace ? findMatchingWorkspacePatch(activeWorkspace, appInfo.name) : undefined;
     apps.push({
       id,
       name: appInfo.name,
@@ -331,6 +574,9 @@ async function discoverApps(themes: ThemeInfo[], profile: ThemeProfile): Promise
       hasMatchingTheme: themes.some((theme) => findMatchingAdapter(theme, appInfo.name)),
       themeEnabled: profile.enabled && profile.enabledAppIds.includes(id),
       targetProfileApp: isProfileTarget(appInfo.name),
+      hasMatchingWorkspace: workspaces.some((workspace) => findMatchingWorkspacePatch(workspace, appInfo.name)),
+      workspaceEnabled: profile.workspaceEnabled && profile.enabledWorkspaceAppIds.includes(id),
+      targetWorkspaceApp: Boolean(workspacePatch),
     });
   }
   return apps;
@@ -379,7 +625,8 @@ async function applyTheme(appId: string, themeId: string): Promise<string> {
     loadAttuneModule<ConfigModule>('config.js'),
   ]);
   const appInfo = findDiscoveredApp(scanModule, appId);
-  const theme = discoverThemes(environment).find((candidate) => candidate.id === themeId);
+  const themes = discoverThemes(environment);
+  const theme = themes.find((candidate) => candidate.id === themeId);
   if (!theme) throw new Error(`Theme not found: ${themeId}`);
 
   const adapter = findMatchingAdapter(theme, appInfo.name);
@@ -394,31 +641,35 @@ async function applyTheme(appId: string, themeId: string): Promise<string> {
 
 async function refreshThemes(): Promise<string> {
   const profile = readProfile();
-  if (!profile.enabled) return 'Themes refreshed.';
+  if (!profile.enabled && !profile.workspaceEnabled) return 'Themes refreshed.';
 
   const environment = getEnvironment();
   const [scanModule, configModule] = await Promise.all([
     loadAttuneModule<ScanModule>('scan.js'),
     loadAttuneModule<ConfigModule>('config.js'),
   ]);
-  const theme = discoverThemes(environment).find((candidate) => candidate.id === profile.activeThemeId);
-  if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
+  const themes = discoverThemes(environment);
+  const workspaces = discoverWorkspaces(environment);
 
-  const enabledApps = scanModule.scanForSupportedApps()
+  if (profile.enabled && !themes.some((candidate) => candidate.id === profile.activeThemeId)) {
+    throw new Error(`Theme not found: ${profile.activeThemeId}`);
+  }
+
+  const styledAppIds = getEnabledStyleAppIds(profile);
+  const styledApps = scanModule.scanForSupportedApps()
     .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }))
-    .filter((target) => profile.enabledAppIds.includes(target.appId));
+    .filter((target) => styledAppIds.has(target.appId));
 
-  for (const target of enabledApps) {
-    const adapter = findMatchingAdapter(theme, target.appInfo.name);
-    if (!adapter?.absolutePath) {
-      throw new Error(`${theme.name} has no available adapter for ${target.appInfo.name}.`);
-    }
-    const stylesheet = compileThemeStylesheet(theme, adapter);
-    configModule.setStylesheetSource(target.appId, stylesheet.path, stylesheet.css);
+  for (const target of styledApps) {
+    applyCompositeStylesheet(target.appId, target.appInfo.name, configModule, themes, workspaces, profile);
   }
 
   void runAutoWrapPass();
-  return `${theme.name} refreshed for ${enabledApps.length} ${enabledApps.length === 1 ? 'app' : 'apps'}.`;
+  return `Styles refreshed for ${styledApps.length} ${styledApps.length === 1 ? 'app' : 'apps'}.`;
+}
+
+async function refreshWorkspaces(): Promise<string> {
+  return refreshThemes();
 }
 
 async function setProfileEnabled(themeId: string, enabled: boolean): Promise<string> {
@@ -427,7 +678,9 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
     loadAttuneModule<ScanModule>('scan.js'),
     loadAttuneModule<ConfigModule>('config.js'),
   ]);
-  const theme = discoverThemes(environment).find((candidate) => candidate.id === themeId);
+  const themes = discoverThemes(environment);
+  const workspaces = discoverWorkspaces(environment);
+  const theme = themes.find((candidate) => candidate.id === themeId);
   if (!theme) throw new Error(`Theme not found: ${themeId}`);
 
   const targetApps = scanModule.scanForSupportedApps()
@@ -448,13 +701,7 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
       ? await applyThemeWallpaper(themeId, profile.wallpaperRestorePaths)
       : [];
 
-    for (const target of targetApps) {
-      if (!target.adapter?.absolutePath) continue;
-      const stylesheet = compileThemeStylesheet(theme, target.adapter);
-      configModule.setStylesheetSource(target.appId, stylesheet.path, stylesheet.css);
-    }
-
-    writeProfile({
+    const newProfile: ThemeProfile = {
       activeThemeId: themeId,
       enabled: true,
       autoWrapEnabled: true,
@@ -463,21 +710,26 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
       wallpaperRestorePaths,
       wallpaperRestoreBackupPath,
       wallpaperEnabled: profile.wallpaperEnabled,
-    });
+      activeWorkspaceId: profile.activeWorkspaceId,
+      workspaceEnabled: profile.workspaceEnabled,
+      enabledWorkspaceAppIds: profile.enabledWorkspaceAppIds,
+    };
+
+    for (const target of targetApps) {
+      applyCompositeStylesheet(target.appId, target.appInfo.name, configModule, themes, workspaces, newProfile);
+    }
+
+    writeProfile(newProfile);
     void runAutoWrapPass();
 
     const foundNames = targetApps.map((target) => target.appInfo.name).join(', ');
     return `${theme.name} enabled for ${foundNames || 'no installed target apps'}.`;
   }
 
-  for (const target of targetApps) {
-    configModule.setStylesheetSource(target.appId, '', '');
-  }
-
   const profile = readProfile();
   await restoreDesktopWallpapers(profile.wallpaperRestorePaths);
   await restoreWallpaperConfiguration(profile.wallpaperRestoreBackupPath);
-  writeProfile({
+  const newProfile: ThemeProfile = {
     activeThemeId: themeId,
     enabled: false,
     autoWrapEnabled: profile.autoWrapEnabled,
@@ -486,7 +738,16 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
     wallpaperRestorePaths: [],
     wallpaperRestoreBackupPath: null,
     wallpaperEnabled: profile.wallpaperEnabled,
-  });
+    activeWorkspaceId: profile.activeWorkspaceId,
+    workspaceEnabled: profile.workspaceEnabled,
+    enabledWorkspaceAppIds: profile.enabledWorkspaceAppIds,
+  };
+
+  for (const target of targetApps) {
+    applyCompositeStylesheet(target.appId, target.appInfo.name, configModule, themes, workspaces, newProfile);
+  }
+
+  writeProfile(newProfile);
 
   return `${theme.name} disabled for the target apps.`;
 }
@@ -503,24 +764,107 @@ async function setProfileAppEnabled(appId: string, enabled: boolean): Promise<st
   const appInfo = findDiscoveredApp(scanModule, appId);
   if (!isProfileTarget(appInfo.name)) throw new Error(`${appInfo.name} is not included in this theme profile.`);
 
-  const theme = discoverThemes(environment).find((candidate) => candidate.id === profile.activeThemeId);
+  const themes = discoverThemes(environment);
+  const workspaces = discoverWorkspaces(environment);
+  const theme = themes.find((candidate) => candidate.id === profile.activeThemeId);
   if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
   const adapter = findMatchingAdapter(theme, appInfo.name);
   if (!adapter?.absolutePath) throw new Error(`${theme.name} has no available adapter for ${appInfo.name}.`);
 
   const enabledAppIds = new Set(profile.enabledAppIds);
   if (enabled) {
-    const stylesheet = compileThemeStylesheet(theme, adapter);
-    configModule.setStylesheetSource(appId, stylesheet.path, stylesheet.css);
     enabledAppIds.add(appId);
   } else {
-    configModule.setStylesheetSource(appId, '', '');
     enabledAppIds.delete(appId);
   }
 
-  writeProfile({ ...profile, enabledAppIds: [...enabledAppIds] });
+  const newProfile = { ...profile, enabledAppIds: [...enabledAppIds] };
+  applyCompositeStylesheet(appId, appInfo.name, configModule, themes, workspaces, newProfile);
+  writeProfile(newProfile);
   await attachRunningSessionIfAvailable(appInfo, appId, environment, scanModule);
   return enabled ? `${theme.name} enabled for ${appInfo.name}.` : `${theme.name} disabled for ${appInfo.name}.`;
+}
+
+async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promise<string> {
+  const profile = readProfile();
+  const environment = getEnvironment();
+  const [scanModule, configModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<ConfigModule>('config.js'),
+  ]);
+  const themes = discoverThemes(environment);
+  const workspaces = discoverWorkspaces(environment);
+  const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
+  if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+
+  const discoveredApps = scanModule.scanForSupportedApps()
+    .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }));
+  const targetApps = discoveredApps.filter((target) => Boolean(findMatchingWorkspacePatch(workspace, target.appInfo.name)));
+  const changedAppIds = new Set([
+    ...profile.enabledWorkspaceAppIds,
+    ...targetApps.map((target) => target.appId),
+  ]);
+  const newProfile: ThemeProfile = {
+    ...profile,
+    activeWorkspaceId: workspaceId,
+    workspaceEnabled: enabled,
+    autoWrapEnabled: enabled ? true : profile.autoWrapEnabled,
+    enabledWorkspaceAppIds: enabled ? targetApps.map((target) => target.appId) : [],
+  };
+
+  for (const target of discoveredApps.filter((candidate) => changedAppIds.has(candidate.appId))) {
+    applyCompositeStylesheet(target.appId, target.appInfo.name, configModule, themes, workspaces, newProfile);
+    if (enabled && newProfile.enabledWorkspaceAppIds.includes(target.appId)) {
+      await attachRunningSessionIfAvailable(target.appInfo, target.appId, environment, scanModule);
+    }
+  }
+
+  writeProfile(newProfile);
+  void runAutoWrapPass();
+
+  if (!enabled) return `${workspace.name} disabled.`;
+  return `${workspace.name} enabled for ${targetApps.length} ${targetApps.length === 1 ? 'app' : 'apps'}.`;
+}
+
+async function setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<string> {
+  const profile = readProfile();
+  if (!profile.activeWorkspaceId) throw new Error('Select a workspace before changing an application.');
+
+  const environment = getEnvironment();
+  const [scanModule, configModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<ConfigModule>('config.js'),
+  ]);
+  const appInfo = findDiscoveredApp(scanModule, appId);
+  const themes = discoverThemes(environment);
+  const workspaces = discoverWorkspaces(environment);
+  const workspace = workspaces.find((candidate) => candidate.id === profile.activeWorkspaceId);
+  if (!workspace) throw new Error(`Workspace not found: ${profile.activeWorkspaceId}`);
+
+  const patch = findMatchingWorkspacePatch(workspace, appInfo.name);
+  if (!patch?.absolutePath) throw new Error(`${workspace.name} has no available workspace patch for ${appInfo.name}.`);
+
+  const enabledWorkspaceAppIds = new Set(profile.enabledWorkspaceAppIds);
+  if (enabled) {
+    enabledWorkspaceAppIds.add(appId);
+  } else {
+    enabledWorkspaceAppIds.delete(appId);
+  }
+
+  const newProfile: ThemeProfile = {
+    ...profile,
+    workspaceEnabled: enabledWorkspaceAppIds.size > 0,
+    autoWrapEnabled: enabled ? true : profile.autoWrapEnabled,
+    enabledWorkspaceAppIds: [...enabledWorkspaceAppIds],
+  };
+  applyCompositeStylesheet(appId, appInfo.name, configModule, themes, workspaces, newProfile);
+  writeProfile(newProfile);
+  if (enabled) {
+    await attachRunningSessionIfAvailable(appInfo, appId, environment, scanModule);
+    void runAutoWrapPass();
+  }
+
+  return enabled ? `${workspace.name} enabled for ${appInfo.name}.` : `${workspace.name} disabled for ${appInfo.name}.`;
 }
 
 async function attachRunningSessionIfAvailable(
@@ -750,18 +1094,19 @@ async function launchApp(appId: string): Promise<string> {
 
 async function ensureConfiguredForLaunch(appInfo: DiscoveredApp, appId: string): Promise<void> {
   const profile = readProfile();
-  if (!profile.enabled || !profile.enabledAppIds.includes(appId)) return;
+  const styledAppIds = getEnabledStyleAppIds(profile);
+  if (!styledAppIds.has(appId)) return;
 
   const environment = getEnvironment();
-  const theme = discoverThemes(environment).find((candidate) => candidate.id === profile.activeThemeId);
-  if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
-
-  const adapter = findMatchingAdapter(theme, appInfo.name);
-  if (!adapter?.absolutePath) throw new Error(`${theme.name} has no available adapter for ${appInfo.name}.`);
-
   const configModule = await loadAttuneModule<ConfigModule>('config.js');
-  const stylesheet = compileThemeStylesheet(theme, adapter);
-  configModule.setStylesheetSource(appId, stylesheet.path, stylesheet.css);
+  applyCompositeStylesheet(
+    appId,
+    appInfo.name,
+    configModule,
+    discoverThemes(environment),
+    discoverWorkspaces(environment),
+    profile,
+  );
 }
 
 async function stopApp(appId: string): Promise<string> {
@@ -783,7 +1128,8 @@ function startAutoWrapMonitor(): void {
 
 async function runAutoWrapPass(): Promise<void> {
   const profile = readProfile();
-  if (!profile.enabled || !profile.autoWrapEnabled || profile.enabledAppIds.length === 0) return;
+  const styledAppIds = getEnabledStyleAppIds(profile);
+  if (!profile.autoWrapEnabled || styledAppIds.size === 0) return;
 
   const environment = getEnvironment();
   if (!environment.runtimeBuilt) return;
@@ -795,7 +1141,7 @@ async function runAutoWrapPass(): Promise<void> {
     ]);
     const apps = scanModule.scanForSupportedApps()
       .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }))
-      .filter((target) => profile.enabledAppIds.includes(target.appId));
+      .filter((target) => styledAppIds.has(target.appId));
 
     for (const target of apps) {
       const now = Date.now();
@@ -903,6 +1249,52 @@ function discoverThemes(environment: EnvironmentInfo): ThemeInfo[] {
   return [...themesById.values()];
 }
 
+function discoverWorkspaces(environment: EnvironmentInfo): WorkspaceInfo[] {
+  return discoverWorkspacesFromDirectory(environment.userWorkspacesRoot, dirname(environment.userWorkspacesRoot));
+}
+
+function discoverWorkspacesFromDirectory(workspacesDir: string, pathBase: string): WorkspaceInfo[] {
+  if (!existsSync(workspacesDir)) return [];
+
+  return readdirSync(workspacesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readWorkspaceManifest(pathBase, join(workspacesDir, entry.name), entry.name))
+    .filter((workspace): workspace is WorkspaceInfo => Boolean(workspace));
+}
+
+function readWorkspaceManifest(pathBase: string, workspaceDirectory: string, workspaceId: string): WorkspaceInfo | null {
+  const manifestPath = join(workspaceDirectory, 'manifest.json');
+  if (!existsSync(manifestPath)) return null;
+
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    name?: string;
+    description?: string;
+    patches?: Record<string, {
+      source?: string;
+      intent?: string;
+    }>;
+  };
+
+  const patches = Object.entries(manifest.patches ?? {}).map(([appName, patch]) => {
+    const sourcePath = patch.source ? resolveThemePath(pathBase, workspaceDirectory, patch.source) : null;
+    return {
+      appName,
+      source: patch.source ?? '',
+      sourcePath,
+      intent: patch.intent ?? '',
+      available: Boolean(sourcePath && existsSync(sourcePath)),
+      absolutePath: sourcePath && existsSync(sourcePath) ? sourcePath : null,
+    } satisfies WorkspacePatchInfo;
+  });
+
+  return {
+    id: workspaceId,
+    name: manifest.name ?? workspaceId,
+    description: manifest.description ?? '',
+    patches,
+  };
+}
+
 function discoverThemesFromDirectory(themesDir: string, pathBase: string): ThemeInfo[] {
   if (!existsSync(themesDir)) return [];
 
@@ -996,6 +1388,76 @@ function compileThemeStylesheet(
   return { path: outputPath, css };
 }
 
+function compileCompositeStylesheet(
+  appId: string,
+  appName: string,
+  themes: ThemeInfo[],
+  workspaces: WorkspaceInfo[],
+  profile: ThemeProfile,
+): { path: string; css: string } | null {
+  const parts: string[] = [];
+  const sourcePaths: string[] = [];
+
+  if (profile.enabled && profile.enabledAppIds.includes(appId)) {
+    const theme = themes.find((candidate) => candidate.id === profile.activeThemeId);
+    if (!theme) throw new Error(`Theme not found: ${profile.activeThemeId}`);
+
+    const adapter = findMatchingAdapter(theme, appName);
+    if (!adapter?.absolutePath) throw new Error(`${theme.name} has no available adapter for ${appName}.`);
+    const themeStylesheet = compileThemeStylesheet(theme, adapter);
+    parts.push(readFileSync(themeStylesheet.path, 'utf8'));
+    sourcePaths.push(themeStylesheet.path);
+  }
+
+  if (profile.workspaceEnabled && profile.enabledWorkspaceAppIds.includes(appId)) {
+    if (!profile.activeWorkspaceId) throw new Error('No active workspace selected.');
+    const workspace = workspaces.find((candidate) => candidate.id === profile.activeWorkspaceId);
+    if (!workspace) throw new Error(`Workspace not found: ${profile.activeWorkspaceId}`);
+
+    const patch = findMatchingWorkspacePatch(workspace, appName);
+    if (!patch?.absolutePath) throw new Error(`${workspace.name} has no available workspace patch for ${appName}.`);
+    parts.push([
+      `/* Workspace ${workspace.id}: ${patch.appName}. */`,
+      readWorkspaceCssSource(patch.absolutePath),
+    ].join('\n'));
+    sourcePaths.push(patch.absolutePath);
+  }
+
+  if (parts.length === 0) return null;
+
+  const css = parts.join('\n\n');
+  const outputDirectory = join(app.getPath('userData'), 'compiled-profiles');
+  mkdirSync(outputDirectory, { recursive: true });
+  const outputPath = join(outputDirectory, `${safeFileName(appId)}.css`);
+  writeFileSync(outputPath, [
+    `/* Compiled by Attune from ${sourcePaths.length} editable source ${sourcePaths.length === 1 ? 'file' : 'files'}. */`,
+    css,
+  ].join('\n\n'));
+
+  return { path: outputPath, css };
+}
+
+function applyCompositeStylesheet(
+  appId: string,
+  appName: string,
+  configModule: ConfigModule,
+  themes: ThemeInfo[],
+  workspaces: WorkspaceInfo[],
+  profile: ThemeProfile,
+): void {
+  const stylesheet = compileCompositeStylesheet(appId, appName, themes, workspaces, profile);
+  if (!stylesheet) {
+    configModule.setStylesheetSource(appId, '', '');
+    return;
+  }
+
+  configModule.setStylesheetSource(appId, stylesheet.path, stylesheet.css);
+}
+
+function readWorkspaceCssSource(sourcePath: string): string {
+  return readThemeCssSource(sourcePath);
+}
+
 function readThemeCssSource(sourcePath: string): string {
   const css = readFileSync(sourcePath, 'utf8');
   return css.replace(/url\((["']?)([^"')]+)\1\)/g, (fullMatch, _quote: string, rawUrl: string) => {
@@ -1040,6 +1502,18 @@ function findMatchingAdapter(theme: ThemeInfo, appName: string): ThemeAdapterInf
   });
 }
 
+function findMatchingWorkspacePatch(workspace: WorkspaceInfo, appName: string): WorkspacePatchInfo | undefined {
+  const normalizedApp = normalizeAppName(appName);
+  return workspace.patches.find((patch) => {
+    const normalizedPatch = normalizeAppName(patch.appName);
+    return patch.available && (
+      normalizedPatch === normalizedApp
+      || normalizedApp.includes(normalizedPatch)
+      || normalizedPatch.includes(normalizedApp)
+    );
+  });
+}
+
 function buildTargetStatuses(
   apps: AttuneAppInfo[],
   themes: ThemeInfo[],
@@ -1060,6 +1534,13 @@ function buildTargetStatuses(
   });
 }
 
+function getEnabledStyleAppIds(profile: ThemeProfile): Set<string> {
+  return new Set([
+    ...(profile.enabled ? profile.enabledAppIds : []),
+    ...(profile.workspaceEnabled ? profile.enabledWorkspaceAppIds : []),
+  ]);
+}
+
 function readProfile(): ThemeProfile {
   const defaultProfile: ThemeProfile = {
     activeThemeId: DEFAULT_THEME_ID,
@@ -1070,6 +1551,9 @@ function readProfile(): ThemeProfile {
     wallpaperRestorePaths: [],
     wallpaperRestoreBackupPath: null,
     wallpaperEnabled: true,
+    activeWorkspaceId: null,
+    workspaceEnabled: false,
+    enabledWorkspaceAppIds: [],
   };
 
   try {
@@ -1095,6 +1579,15 @@ function readProfile(): ThemeProfile {
       wallpaperEnabled: typeof raw.wallpaperEnabled === 'boolean'
         ? raw.wallpaperEnabled
         : defaultProfile.wallpaperEnabled,
+      activeWorkspaceId: typeof raw.activeWorkspaceId === 'string'
+        ? raw.activeWorkspaceId
+        : defaultProfile.activeWorkspaceId,
+      workspaceEnabled: typeof raw.workspaceEnabled === 'boolean'
+        ? raw.workspaceEnabled
+        : defaultProfile.workspaceEnabled,
+      enabledWorkspaceAppIds: Array.isArray(raw.enabledWorkspaceAppIds)
+        ? raw.enabledWorkspaceAppIds.filter((id): id is string => typeof id === 'string')
+        : defaultProfile.enabledWorkspaceAppIds,
     };
   } catch {
     return defaultProfile;

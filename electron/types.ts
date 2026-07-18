@@ -15,6 +15,9 @@ export interface AttuneAppInfo {
   hasMatchingTheme: boolean;
   themeEnabled: boolean;
   targetProfileApp: boolean;
+  hasMatchingWorkspace: boolean;
+  workspaceEnabled: boolean;
+  targetWorkspaceApp: boolean;
 }
 
 export interface ThemeAdapterInfo {
@@ -37,9 +40,26 @@ export interface ThemeInfo {
   adapters: ThemeAdapterInfo[];
 }
 
+export interface WorkspacePatchInfo {
+  appName: string;
+  source: string;
+  sourcePath: string | null;
+  intent: string;
+  available: boolean;
+  absolutePath: string | null;
+}
+
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  description: string;
+  patches: WorkspacePatchInfo[];
+}
+
 export interface EnvironmentInfo {
   attuneRoot: string;
   userThemesRoot: string;
+  userWorkspacesRoot: string;
   cliPath: string;
   nodePath: string;
   runtimeBuilt: boolean;
@@ -54,6 +74,9 @@ export interface ThemeProfile {
   wallpaperRestorePaths: string[];
   wallpaperRestoreBackupPath: string | null;
   wallpaperEnabled: boolean;
+  activeWorkspaceId: string | null;
+  workspaceEnabled: boolean;
+  enabledWorkspaceAppIds: string[];
 }
 
 export interface ThemeTargetStatus {
@@ -70,6 +93,7 @@ export interface Snapshot {
   environment: EnvironmentInfo;
   apps: AttuneAppInfo[];
   themes: ThemeInfo[];
+  workspaces: WorkspaceInfo[];
   profile: ThemeProfile;
   targets: ThemeTargetStatus[];
 }
