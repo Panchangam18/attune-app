@@ -268,6 +268,35 @@ function seedEditableArrakisTheme(themesRoot: string, attuneRoot: string): void 
   if (arrakisImageSource && !existsSync(arrakisImageTarget)) {
     copyFileSync(arrakisImageSource, arrakisImageTarget);
   }
+
+  seedMissingArrakisFont(arrakisSource, arrakisTheme);
+}
+
+function seedMissingArrakisFont(arrakisSource: string, arrakisTheme: string): void {
+  const fontFileName = 'Nasalization-Regular.otf';
+  const bundledFontPath = join(arrakisSource, 'assets', fontFileName);
+  const userFontPath = join(arrakisTheme, 'assets', fontFileName);
+  if (existsSync(bundledFontPath) && !existsSync(userFontPath)) {
+    mkdirSync(dirname(userFontPath), { recursive: true });
+    copyFileSync(bundledFontPath, userFontPath);
+  }
+
+  const userTokensPath = join(arrakisTheme, 'tokens.css');
+  if (!existsSync(userTokensPath)) return;
+
+  const tokens = readFileSync(userTokensPath, 'utf8');
+  if (tokens.includes('font-family: "Nasalization"') || !tokens.includes('--arr-font-ui: "Nasalization"')) {
+    return;
+  }
+
+  const fontFace = `@font-face {
+  font-family: "Nasalization";
+  src: url("./assets/${fontFileName}") format("opentype");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}`;
+  writeFileSync(userTokensPath, `${fontFace}\n\n${tokens}`);
 }
 
 function getBundledThemeWallpaperPath(themeId: string, attuneRoot = getEnvironment().attuneRoot): string | null {
