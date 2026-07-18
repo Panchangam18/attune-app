@@ -107,10 +107,10 @@ Manifest adapter paths can be relative to the theme folder:
 
 Refresh Attune App after adding or editing a theme.
 `;
-const USER_WORKSPACES_README = `# Attune User Workspaces
+const USER_WORKSPACES_README = `# Attune User Attunements
 
-Workspaces are saved layout presets for apps. They can hide, resize, or
-rearrange parts of an app with CSS. A workspace file may also include an
+Attunements are saved layout presets for apps. They can hide, resize, or
+rearrange parts of an app with CSS. An attunement file may also include an
 optional script block for cross-app UI bridges:
 
 \`\`\`css
@@ -123,46 +123,40 @@ optional script block for cross-app UI bridges:
 @end-attune-script */
 \`\`\`
 
-Create a folder for each workspace:
+Create a folder for each attunement:
 
 \`\`\`
-focus-flow/
+codex-git-actions/
   manifest.json
+  preview.png
   apps/
-    spotify-quiet-home.css
-    linear-source.css
-    codex-linear-brief.css
+    chatgpt-git-actions.css
 \`\`\`
 
-Manifest patch paths are relative to the workspace folder:
+Manifest patch paths are relative to the attunement folder:
 
 \`\`\`json
 {
-  "name": "Focus Flow",
-  "description": "Remove noisy surfaces and pull Linear context into Codex.",
+  "name": "Codex Git Actions",
+  "description": "Put native Git shortcuts beside Codex controls.",
+  "preview": "preview.png",
   "patches": {
-    "Spotify": {
-      "source": "apps/spotify-quiet-home.css",
-      "intent": "Hide bulky recommendation shelves."
-    },
-    "Linear": {
-      "source": "apps/linear-source.css",
-      "intent": "Publish visible Linear issue context for other workspace panes."
-    },
     "Codex": {
-      "source": "apps/codex-linear-brief.css",
-      "intent": "Render a compact Linear brief inside Codex."
+      "source": "apps/chatgpt-git-actions.css",
+      "intent": "Add native Commit and Push shortcuts beside Codex controls."
     }
   }
 }
 \`\`\`
 
-Refresh Attune App after adding or editing a workspace.
+Refresh Attune App after adding or editing an attunement.
 `;
 const SEEDED_WORKSPACE_ID = 'focus-flow';
+const CODEX_GIT_ACTIONS_ATTUNEMENT_ID = 'codex-git-actions';
 const SEEDED_WORKSPACE_MANIFEST = `{
   "name": "Focus Flow",
   "description": "Quiet noisy app surfaces and bring Linear context into Codex.",
+  "preview": "preview.svg",
   "patches": {
     "Spotify": {
       "source": "apps/spotify-quiet-home.css",
@@ -178,6 +172,107 @@ const SEEDED_WORKSPACE_MANIFEST = `{
     }
   }
 }
+`;
+const SEEDED_WORKSPACE_PREVIEW_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-label="Focus Flow attunement preview">
+  <rect width="960" height="600" fill="#121514"/>
+  <rect x="36" y="34" width="432" height="532" fill="#1a1e1b" stroke="#303730" stroke-width="2"/>
+  <rect x="492" y="34" width="432" height="532" fill="#17191f" stroke="#303746" stroke-width="2"/>
+  <rect x="36" y="34" width="432" height="42" fill="#222821"/>
+  <rect x="492" y="34" width="432" height="42" fill="#202633"/>
+  <circle cx="63" cy="55" r="8" fill="#70ad87"/>
+  <circle cx="516" cy="55" r="8" fill="#d8c88f"/>
+  <rect x="64" y="108" width="168" height="20" rx="2" fill="#d8c88f"/>
+  <rect x="64" y="148" width="342" height="74" fill="#252b25" stroke="#3d473f"/>
+  <rect x="64" y="238" width="118" height="118" fill="#2b342d" stroke="#425043"/>
+  <rect x="198" y="238" width="118" height="118" fill="#2b342d" stroke="#425043"/>
+  <rect x="332" y="238" width="74" height="118" fill="#202520" stroke="#303830" opacity=".42"/>
+  <path d="M66 416h336" stroke="#2f372f" stroke-width="18" stroke-linecap="square"/>
+  <path d="M66 466h240" stroke="#2f372f" stroke-width="18" stroke-linecap="square"/>
+  <rect x="526" y="108" width="244" height="22" rx="2" fill="#d8c88f"/>
+  <rect x="526" y="152" width="322" height="264" fill="#20242d" stroke="#343b49"/>
+  <rect x="560" y="190" width="254" height="15" fill="#6d788f"/>
+  <rect x="560" y="224" width="194" height="15" fill="#556071"/>
+  <rect x="560" y="258" width="230" height="15" fill="#556071"/>
+  <rect x="560" y="292" width="164" height="15" fill="#556071"/>
+  <rect x="618" y="362" width="256" height="168" fill="#111417" stroke="#d8c88f" stroke-width="2"/>
+  <rect x="638" y="382" width="98" height="15" fill="#d8c88f"/>
+  <rect x="638" y="422" width="200" height="12" fill="#69737f"/>
+  <rect x="638" y="454" width="172" height="12" fill="#69737f"/>
+  <rect x="638" y="486" width="214" height="12" fill="#69737f"/>
+</svg>
+`;
+const LINEAR_BRIEF_SCRIPT = `(() => {
+  const render = async () => {
+    let bridge = null;
+    try {
+      bridge = await fetch('http://127.0.0.1:47655/v1/linear-visible-issues', { cache: 'no-store' }).then((response) => response.json());
+    } catch {}
+    const issues = Array.isArray(bridge?.payload?.issues) ? bridge.payload.issues : [];
+    let root = document.getElementById('attune-linear-brief');
+    if (!root) {
+      root = document.createElement('aside');
+      root.id = 'attune-linear-brief';
+      document.body.append(root);
+    }
+    const rows = issues.length
+      ? issues.map((issue) => '<li><strong>' + escapeHtml(issue.key || 'Linear') + '</strong><span>' + escapeHtml(issue.title || '') + '</span></li>').join('')
+      : '<li><small>Open Linear with this attunement enabled to populate this brief.</small></li>';
+    const updated = bridge?.updatedAt ? new Date(bridge.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'waiting';
+    root.innerHTML = '<header><span>Linear Brief</span><small>' + updated + '</small></header><ol>' + rows + '</ol>';
+  };
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[char]);
+  clearInterval(window.__attuneLinearBrief);
+  window.__attuneLinearBrief = setInterval(render, 2500);
+  render();
+})();`;
+const LINEAR_BRIEF_CSS = `#attune-linear-brief {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 2147483647;
+  width: min(360px, calc(100vw - 36px));
+  max-height: min(430px, calc(100vh - 80px));
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, Canvas 94%, CanvasText 6%);
+  color: CanvasText;
+  box-shadow: 0 18px 50px rgb(0 0 0 / 24%);
+  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+#attune-linear-brief header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+  font-weight: 700;
+}
+
+#attune-linear-brief ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#attune-linear-brief li {
+  padding: 10px 11px;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+}
+
+#attune-linear-brief li:last-child { border-bottom: 0; }
+#attune-linear-brief strong { display: block; margin-bottom: 4px; color: color-mix(in srgb, CanvasText 88%, #66d9ef); }
+#attune-linear-brief small { color: color-mix(in srgb, CanvasText 62%, transparent); }
 `;
 const SEEDED_SPOTIFY_WORKSPACE_CSS = `/* Focus Flow: Spotify quiet home */
 [data-testid="home-page"] section:has([href*="/playlist/"]),
@@ -225,82 +320,136 @@ const SEEDED_LINEAR_SOURCE_CSS = `/* Focus Flow: Linear source. This keeps Linea
 @end-attune-script */
 `;
 const SEEDED_CODEX_LINEAR_CSS = `/* Focus Flow: Codex Linear brief */
-#attune-linear-brief {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 2147483647;
-  width: min(360px, calc(100vw - 36px));
-  max-height: min(430px, calc(100vh - 80px));
-  overflow: auto;
-  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, Canvas 94%, CanvasText 6%);
-  color: CanvasText;
-  box-shadow: 0 18px 50px rgb(0 0 0 / 24%);
-  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
+${LINEAR_BRIEF_CSS}
 
-#attune-linear-brief header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 11px;
-  border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-  font-weight: 700;
+/* @attune-script
+${LINEAR_BRIEF_SCRIPT}
+@end-attune-script */
+`;
+const CODEX_GIT_ACTIONS_MANIFEST = `{
+  "name": "Codex: Commit + Push",
+  "description": "Put native Commit and Push shortcuts beside Codex controls.",
+  "preview": "preview.png",
+  "patches": {
+    "Codex": {
+      "source": "apps/chatgpt-git-actions.css",
+      "intent": "Add native Commit and Push shortcuts beside the Codex summary and IDE controls."
+    }
+  }
 }
-
-#attune-linear-brief ol {
-  display: grid;
-  gap: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+`;
+const CODEX_GIT_ACTIONS_CSS = `/* Attune managed: codex-git-actions */
+#attune-codex-git-actions { display: inline-flex; align-items: center; margin-right: 4px; pointer-events: auto; }
+#attune-codex-git-actions button {
+  appearance: none; height: 28px; padding: 0 10px; border: 0; border-radius: 6px;
+  background: color-mix(in srgb, CanvasText 11%, transparent); color: CanvasText; cursor: pointer;
+  font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
 }
-
-#attune-linear-brief li {
-  padding: 10px 11px;
-  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
-}
-
-#attune-linear-brief li:last-child { border-bottom: 0; }
-#attune-linear-brief strong { display: block; margin-bottom: 4px; color: color-mix(in srgb, CanvasText 88%, #66d9ef); }
-#attune-linear-brief small { color: color-mix(in srgb, CanvasText 62%, transparent); }
+#attune-codex-git-actions button:hover { background: color-mix(in srgb, CanvasText 18%, transparent); }
+#attune-codex-git-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+#attune-codex-git-modal { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; background: rgb(0 0 0 / 42%); }
+#attune-codex-git-modal form { width: min(380px, calc(100vw - 32px)); padding: 18px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 8px; background: Canvas; color: CanvasText; box-shadow: 0 20px 60px rgb(0 0 0 / 35%); }
+#attune-codex-git-modal h2 { margin: 0; font: 650 16px/1.2 ui-sans-serif, system-ui, sans-serif; }
+#attune-codex-git-modal textarea { box-sizing: border-box; width: 100%; min-height: 88px; margin-top: 14px; padding: 9px; border: 1px solid rgb(255 255 255 / 16%); border-radius: 6px; outline: none; background: color-mix(in srgb, Canvas 96%, CanvasText 4%); color: CanvasText; font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; resize: vertical; }
+#attune-codex-git-modal textarea:focus { border-color: rgb(255 255 255 / 26%); outline: none; }
+#attune-codex-git-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+#attune-codex-git-modal footer button { height: 30px; padding: 0 10px; border: 0; border-radius: 6px; cursor: pointer; font: 600 12px/1 ui-sans-serif, system-ui, sans-serif; }
+#attune-codex-git-cancel { background: color-mix(in srgb, CanvasText 11%, transparent); color: CanvasText; }
+#attune-codex-git-submit { background: #111; color: #fff; }
 
 /* @attune-script
 (() => {
-  const render = async () => {
-    let bridge = null;
-    try {
-      bridge = await fetch('http://127.0.0.1:47655/v1/linear-visible-issues', { cache: 'no-store' }).then((response) => response.json());
-    } catch {}
-    const issues = Array.isArray(bridge?.payload?.issues) ? bridge.payload.issues : [];
-    let root = document.getElementById('attune-linear-brief');
-    if (!root) {
-      root = document.createElement('aside');
-      root.id = 'attune-linear-brief';
-      document.body.append(root);
+  const textOf = (element) => (element?.innerText || element?.textContent || '').replace(/\\s+/g, ' ').trim();
+  const buttons = () => [...document.querySelectorAll('button')];
+  const buttonByText = (label) => buttons().find((button) => textOf(button).toLowerCase() === label.toLowerCase());
+  const summaryButton = () => buttons().find((button) => button.getAttribute('aria-label') === 'Toggle summary');
+
+  const waitFor = async (find, attempts = 15) => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const value = find();
+      if (value) return value;
+      await new Promise((resolve) => setTimeout(resolve, 80));
     }
-    const rows = issues.length
-      ? issues.map((issue) => '<li><strong>' + escapeHtml(issue.key || 'Linear') + '</strong><span>' + escapeHtml(issue.title || '') + '</span></li>').join('')
-      : '<li><small>Open Linear with this workspace enabled to populate this brief.</small></li>';
-    const updated = bridge?.updatedAt ? new Date(bridge.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'waiting';
-    root.innerHTML = '<header><span>Linear Brief</span><small>' + updated + '</small></header><ol>' + rows + '</ol>';
+    return null;
   };
-  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[char]);
-  clearInterval(window.__attuneCodexLinearBrief);
-  window.__attuneCodexLinearBrief = setInterval(render, 2500);
+
+  const commitAndPush = async (message) => {
+    const summary = summaryButton();
+    if (!summary) return;
+    if (summary.getAttribute('aria-expanded') !== 'true') summary.click();
+    const picker = await waitFor(() => buttonByText('Commit or push'));
+    if (!picker) return;
+    picker.click();
+    const input = await waitFor(() => document.querySelector('textarea[aria-label="Commit message"]'));
+    if (!input) return;
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    setter?.call(input, message);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    const nativeSubmit = await waitFor(() => document.querySelector(
+      '[role="dialog"] [role="option"][data-value="commit-and-push"]',
+    ));
+    nativeSubmit?.click();
+  };
+
+  const openModal = () => {
+    if (document.getElementById('attune-codex-git-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'attune-codex-git-modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'attune-codex-git-title');
+    modal.innerHTML = '<form><h2 id="attune-codex-git-title">Commit and push</h2><textarea autofocus required placeholder="Commit message" aria-label="Commit message"></textarea><footer><button type="button" id="attune-codex-git-cancel">Cancel</button><button type="submit" id="attune-codex-git-submit">Commit and push</button></footer></form>';
+    const close = () => modal.remove();
+    modal.querySelector('#attune-codex-git-cancel')?.addEventListener('click', close);
+    modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
+    modal.querySelector('form')?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const message = modal.querySelector('textarea')?.value.trim();
+      if (!message) return;
+      close();
+      void commitAndPush(message);
+    });
+    document.body.append(modal);
+    modal.querySelector('textarea')?.focus();
+  };
+
+  const render = () => {
+    const summary = summaryButton();
+    if (!summary) return;
+    const existing = document.getElementById('attune-codex-git-actions');
+    if (existing?.dataset.attuneVersion === '4') return;
+    existing?.remove();
+    const root = document.createElement('span');
+    root.id = 'attune-codex-git-actions';
+    root.dataset.attuneVersion = '4';
+    root.setAttribute('role', 'group');
+    root.setAttribute('aria-label', 'Git actions');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Commit and push';
+    button.title = 'Commit and push using Codex';
+    button.addEventListener('click', openModal);
+    root.append(button);
+    summary.parentElement?.parentElement?.parentElement?.prepend(root);
+  };
+
   render();
+  clearInterval(window.__attuneCodexGitActions);
+  window.__attuneCodexGitActions = setInterval(render, 1000);
+  window.__attuneCodexGitActionsCleanup = () => {
+    clearInterval(window.__attuneCodexGitActions);
+    document.getElementById('attune-codex-git-actions')?.remove();
+    document.getElementById('attune-codex-git-modal')?.remove();
+  };
 })();
 @end-attune-script */
 `;
+const ATTUNEMENT_RUNTIME_CLEANUP_CSS = `/* @attune-script
+(() => {
+  window.__attuneCodexGitActionsCleanup?.();
+})();
+@end-attune-script */`;
 
 let mainWindow: BrowserWindow | null = null;
 let autoWrapTimer: NodeJS.Timeout | null = null;
@@ -464,19 +613,29 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
     writeFileSync(readmePath, USER_WORKSPACES_README);
   }
 
-  seedFocusFlowWorkspace(workspacesRoot);
+  seedCodexGitActionsAttunement(workspacesRoot);
   return workspacesRoot;
 }
 
-function seedFocusFlowWorkspace(workspacesRoot: string): void {
-  const workspaceRoot = join(workspacesRoot, SEEDED_WORKSPACE_ID);
-  const appsRoot = join(workspaceRoot, 'apps');
+function seedCodexGitActionsAttunement(workspacesRoot: string): void {
+  const attunementRoot = join(workspacesRoot, CODEX_GIT_ACTIONS_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
   mkdirSync(appsRoot, { recursive: true });
 
-  writeSeedFile(join(workspaceRoot, 'manifest.json'), SEEDED_WORKSPACE_MANIFEST);
-  writeSeedFile(join(appsRoot, 'spotify-quiet-home.css'), SEEDED_SPOTIFY_WORKSPACE_CSS);
-  writeSeedFile(join(appsRoot, 'linear-source.css'), SEEDED_LINEAR_SOURCE_CSS);
-  writeSeedFile(join(appsRoot, 'codex-linear-brief.css'), SEEDED_CODEX_LINEAR_CSS);
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8').includes('"name": "Codex Git Actions"')) {
+    writeFileSync(manifestPath, CODEX_GIT_ACTIONS_MANIFEST);
+  }
+
+  const previewPath = join(attunementRoot, 'preview.png');
+  const bundledPreviewPath = join(__dirname, 'assets', 'codex-commit-push-preview.png');
+  if (!existsSync(previewPath) && existsSync(bundledPreviewPath)) {
+    copyFileSync(bundledPreviewPath, previewPath);
+  }
+  const stylesheetPath = join(appsRoot, 'chatgpt-git-actions.css');
+  if (!existsSync(stylesheetPath) || readFileSync(stylesheetPath, 'utf8').includes('/* Attune managed: codex-git-actions') || readFileSync(stylesheetPath, 'utf8').includes('/* Codex Git Actions:')) {
+    writeFileSync(stylesheetPath, CODEX_GIT_ACTIONS_CSS);
+  }
 }
 
 function writeSeedFile(filePath: string, contents: string): void {
@@ -639,9 +798,9 @@ async function applyTheme(appId: string, themeId: string): Promise<string> {
   return `${theme.name} applied to ${appInfo.name}.`;
 }
 
-async function refreshThemes(): Promise<string> {
+async function refreshThemes(noActiveMessage = 'Themes refreshed.'): Promise<string> {
   const profile = readProfile();
-  if (!profile.enabled && !profile.workspaceEnabled) return 'Themes refreshed.';
+  if (!profile.enabled && !profile.workspaceEnabled) return noActiveMessage;
 
   const environment = getEnvironment();
   const [scanModule, configModule] = await Promise.all([
@@ -669,7 +828,7 @@ async function refreshThemes(): Promise<string> {
 }
 
 async function refreshWorkspaces(): Promise<string> {
-  return refreshThemes();
+  return refreshThemes('Attunements refreshed.');
 }
 
 async function setProfileEnabled(themeId: string, enabled: boolean): Promise<string> {
@@ -795,7 +954,7 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
   const themes = discoverThemes(environment);
   const workspaces = discoverWorkspaces(environment);
   const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
-  if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
+  if (!workspace) throw new Error(`Attunement not found: ${workspaceId}`);
 
   const discoveredApps = scanModule.scanForSupportedApps()
     .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }));
@@ -822,13 +981,17 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
   writeProfile(newProfile);
   void runAutoWrapPass();
 
-  if (!enabled) return `${workspace.name} disabled.`;
-  return `${workspace.name} enabled for ${targetApps.length} ${targetApps.length === 1 ? 'app' : 'apps'}.`;
+  if (!enabled) return `${workspace.name} attunement disabled.`;
+  if (targetApps.length === 0) {
+    return `${workspace.name} attunement enabled, but no matching apps were found.`;
+  }
+  const appNames = targetApps.map((target) => target.appInfo.name).join(', ');
+  return `${workspace.name} attunement enabled for ${appNames}. Launch or reopen those apps to see it.`;
 }
 
 async function setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<string> {
   const profile = readProfile();
-  if (!profile.activeWorkspaceId) throw new Error('Select a workspace before changing an application.');
+  if (!profile.activeWorkspaceId) throw new Error('Select an attunement before changing an application.');
 
   const environment = getEnvironment();
   const [scanModule, configModule] = await Promise.all([
@@ -839,10 +1002,10 @@ async function setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<
   const themes = discoverThemes(environment);
   const workspaces = discoverWorkspaces(environment);
   const workspace = workspaces.find((candidate) => candidate.id === profile.activeWorkspaceId);
-  if (!workspace) throw new Error(`Workspace not found: ${profile.activeWorkspaceId}`);
+  if (!workspace) throw new Error(`Attunement not found: ${profile.activeWorkspaceId}`);
 
   const patch = findMatchingWorkspacePatch(workspace, appInfo.name);
-  if (!patch?.absolutePath) throw new Error(`${workspace.name} has no available workspace patch for ${appInfo.name}.`);
+  if (!patch?.absolutePath) throw new Error(`${workspace.name} has no available attunement patch for ${appInfo.name}.`);
 
   const enabledWorkspaceAppIds = new Set(profile.enabledWorkspaceAppIds);
   if (enabled) {
@@ -864,7 +1027,7 @@ async function setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<
     void runAutoWrapPass();
   }
 
-  return enabled ? `${workspace.name} enabled for ${appInfo.name}.` : `${workspace.name} disabled for ${appInfo.name}.`;
+  return enabled ? `${workspace.name} attunement enabled for ${appInfo.name}.` : `${workspace.name} attunement disabled for ${appInfo.name}.`;
 }
 
 async function attachRunningSessionIfAvailable(
@@ -1269,6 +1432,7 @@ function readWorkspaceManifest(pathBase: string, workspaceDirectory: string, wor
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
     name?: string;
     description?: string;
+    preview?: string;
     patches?: Record<string, {
       source?: string;
       intent?: string;
@@ -1291,8 +1455,28 @@ function readWorkspaceManifest(pathBase: string, workspaceDirectory: string, wor
     id: workspaceId,
     name: manifest.name ?? workspaceId,
     description: manifest.description ?? '',
+    previewDataUrl: readWorkspacePreviewDataUrl(pathBase, workspaceDirectory, manifest.preview),
     patches,
   };
+}
+
+function readWorkspacePreviewDataUrl(
+  pathBase: string,
+  workspaceDirectory: string,
+  previewPathValue: string | undefined,
+): string | null {
+  const candidates = previewPathValue
+    ? [resolveThemePath(pathBase, workspaceDirectory, previewPathValue)]
+    : ['preview.png', 'preview.jpg', 'preview.jpeg', 'preview.webp', 'preview.svg']
+      .map((fileName) => join(workspaceDirectory, fileName));
+
+  const previewPath = candidates.find((candidate) => existsSync(candidate));
+  if (!previewPath) return null;
+
+  const mediaType = mediaTypeFor(previewPath);
+  if (!mediaType) return null;
+
+  return `data:${mediaType};base64,${readFileSync(previewPath).toString('base64')}`;
 }
 
 function discoverThemesFromDirectory(themesDir: string, pathBase: string): ThemeInfo[] {
@@ -1410,14 +1594,14 @@ function compileCompositeStylesheet(
   }
 
   if (profile.workspaceEnabled && profile.enabledWorkspaceAppIds.includes(appId)) {
-    if (!profile.activeWorkspaceId) throw new Error('No active workspace selected.');
+    if (!profile.activeWorkspaceId) throw new Error('No active attunement selected.');
     const workspace = workspaces.find((candidate) => candidate.id === profile.activeWorkspaceId);
-    if (!workspace) throw new Error(`Workspace not found: ${profile.activeWorkspaceId}`);
+    if (!workspace) throw new Error(`Attunement not found: ${profile.activeWorkspaceId}`);
 
     const patch = findMatchingWorkspacePatch(workspace, appName);
-    if (!patch?.absolutePath) throw new Error(`${workspace.name} has no available workspace patch for ${appName}.`);
+    if (!patch?.absolutePath) throw new Error(`${workspace.name} has no available attunement patch for ${appName}.`);
     parts.push([
-      `/* Workspace ${workspace.id}: ${patch.appName}. */`,
+      `/* Attunement ${workspace.id}: ${patch.appName}. */`,
       readWorkspaceCssSource(patch.absolutePath),
     ].join('\n'));
     sourcePaths.push(patch.absolutePath);
@@ -1447,7 +1631,7 @@ function applyCompositeStylesheet(
 ): void {
   const stylesheet = compileCompositeStylesheet(appId, appName, themes, workspaces, profile);
   if (!stylesheet) {
-    configModule.setStylesheetSource(appId, '', '');
+    configModule.setStylesheetSource(appId, '', ATTUNEMENT_RUNTIME_CLEANUP_CSS);
     return;
   }
 
@@ -1620,6 +1804,7 @@ function normalizeAppName(value: string): string {
   return value.toLowerCase()
     .replace(/\bvisual studio code\b/g, 'vscode')
     .replace(/\bvs code\b/g, 'vscode')
+    .replace(/\bcodex\b/g, 'chatgpt')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 }

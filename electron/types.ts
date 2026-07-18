@@ -53,6 +53,7 @@ export interface WorkspaceInfo {
   id: string;
   name: string;
   description: string;
+  previewDataUrl: string | null;
   patches: WorkspacePatchInfo[];
 }
 

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AppWindow,
-  BriefcaseBusiness,
   Check,
   CirclePause,
   CirclePlay,
@@ -81,9 +80,9 @@ export function App() {
   }, [selectedThemeId, snapshot]);
 
   useEffect(() => {
-    if (selectedWorkspaceId === undefined && snapshot) {
-      setSelectedWorkspaceId(snapshot.profile.workspaceEnabled ? snapshot.profile.activeWorkspaceId : null);
-    }
+    if (!snapshot) return;
+    const activeWorkspaceId = snapshot.profile.workspaceEnabled ? snapshot.profile.activeWorkspaceId : null;
+    if (selectedWorkspaceId !== activeWorkspaceId) setSelectedWorkspaceId(activeWorkspaceId);
   }, [selectedWorkspaceId, snapshot]);
 
   async function refresh() {
@@ -204,7 +203,7 @@ export function App() {
                 false,
               )}
             >
-              <span>Open workspaces folder</span>
+              <span>Open attunements folder</span>
               <FolderOpen size={16} />
             </button>
           </section>
@@ -251,7 +250,7 @@ export function App() {
             </section>
 
             <section className="workspaces-overview">
-              <h2>Workspaces</h2>
+              <h2>Attunements</h2>
               <div className="workspace-gallery">
                 {snapshot.workspaces.map((workspace) => (
                   <WorkspaceCard
@@ -260,9 +259,9 @@ export function App() {
                     selected={workspace.id === selectedWorkspaceId}
                     disabled={busy !== null}
                     onSelect={() => {
-                      const enabled = workspace.id !== selectedWorkspaceId;
+                      const enabled = !(snapshot.profile.workspaceEnabled && snapshot.profile.activeWorkspaceId === workspace.id);
                       setSelectedWorkspaceId(enabled ? workspace.id : null);
-                      void runAction('workspace', () => window.attune.setWorkspaceEnabled(workspace.id, enabled), true, false);
+                      void runAction('workspace', () => window.attune.setWorkspaceEnabled(workspace.id, enabled), true, true);
                     }}
                   />
                 ))}
@@ -301,7 +300,7 @@ export function App() {
                         `workspace-app:${appId}`,
                         () => window.attune.setWorkspaceAppEnabled(appId, enabled),
                         true,
-                        false,
+                        true,
                       )}
                     />
                   ))}
@@ -412,43 +411,48 @@ function WorkspaceCard({
   disabled: boolean;
   onSelect(): void;
 }) {
-  const patchCount = workspace.patches.filter((patch) => patch.available).length;
-
   return (
     <button
-      className={selected ? 'workspace-card selected' : 'workspace-card'}
+      className={selected ? 'theme-card workspace-card selected' : 'theme-card workspace-card'}
       type="button"
       aria-pressed={selected}
       disabled={disabled}
       onClick={onSelect}
     >
-      <span className="workspace-preview" aria-hidden="true">
-        <i /><i /><i />
-        <BriefcaseBusiness size={24} />
-      </span>
-      <span className="workspace-card-copy">
-        <strong>{workspace.name}</strong>
-        <small>{patchCount} {patchCount === 1 ? 'patch' : 'patches'}</small>
-      </span>
+      <WorkspacePreview workspace={workspace} />
+      <span>{workspace.name}</span>
       {selected && <Check className="workspace-check" size={15} />}
     </button>
+  );
+}
+
+function WorkspacePreview({ workspace }: { workspace: WorkspaceInfo }) {
+  if (workspace.previewDataUrl) {
+    return (
+      <span className="theme-preview workspace-preview" aria-hidden="true">
+        <img src={workspace.previewDataUrl} alt="" />
+      </span>
+    );
+  }
+
+  return (
+    <span className="theme-preview workspace-preview workspace-preview-empty" aria-hidden="true">
+      <i /><i /><i />
+    </span>
   );
 }
 
 function AddWorkspaceCard({ onOpen }: { onOpen(): void }) {
   return (
     <button
-      className="workspace-card add-workspace-card"
+      className="theme-card add-theme-card add-workspace-card"
       type="button"
       onClick={onOpen}
     >
-      <span className="workspace-preview add-workspace-preview" aria-hidden="true">
-        <Plus size={26} />
+      <span className="theme-preview add-theme-preview" aria-hidden="true">
+        <Plus size={30} />
       </span>
-      <span className="workspace-card-copy">
-        <strong>Add workspace</strong>
-        <small>CSS layouts and embeds</small>
-      </span>
+      <span>Add attunement</span>
     </button>
   );
 }
@@ -538,7 +542,7 @@ function AddWorkspaceDialog({
       >
         <header className="modal-head">
           <div>
-            <h2 id="add-workspace-title">Add a workspace with your agent</h2>
+            <h2 id="add-workspace-title">Add an attunement with your agent</h2>
             <p>Describe the app layout changes and embeds you want, then give any coding agent the prompt.</p>
           </div>
           <button className="icon-button" type="button" title="Close" aria-label="Close" onClick={onClose}>
@@ -552,7 +556,7 @@ function AddWorkspaceDialog({
             value={prompt}
             readOnly
             spellCheck={false}
-            aria-label="Agent prompt for adding an Attune workspace"
+            aria-label="Agent prompt for adding an Attune attunement"
           />
 
           <div className="modal-actions">
@@ -562,7 +566,7 @@ function AddWorkspaceDialog({
             </button>
             <button className="button primary" type="button" onClick={onRefreshWorkspaces}>
               <RefreshCw size={16} />
-              Refresh workspaces
+              Refresh attunements
             </button>
           </div>
         </div>
@@ -615,7 +619,7 @@ function AppRow({
             {workspaceActive && (
               <button
                 className="icon-button session-button workspace-session-button"
-                title={appInfo.workspaceEnabled ? `Pause ${appInfo.name} workspace` : `Play ${appInfo.name} workspace`}
+                title={appInfo.workspaceEnabled ? `Pause ${appInfo.name} attunement` : `Play ${appInfo.name} attunement`}
                 type="button"
                 disabled={busy !== null}
                 onClick={() => onToggleWorkspace(appInfo.id, !appInfo.workspaceEnabled)}
@@ -628,7 +632,7 @@ function AppRow({
         <span className={`status ${appInfo.status}`}><i />{statusLabels[appInfo.status]}</span>
         <span className="theme-state">
           {appInfo.themeEnabled || appInfo.workspaceEnabled
-            ? <><Check size={14} /> {[appInfo.themeEnabled ? 'Theme' : null, appInfo.workspaceEnabled ? 'Workspace' : null].filter(Boolean).join(' + ')}</>
+            ? <><Check size={14} /> {[appInfo.themeEnabled ? 'Theme' : null, appInfo.workspaceEnabled ? 'Attunement' : null].filter(Boolean).join(' + ')}</>
             : 'No profile'}
         </span>
       </div>
@@ -677,13 +681,13 @@ Read the editable Arrakis theme first. To adjust Arrakis, edit that folder direc
 function buildAddWorkspacePrompt(workspacesRoot: string | undefined): string {
   const workspacePath = workspacesRoot ?? '~/Library/Application Support/Attune/workspaces';
 
-  return `Create a custom Attune workspace.
+  return `Create a custom Attune attunement.
 
-Workspace request: [replace this with the app layout changes, hidden sections, resized panes, or embeds I want]
-Workspaces folder: ${workspacePath}
-Editable example workspace: ${workspacePath}/focus-flow
+Attunement request: [replace this with the app layout changes, hidden sections, resized panes, or embeds I want]
+Attunements folder: ${workspacePath}
+Editable example attunement: ${workspacePath}/focus-flow
 
-Read the editable Focus Flow workspace first. To adjust it, edit that folder directly. To create a new workspace, create a new sibling folder with manifest.json and an apps/ folder containing CSS patches. The manifest should use a "patches" object keyed by app name, with relative source paths like "apps/spotify-quiet-home.css".
+Read the editable Focus Flow attunement first. To adjust it, edit that folder directly. To create a new attunement, create a new sibling folder with manifest.json, a preview screenshot named preview.png or preview.jpg, and an apps/ folder containing CSS patches. The manifest should use a "patches" object keyed by app name, with relative source paths like "apps/spotify-quiet-home.css". You can also set "preview": "preview.png" in the manifest.
 
 For simple layout changes, write CSS only. For app embeds, put idempotent JavaScript inside a CSS comment block:
 
@@ -694,5 +698,5 @@ For simple layout changes, write CSS only. For app embeds, put idempotent JavaSc
 })();
 @end-attune-script */
 
-Do not edit the signed app bundle. Keep scripts local-only, defensive, and safe to re-run. When done, tell me to click Refresh workspaces in Attune App.`;
+Do not edit the signed app bundle. Keep scripts local-only, defensive, and safe to re-run. When done, tell me to click Refresh attunements in Attune App.`;
 }

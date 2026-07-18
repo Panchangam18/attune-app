@@ -8,7 +8,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build && npm run build:electron",
-    "build:electron": "rm -rf dist-electron && tsc -p tsconfig.node.json",
+    "build:electron": "rm -rf dist-electron && tsc -p tsconfig.node.json && cp -R electron/assets dist-electron/assets",
     "build:runtime": "npm --prefix ../attune run build && npm --prefix ../attune run build:themes",
     "dev": "npm run build:electron && concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && ATTUNE_APP_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "start": "npm run build && electron .",
