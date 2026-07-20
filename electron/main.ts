@@ -153,6 +153,7 @@ Refresh Attune App after adding or editing an attunement.
 `;
 const SEEDED_WORKSPACE_ID = 'focus-flow';
 const CODEX_GIT_ACTIONS_ATTUNEMENT_ID = 'codex-git-actions';
+const BLUE_MESSAGES_ATTUNEMENT_ID = 'blue-messages';
 const SEEDED_WORKSPACE_MANIFEST = `{
   "name": "Focus Flow",
   "description": "Quiet noisy app surfaces and bring Linear context into Codex.",
@@ -447,6 +448,39 @@ const CODEX_GIT_ACTIONS_CSS = `/* Attune managed: codex-git-actions */
 })();
 @end-attune-script */
 `;
+const BLUE_MESSAGES_MANIFEST = `{
+  "name": "Codex: Blue messages",
+  "description": "Give your ChatGPT messages the familiar iPhone blue treatment.",
+  "preview": "preview.png",
+  "patches": {
+    "ChatGPT": {
+      "source": "apps/chatgpt-blue-messages.css",
+      "intent": "Make user messages iPhone blue (#007AFF) with white text."
+    }
+  }
+}
+`;
+const BLUE_MESSAGES_CSS = `/* Attune managed: blue-messages */
+/* Codex uses data-user-message-bubble; the remaining selectors support ChatGPT surfaces. */
+:is(
+  [data-user-message-bubble],
+  [data-message-author-role="user"] > div > div,
+  [data-message-author-role="user"] > div > div > div,
+  article[data-turn="user"] > div > div,
+  article[data-turn="user"] > div > div > div
+) {
+  background: #007aff !important;
+  color: #fff !important;
+}
+
+:is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(p, span, code, pre, li, strong, em, a) {
+  color: #fff !important;
+}
+
+:is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(svg, button) {
+  color: #fff;
+}
+`;
 const ATTUNEMENT_RUNTIME_CLEANUP_CSS = `/* @attune-script
 (() => {
   window.__attuneCodexGitActionsCleanup?.();
@@ -616,6 +650,7 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
   }
 
   seedCodexGitActionsAttunement(workspacesRoot);
+  seedBlueMessagesAttunement(workspacesRoot);
   return workspacesRoot;
 }
 
@@ -637,6 +672,27 @@ function seedCodexGitActionsAttunement(workspacesRoot: string): void {
   const stylesheetPath = join(appsRoot, 'chatgpt-git-actions.css');
   if (!existsSync(stylesheetPath) || readFileSync(stylesheetPath, 'utf8').includes('/* Attune managed: codex-git-actions') || readFileSync(stylesheetPath, 'utf8').includes('/* Codex Git Actions:')) {
     writeFileSync(stylesheetPath, CODEX_GIT_ACTIONS_CSS);
+  }
+}
+
+function seedBlueMessagesAttunement(workspacesRoot: string): void {
+  const attunementRoot = join(workspacesRoot, BLUE_MESSAGES_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  mkdirSync(appsRoot, { recursive: true });
+
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8').includes('"name": "Blue messages"')) {
+    writeFileSync(manifestPath, BLUE_MESSAGES_MANIFEST);
+  }
+  const previewPath = join(attunementRoot, 'preview.png');
+  const bundledPreviewPath = join(__dirname, 'assets', 'codex-blue-messages-preview.png');
+  if (!existsSync(previewPath) && existsSync(bundledPreviewPath)) {
+    copyFileSync(bundledPreviewPath, previewPath);
+  }
+
+  const stylesheetPath = join(appsRoot, 'chatgpt-blue-messages.css');
+  if (!existsSync(stylesheetPath) || readFileSync(stylesheetPath, 'utf8').includes('/* Attune managed: blue-messages */')) {
+    writeFileSync(stylesheetPath, BLUE_MESSAGES_CSS);
   }
 }
 
