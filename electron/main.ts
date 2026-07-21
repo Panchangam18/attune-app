@@ -55,9 +55,23 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const devServerUrl = process.env.ATTUNE_APP_DEV_SERVER_URL;
 const DEFAULT_THEME_ID = 'arrakis';
 const USER_DATA_FOLDER_NAME = 'Attune';
-const PROFILE_TARGET_APP_NAMES = ['ChatGPT', 'Visual Studio Code', 'Spotify', 'Slack'];
+const PROFILE_TARGET_APP_NAMES = ['ChatGPT', 'Visual Studio Code', 'Cursor', 'Spotify', 'Slack'];
+const CURSOR_ICON_FONT_GUARD = `/* Cursor's agent UI uses its own icon font. */
+.cursor-icon,
+.cursor-icon::before {
+  font-family: cursor-icons !important;
+}
+
+/* The empty-editor watermark has no codicon class, despite using Codicon. */
+.monaco-workbench .editor-group-watermark .letterpress,
+.monaco-workbench .editor-group-watermark .letterpress::before {
+  font-family: codicon !important;
+}
+`;
 const AUTO_WRAP_INTERVAL_MS = 2000;
 const AUTO_WRAP_COOLDOWN_MS = 15000;
+const LINEAR_TODOS_BRIDGE_KEY = 'linear-todos';
+const LINEAR_TODOS_COMPLETION_BRIDGE_KEY = 'linear-todos-completion';
 const BUILT_IN_THEME_WALLPAPERS: Record<string, string> = {
   arrakis: 'arrakis.jpg',
   cyberpunk: 'cyberpunk.jpg',
@@ -84,6 +98,7 @@ my-theme/
     slack.css
     spotify.css
     vscode.css
+    cursor.css (optional; VS Code adapter is used when omitted)
     claude.css
 \`\`\`
 
@@ -100,6 +115,7 @@ Manifest adapter paths can be relative to the theme folder:
     "Slack": { "source": "adapters/slack.css", "canvas": "dark" },
     "Spotify": { "source": "adapters/spotify.css", "canvas": "dark" },
     "Visual Studio Code": { "source": "adapters/vscode.css", "canvas": "dark" },
+    "Cursor": { "source": "adapters/cursor.css", "canvas": "dark" },
     "Claude": { "source": "adapters/claude.css", "canvas": "light" }
   }
 }
@@ -154,10 +170,16 @@ Refresh Attune App after adding or editing an attunement.
 const SEEDED_WORKSPACE_ID = 'focus-flow';
 const CODEX_GIT_ACTIONS_ATTUNEMENT_ID = 'codex-git-actions';
 const BLUE_MESSAGES_ATTUNEMENT_ID = 'blue-messages';
+const CODEX_YOUTUBE_ATTUNEMENT_ID = 'codex-youtube-player';
+const CODEX_LINEAR_TODOS_ATTUNEMENT_ID = 'codex-linear-todos';
+const CURSOR_LINEAR_TODOS_ATTUNEMENT_ID = 'cursor-linear-todos';
+const CODEX_LINEAR_TODOS_PREVIEW_SOURCE_PATH = '/var/folders/tf/20fh8jh132d4b9chynvh911w0000gn/T/codex-clipboard-6465b8ad-a637-4d01-a25e-d583800c7ec6.png';
+const CURSOR_LINEAR_TODOS_PREVIEW_SOURCE_PATH = '/var/folders/tf/20fh8jh132d4b9chynvh911w0000gn/T/codex-clipboard-a627900d-463d-4cf7-bd7a-7e7e951cd437.png';
+const LINEAR_DARK_LOGO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PHBhdGggZmlsbD0iIzIyMjMyNiIgZD0iTTEuMjI1NDEgNjEuNTIyOGMtLjIyMjUtLjk0ODUuOTA3NDgtMS41NDU5IDEuNTk2MzgtLjg1N0wzOS4zMzQyIDk3LjE3ODJjLjY4ODkuNjg4OS4wOTE1IDEuODE4OS0uODU3IDEuNTk2NEMyMC4wNTE1IDk0LjQ1MjIgNS41NDc3OSA3OS45NDg1IDEuMjI1NDEgNjEuNTIyOFpNLjAwMTg5MTM1IDQ2Ljg4OTFjLS4wMTc2NDM3NS4yODMzLjA4ODg3MjE1LjU1OTkuMjg5NTcxNjUuNzYwNkw1Mi4zNTAzIDk5LjcwODVjLjIwMDcuMjAwNy40NzczLjMwNzUuNzYwNi4yODk2IDIuMzY5Mi0uMTQ3NiA0LjY5MzgtLjQ2IDYuOTYyNC0uOTI1OS43NjQ1LS4xNTcgMS4wMzAxLTEuMDk2My40NzgyLTEuNjQ4MUwyLjU3NTk1IDM5LjQ0ODVjLS41NTE4Ni0uNTUxOS0xLjQ5MTE3LS4yODYzLTEuNjQ4MTc0LjQ3ODItLjQ2NTkxNSAyLjI2ODYtLjc3ODMyIDQuNTkzMi0uOTI1ODg0NjUgNi45NjI0Wk00LjIxMDkzIDI5LjcwNTRjLS4xNjY0OS4zNzM4LS4wODE2OS44MTA2LjIwNzY1IDEuMWw2NC43NzYwMiA2NC43NzZjLjI4OTQuMjg5NC43MjYyLjM3NDIgMS4xLjIwNzcgMS43ODYxLS43OTU2IDMuNTE3MS0xLjY5MjcgNS4xODU1LTIuNjg0LjU1MjEtLjMyOC42MzczLTEuMDg2Ny4xODMyLTEuNTQwN0w4LjQzNTY2IDI0LjMzNjdjLS40NTQwOS0uNDU0MS0xLjIxMjcxLS4zNjg5LTEuNTQwNzQuMTgzMi0uOTkxMzIgMS42Njg0LTEuODg4NDMgMy4zOTk0LTIuNjgzOTkgNS4xODU1Wk0xMi42NTg3IDE4LjA3NGMtLjM3MDEtLjM3MDEtLjM5My0uOTYzNy0uMDQ0My0xLjM1NDFDMjEuNzc5NSA2LjQ1OTMxIDM1LjExMTQgMCA0OS45NTE5IDAgNzcuNTkyNyAwIDEwMCAyMi40MDczIDEwMCA1MC4wNDgxYzAgMTQuODQwNS02LjQ1OTMgMjguMTcyNC0xNi43MTk5IDM3LjMzNzUtLjM5MDMuMzQ4Ny0uOTg0LjMyNTgtMS4zNTQyLS4wNDQzTDEyLjY1ODcgMTguMDc0WiIvPjwvc3ZnPg==';
 const SEEDED_WORKSPACE_MANIFEST = `{
   "name": "Focus Flow",
   "description": "Quiet noisy app surfaces and bring Linear context into Codex.",
-  "preview": "preview.svg",
+  "preview": "preview.png",
   "patches": {
     "Spotify": {
       "source": "apps/spotify-quiet-home.css",
@@ -481,24 +503,471 @@ const BLUE_MESSAGES_CSS = `/* Attune managed: blue-messages */
   color: #fff;
 }
 `;
+const CODEX_YOUTUBE_MANIFEST = `{
+  "name": "YouTube in Codex",
+  "description": "Show the YouTube video playing in Google Chrome in a compact Codex player.",
+  "preview": "preview.svg",
+  "patches": {
+    "Google Chrome": {
+      "source": "apps/chrome-youtube-source.css",
+      "intent": "Publish the active YouTube video URL and playback position to the local Attune bridge."
+    },
+    "Codex": {
+      "source": "apps/codex-youtube-player.css",
+      "intent": "Display the current YouTube video using YouTube's official embedded player."
+    }
+  }
+}
+`;
+const CODEX_LINEAR_TODOS_MANIFEST = `{
+  "name": "Codex: Linear To-dos",
+  "description": "Open your visible Linear to-dos in a focused modal from Codex.",
+  "preview": "preview.png",
+  "patches": {
+    "Linear": {
+      "source": "apps/linear-todos-source.css",
+      "intent": "Publish the visible to-do issues from Linear to the local Attune bridge."
+    },
+    "Codex": {
+      "source": "apps/codex-linear-todos.css",
+      "intent": "Add a top-left To-dos button that opens a Linear tasks modal to the right of the Codex sidebar."
+    }
+  }
+}
+`;
+const CURSOR_LINEAR_TODOS_MANIFEST = `{
+  "name": "Cursor: Linear To-dos",
+  "description": "Open your visible Linear to-dos in a focused modal from Cursor.",
+  "preview": "preview.png",
+  "patches": {
+    "Linear": {
+      "source": "apps/linear-todos-source.css",
+      "intent": "Publish the visible to-do issues from Linear to the local Attune bridge."
+    },
+    "Cursor": {
+      "source": "apps/cursor-linear-todos.css",
+      "intent": "Add a To-dos button that opens a Linear tasks modal in Cursor."
+    }
+  }
+}`;
+const CODEX_LINEAR_TODOS_PREVIEW_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-label="Linear To-dos in Codex attunement preview">
+  <rect width="960" height="600" fill="#111315"/>
+  <rect x="34" y="30" width="892" height="540" rx="14" fill="#1b1e22" stroke="#353a40" stroke-width="2"/>
+  <rect x="34" y="30" width="892" height="48" rx="14" fill="#24282d"/>
+  <circle cx="64" cy="54" r="8" fill="#ff5f57"/><circle cx="88" cy="54" r="8" fill="#febc2e"/><circle cx="112" cy="54" r="8" fill="#28c840"/>
+  <rect x="56" y="96" width="184" height="450" rx="6" fill="#15181c" stroke="#30353c"/>
+  <rect x="76" y="124" width="112" height="15" rx="3" fill="#8993a0"/><rect x="76" y="162" width="132" height="15" rx="3" fill="#59636e"/><rect x="76" y="200" width="98" height="15" rx="3" fill="#59636e"/>
+  <rect x="265" y="98" width="112" height="31" rx="6" fill="#2d4159"/><rect x="285" y="108" width="70" height="11" rx="3" fill="#d9edff"/>
+  <rect x="438" y="144" width="350" height="306" rx="10" fill="#22272d" stroke="#4b5561" stroke-width="2"/>
+  <rect x="438" y="144" width="350" height="58" rx="10" fill="#2b3138"/><rect x="460" y="165" width="126" height="15" rx="3" fill="#eef2f6"/><circle cx="758" cy="173" r="10" fill="#64707b"/>
+  <circle cx="467" cy="234" r="8" fill="#7e9ad0"/><rect x="486" y="226" width="54" height="12" rx="3" fill="#91a4bd"/><rect x="486" y="248" width="238" height="13" rx="3" fill="#dce2e9"/>
+  <circle cx="467" cy="294" r="8" fill="#7e9ad0"/><rect x="486" y="286" width="54" height="12" rx="3" fill="#91a4bd"/><rect x="486" y="308" width="195" height="13" rx="3" fill="#dce2e9"/>
+  <circle cx="467" cy="354" r="8" fill="#7e9ad0"/><rect x="486" y="346" width="54" height="12" rx="3" fill="#91a4bd"/><rect x="486" y="368" width="222" height="13" rx="3" fill="#dce2e9"/>
+</svg>
+`;
+const CODEX_LINEAR_TODOS_SOURCE_CSS = `/* Attune managed: codex-linear-todos source */
+/* @attune-script
+(() => {
+  const bridgeUrl = 'http://127.0.0.1:47655/v1/linear-todos';
+  const actionUrl = 'http://127.0.0.1:47655/v1/linear-todos-action';
+  const completionUrl = 'http://127.0.0.1:47655/v1/linear-todos-completion';
+  let lastSignature = '';
+  let lastActionId = '';
+  const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+  const collect = () => {
+    const seen = new Set();
+    const issues = [...document.querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')]
+      .map((node) => {
+        const text = (node.innerText || node.textContent || node.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
+        const href = node.href || '';
+        const key = text.match(/\\b[A-Z][A-Z0-9]+-\\d+\\b/)?.[0] || href.match(/\\/issue\\/([A-Z][A-Z0-9]+-\\d+)/)?.[1] || '';
+        const title = text.includes(key)
+          ? text.slice(text.indexOf(key) + key.length).replace(/\\s+Created\\b.*$/i, '').trim()
+          : decodeURIComponent(href.split('/').filter(Boolean).at(-1) || '').replace(/-/g, ' ');
+        return { key, title, href };
+      })
+      .filter((issue) => issue.key && issue.title && issue.title.length > 2)
+      .filter((issue) => !seen.has(issue.key) && seen.add(issue.key))
+      .slice(0, 20);
+    const signature = JSON.stringify(issues);
+    if (signature === lastSignature) return;
+    lastSignature = signature;
+    fetch(bridgeUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issues }),
+    }).catch(() => {});
+  };
+  const complete = async (action) => {
+    const key = String(action?.key || '');
+    const links = [...document.querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')];
+    const issueLink = links.find((link) => (link.innerText || link.textContent || '').includes(key));
+    if (!issueLink) throw new Error('Could not find this issue in the current Linear view.');
+    issueLink.click();
+    await wait(700);
+    const button = [...document.querySelectorAll('button, [role="button"]')].find((element) => {
+      const label = ((element.getAttribute('aria-label') || '') + ' ' + (element.innerText || element.textContent || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
+      return !label.includes('incomplete') && (label.includes('mark as complete') || label === 'complete' || label === 'done');
+    });
+    if (!button) throw new Error('Linear did not expose a Complete button for this issue.');
+    button.click();
+  };
+  const checkAction = async () => {
+    try {
+      const state = await fetch(actionUrl, { cache: 'no-store' }).then((response) => response.json());
+      const action = state?.payload;
+      if (!action?.id || action.id === lastActionId || action.type !== 'complete') return;
+      lastActionId = action.id;
+      try {
+        await complete(action);
+        await fetch(completionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: action.id, key: action.key, status: 'completed' }) });
+        setTimeout(collect, 900);
+      } catch (error) {
+        await fetch(completionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: action.id, key: action.key, status: 'error', message: error instanceof Error ? error.message : 'Unable to complete this issue.' }) });
+      }
+    } catch {}
+  };
+  clearInterval(window.__attuneLinearTodosSource);
+  window.__attuneLinearTodosSource = setInterval(collect, 1500);
+  clearInterval(window.__attuneLinearTodosActions);
+  window.__attuneLinearTodosActions = setInterval(checkAction, 700);
+  collect();
+  checkAction();
+  const cleanup = () => { clearInterval(window.__attuneLinearTodosSource); clearInterval(window.__attuneLinearTodosActions); };
+  window.__attuneLinearTodosSourceCleanup = cleanup;
+  window.__attuneRegisterCleanup?.(cleanup);
+})();
+@end-attune-script */
+`;
+const CODEX_LINEAR_TODOS_CSS = `/* Attune managed: codex-linear-todos */
+#attune-codex-linear-todos-trigger { position: fixed; top: 12px; left: 282px; z-index: 2147483646; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 7px; background: color-mix(in srgb, Canvas 88%, CanvasText 12%); color: CanvasText; box-shadow: 0 4px 16px rgb(0 0 0 / 18%); cursor: pointer; font: 600 12px/1 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+#attune-codex-linear-todos-trigger:hover, #attune-codex-linear-todos-trigger[aria-expanded="true"] { background: color-mix(in srgb, Canvas 76%, CanvasText 24%); }
+#attune-codex-linear-todos-trigger:focus-visible, #attune-codex-linear-todos-modal button:focus-visible, #attune-codex-linear-todos-modal a:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+#attune-codex-linear-todos-modal { position: fixed; top: 48px; left: 282px; z-index: 2147483647; display: block; padding: 0; background: transparent; }
+#attune-codex-linear-todos-modal [role="document"] { width: max-content; max-width: min(220px, calc(100vw - 32px)); overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 10px; background: Canvas; color: CanvasText; box-shadow: 0 24px 80px rgb(0 0 0 / 42%); font: 13px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+#attune-codex-linear-todos-modal header, #attune-codex-linear-todos-modal .attune-linear-issue-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 14px; }
+#attune-codex-linear-todos-modal header { border-bottom: 1px solid color-mix(in srgb, CanvasText 13%, transparent); }
+#attune-codex-linear-todos-modal h2 { display: inline-flex; align-items: center; gap: 7px; margin: 0; font-size: 14px; line-height: 1.2; }
+#attune-codex-linear-todos-logo { width: 15px; height: 15px; flex: 0 0 15px; }
+#attune-codex-linear-todos-modal button, #attune-codex-linear-todos-modal a { border: 0; border-radius: 6px; padding: 7px 9px; background: color-mix(in srgb, CanvasText 11%, transparent); color: CanvasText; cursor: pointer; font: 600 12px/1 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-decoration: none; }
+#attune-codex-linear-todos-list-wrap { position: relative; display: none; }
+#attune-codex-linear-todos-modal[data-expanded="true"] #attune-codex-linear-todos-list-wrap { display: block; }
+#attune-codex-linear-todos-list { max-height: 156px; margin: 0; padding: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; list-style: none; }
+#attune-codex-linear-todos-list::-webkit-scrollbar { display: none; }
+#attune-codex-linear-todos-list-scrollbar { position: absolute; top: 7px; right: 3px; bottom: 7px; display: none; width: 6px; border-radius: 999px; background: rgb(39 49 63 / 18%); pointer-events: none; }
+#attune-codex-linear-todos-list-scrollbar::after { position: absolute; top: 0; left: 0; width: 100%; height: var(--attune-linear-scroll-thumb-size, 28px); border-radius: inherit; background: rgb(92 115 255 / 78%); content: ''; transform: translateY(var(--attune-linear-scroll-thumb-offset, 0)); }
+#attune-codex-linear-todos-list-wrap[data-scrollable="true"] #attune-codex-linear-todos-list-scrollbar { display: block; }
+#attune-codex-linear-todos-list li { border-bottom: 1px solid color-mix(in srgb, CanvasText 9%, transparent); }
+#attune-codex-linear-todos-list li:last-child { border-bottom: 0; }
+#attune-codex-linear-todos-list button { width: 100%; border-radius: 0; padding: 12px 18px 12px 14px; background: transparent; text-align: left; }
+#attune-codex-linear-todos-list button:hover { background: color-mix(in srgb, CanvasText 8%, transparent); }
+#attune-codex-linear-todos-list strong { display: block; margin-bottom: 3px; color: color-mix(in srgb, CanvasText 76%, #7ca8ff); font-size: 11px; }
+#attune-codex-linear-todos-list .attune-linear-status { display: inline-block; margin-left: 6px; padding: 2px 5px; border-radius: 999px; background: color-mix(in srgb, CanvasText 12%, transparent); color: color-mix(in srgb, CanvasText 76%, #9aa8b8); font-size: 10px; font-style: normal; font-weight: 700; line-height: 1; text-transform: capitalize; }
+#attune-codex-linear-todos-list .attune-linear-status[data-status="backlog"] { background: rgb(132 145 158 / 22%); color: #b6c0ca; }
+#attune-codex-linear-todos-list .attune-linear-status[data-status="todo"] { background: rgb(206 213 223 / 18%); color: #d7dde5; }
+#attune-codex-linear-todos-list .attune-linear-status[data-status="in-progress"], #attune-codex-linear-todos-list .attune-linear-status[data-status="started"] { background: rgb(244 198 0 / 20%); color: #ffd94d; }
+#attune-codex-linear-todos-list .attune-linear-status[data-status="done"], #attune-codex-linear-todos-list .attune-linear-status[data-status="completed"] { background: rgb(92 115 255 / 23%); color: #9cabff; }
+#attune-codex-linear-todos-list .attune-linear-status[data-status="canceled"], #attune-codex-linear-todos-list .attune-linear-status[data-status="duplicate"] { background: rgb(174 184 196 / 16%); color: #9ca7b2; }
+#attune-codex-linear-todos-list span { display: block; }
+#attune-codex-linear-todos-empty { padding: 24px 14px; color: color-mix(in srgb, CanvasText 62%, transparent); text-align: center; }
+#attune-codex-linear-issue-modal { position: fixed; inset: 0; z-index: 2147483648; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / 48%); }
+#attune-codex-linear-issue-modal [role="document"] { width: min(420px, calc(100vw - 32px)); border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 10px; background: Canvas; color: CanvasText; box-shadow: 0 24px 80px rgb(0 0 0 / 42%); font: 13px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+#attune-codex-linear-issue-modal h2 { margin: 0; font-size: 16px; } #attune-codex-linear-issue-modal .attune-linear-issue-copy { max-height: min(560px, calc(100vh - 160px)); padding: 18px; overflow: auto; } #attune-codex-linear-issue-modal .attune-linear-issue-key { margin: 0 0 7px; color: color-mix(in srgb, CanvasText 64%, #7ca8ff); font-size: 12px; } #attune-codex-linear-issue-modal [data-priority] > div { display: flex; flex-wrap: wrap; gap: 6px; } #attune-codex-linear-issue-modal [data-priority] button { border: 0; border-radius: 5px; padding: 6px 8px; background: color-mix(in srgb, CanvasText 10%, transparent); color: CanvasText; cursor: pointer; font: 600 11px/1 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; } #attune-codex-linear-issue-modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
+
+/* @attune-script
+(() => {
+  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+  const readTodos = async () => {
+    const state = window.__attuneWorkspaceBridge?.['linear-todos'] || null;
+    return { issues: Array.isArray(state?.payload?.issues) ? state.payload.issues : [], updatedAt: state?.updatedAt || null };
+  };
+  const close = () => { const panel = document.getElementById('attune-codex-linear-todos-modal'); if (panel) { panel.dataset.expanded = 'false'; const expand = panel.querySelector('[data-expand]'); if (expand) { expand.textContent = '+'; expand.setAttribute('aria-expanded', 'false'); } } };
+  const closeIssue = (returnToTasks = true) => { document.getElementById('attune-codex-linear-issue-modal')?.remove(); if (returnToTasks) document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), key: '', type: 'my-issues' }); };
+  const complete = async (button, issue) => {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    button.disabled = true; button.textContent = 'Completing…';
+    try {
+      document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id, key: issue.key });
+      for (let attempt = 0; attempt < 16; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const result = window.__attuneWorkspaceBridge?.['linear-todos-completion'];
+        if (result?.payload?.id !== id) continue;
+        if (result.payload.status === 'completed') {
+          button.closest('li')?.classList.add('attune-linear-completed');
+          button.textContent = 'Completed';
+          button.setAttribute('aria-label', issue.key + ' is completed');
+          return;
+        }
+        throw new Error(result.payload.message || 'Linear could not complete this issue.');
+      }
+      throw new Error('Timed out waiting for Linear. Keep Linear open and try again.');
+    } catch (error) {
+      button.disabled = false; button.textContent = 'Complete';
+      const subtitle = button.closest('[role="document"]')?.querySelector('header span');
+      if (subtitle) subtitle.textContent = error instanceof Error ? error.message : 'Unable to complete this issue.';
+    }
+  };
+  const openIssue = async (issue) => {
+    closeIssue(false);
+    const modal = document.createElement('div');
+    modal.id = 'attune-codex-linear-issue-modal';
+    modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true');
+    modal.innerHTML = '<section role="document"><div class="attune-linear-issue-copy"><p class="attune-linear-issue-key">' + escapeHtml(issue.key) + '</p><h2>' + escapeHtml(issue.title) + '</h2><p data-details>Loading issue details from Linear…</p><div data-priority></div></div><footer><button type="button" data-close>Close</button><button type="button" data-complete>Complete</button><button type="button" data-focus>Open in Linear</button></footer></section>';
+    modal.addEventListener('click', (event) => { if (event.target === modal) closeIssue(); });
+    modal.querySelector('[data-close]')?.addEventListener('click', closeIssue);
+    modal.querySelector('[data-complete]')?.addEventListener('click', () => void complete(modal.querySelector('[data-complete]'), issue));
+    modal.querySelector('[data-focus]')?.addEventListener('click', () => { document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), key: issue.key, type: 'focus' }); });
+    document.body.append(modal);
+    modal.querySelector('[data-complete]')?.focus();
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id, key: issue.key, href: issue.href, type: 'details' });
+    for (let attempt = 0; attempt < 18; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const result = window.__attuneWorkspaceBridge?.['linear-todos-details'];
+      if (result?.payload?.id !== id) continue;
+      const details = modal.querySelector('[data-details]');
+      if (!details) return;
+      details.textContent = result.payload.status === 'ready' ? result.payload.details : (result.payload.message || 'Unable to load the Linear issue.');
+      details.style.whiteSpace = 'pre-wrap';
+      const priority = modal.querySelector('[data-priority]');
+      if (priority && result.payload.status === 'ready') {
+        priority.innerHTML = '<p class="attune-linear-issue-key">Priority · ' + escapeHtml(result.payload.priority || 'No priority') + '</p><div>' + ['No priority', 'Urgent', 'High', 'Medium', 'Low'].map((value) => '<button type="button" data-priority="' + value + '"' + (value === (result.payload.priority || 'No priority') ? ' aria-pressed="true"' : '') + '>' + value + '</button>').join('') + '</div>';
+        priority.querySelectorAll('[data-priority]').forEach((button) => button.addEventListener('click', async () => { const value = button.dataset.priority; const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7); button.disabled = true; document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id, key: issue.key, type: 'priority', value }); for (let attempt = 0; attempt < 16; attempt += 1) { await new Promise((resolve) => setTimeout(resolve, 500)); const response = window.__attuneWorkspaceBridge?.['linear-todos-details']; if (response?.payload?.id !== id) continue; button.disabled = false; if (response.payload.status === 'ready') { priority.querySelector('.attune-linear-issue-key').textContent = 'Priority · ' + (response.payload.priority || value); priority.querySelectorAll('[data-priority]').forEach((choice) => choice.setAttribute('aria-pressed', String(choice.dataset.priority === response.payload.priority))); } return; } button.disabled = false; }));
+      }
+      return;
+    }
+    const details = modal.querySelector('[data-details]');
+    if (details) details.textContent = 'Timed out waiting for Linear. Keep Linear open and try again.';
+  };
+  const refresh = async () => {
+    const modal = document.getElementById('attune-codex-linear-todos-modal');
+    if (!modal) return;
+    const { issues, updatedAt } = await readTodos();
+    if (modal.dataset.updatedAt === (updatedAt || '')) return;
+    modal.dataset.updatedAt = updatedAt || '';
+    const list = modal.querySelector('#attune-codex-linear-todos-list');
+    const listWrap = modal.querySelector('#attune-codex-linear-todos-list-wrap');
+    list.innerHTML = issues.length
+      ? issues.map((issue, index) => { const status = String(issue.workflowState || '').trim(); const statusKey = status.toLowerCase().replace(/\\s+/g, '-'); const meta = '<strong>' + escapeHtml(issue.key) + (status ? '<em class="attune-linear-status" data-status="' + escapeHtml(statusKey) + '">' + escapeHtml(status) + '</em>' : '') + '</strong>'; return '<li><button type="button" data-index="' + index + '">' + meta + '<span>' + escapeHtml(issue.title) + '</span></button></li>'; }).join('')
+      : '<li id="attune-codex-linear-todos-empty">No tasks yet. Open Linear on your to-do view to load tasks.</li>';
+    const syncListScrollbar = () => {
+      if (!list || !listWrap) return;
+      const maximum = Math.max(0, list.scrollHeight - list.clientHeight);
+      const scrollable = maximum > 1;
+      listWrap.dataset.scrollable = String(scrollable);
+      if (!scrollable) return;
+      const thumb = Math.max(28, Math.round((list.clientHeight * list.clientHeight) / list.scrollHeight));
+      const track = Math.max(0, list.clientHeight - thumb - 16);
+      const offset = maximum ? Math.round((list.scrollTop / maximum) * track) : 0;
+      listWrap.style.setProperty('--attune-linear-scroll-thumb-size', thumb + 'px');
+      listWrap.style.setProperty('--attune-linear-scroll-thumb-offset', offset + 'px');
+    };
+    list.onscroll = syncListScrollbar;
+    requestAnimationFrame(syncListScrollbar);
+    list.querySelectorAll('button[data-index]').forEach((button) => button.addEventListener('click', () => openIssue(issues[Number(button.dataset.index)])));
+  };
+  const open = async () => {
+    if (document.getElementById('attune-codex-linear-todos-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'attune-codex-linear-todos-modal';
+    modal.setAttribute('aria-labelledby', 'attune-codex-linear-todos-title');
+    modal.dataset.expanded = 'false';
+    modal.innerHTML = '<section role="document"><header><h2 id="attune-codex-linear-todos-title"><img id="attune-codex-linear-todos-logo" src="${LINEAR_DARK_LOGO_DATA_URI}" alt="" />Tasks</h2><button type="button" data-expand aria-label="Show tasks" aria-expanded="false">+</button></header><div id="attune-codex-linear-todos-list-wrap"><ol id="attune-codex-linear-todos-list"></ol><i id="attune-codex-linear-todos-list-scrollbar" aria-hidden="true"></i></div></section>';
+    modal.querySelector('[data-expand]')?.addEventListener('click', (event) => { const expanded = modal.dataset.expanded !== 'true'; modal.dataset.expanded = String(expanded); event.currentTarget.textContent = expanded ? '−' : '+'; event.currentTarget.setAttribute('aria-expanded', String(expanded)); });
+    document.body.append(modal);
+    modal.querySelector('button')?.focus();
+    await refresh();
+  };
+  const render = () => {
+    void open();
+  };
+  const onKeydown = (event) => { if (event.key === 'Escape') { if (document.getElementById('attune-codex-linear-issue-modal')) closeIssue(); else close(); } };
+  render(); document.addEventListener('keydown', onKeydown);
+  clearInterval(window.__attuneCodexLinearTodosRefresh);
+  window.__attuneCodexLinearTodosRefresh = setInterval(() => void refresh(), 1500);
+  const cleanup = () => { document.removeEventListener('keydown', onKeydown); clearInterval(window.__attuneCodexLinearTodosRefresh); document.getElementById('attune-codex-linear-todos-modal')?.remove(); closeIssue(); };
+  window.__attuneCodexLinearTodosCleanup = cleanup;
+  window.__attuneRegisterCleanup?.(cleanup);
+})();
+@end-attune-script */
+`;
+const CODEX_LINEAR_TODOS_CODEX_CSS = `${CODEX_LINEAR_TODOS_CSS}
+
+/* Codex has a wider persistent navigation rail than Cursor. */
+#attune-codex-linear-todos-trigger { top: 60px; left: 324px; box-shadow: none; }
+#attune-codex-linear-todos-modal { top: 60px; left: 324px; }
+#attune-codex-linear-todos-modal [role="document"] { box-shadow: none; }
+`;
+const CURSOR_LINEAR_TODOS_CSS = `${CODEX_LINEAR_TODOS_CSS}
+
+/* Cursor's workbench heading rule is heavier than the matching Codex title. */
+#attune-codex-linear-todos-modal h2 {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 400 !important;
+  line-height: 1.2 !important;
+  letter-spacing: normal !important;
+}
+#attune-codex-linear-todos-logo { vertical-align: middle; }
+
+/* The dedicated Cursor Agents window exposes an IDE switch; regular IDE windows do not. */
+body:not(:has(button[aria-label="IDE"])) #attune-codex-linear-todos-trigger,
+body:not(:has(button[aria-label="IDE"])) #attune-codex-linear-todos-modal {
+  display: none !important;
+}
+`;
+const CODEX_YOUTUBE_PREVIEW_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-label="YouTube in Codex attunement preview">
+  <rect width="960" height="600" fill="#111315"/>
+  <rect x="34" y="30" width="892" height="540" rx="14" fill="#1b1e22" stroke="#353a40" stroke-width="2"/>
+  <rect x="34" y="30" width="892" height="48" rx="14" fill="#24282d"/>
+  <circle cx="64" cy="54" r="8" fill="#ff5f57"/><circle cx="88" cy="54" r="8" fill="#febc2e"/><circle cx="112" cy="54" r="8" fill="#28c840"/>
+  <rect x="66" y="108" width="318" height="21" rx="4" fill="#dce2e9"/><rect x="66" y="150" width="432" height="14" rx="3" fill="#7f8995"/><rect x="66" y="180" width="340" height="14" rx="3" fill="#59636e"/>
+  <rect x="516" y="108" width="368" height="344" rx="8" fill="#08090b" stroke="#464c55" stroke-width="2"/>
+  <path d="M650 195c0-14 15-23 27-15l93 54c12 7 12 23 0 30l-93 54c-12 8-27-1-27-15z" fill="#ff3434"/>
+  <path d="M695 214l43 35-43 35z" fill="white"/>
+  <rect x="538" y="474" width="222" height="16" rx="4" fill="#e5e9ee"/><rect x="538" y="506" width="286" height="12" rx="3" fill="#77818e"/>
+  <rect x="66" y="282" width="368" height="112" rx="8" fill="#24282d" stroke="#363c44"/><rect x="86" y="307" width="146" height="14" rx="3" fill="#c9d1d9"/><rect x="86" y="338" width="295" height="11" rx="3" fill="#65707c"/>
+</svg>
+`;
+const CODEX_YOUTUBE_SOURCE_CSS = `/* Attune managed: codex-youtube-player source */
+/* @attune-script
+(() => {
+  const bridgeUrl = 'http://127.0.0.1:47655/v1/youtube-now-playing';
+  let lastSignature = '';
+  let lastPublishedAt = 0;
+
+  const videoIdFromUrl = (url) => {
+    try {
+      const parsed = new URL(url);
+      if (!/(^|\\.)youtube\\.com$|(^|\\.)youtu\\.be$/i.test(parsed.hostname)) return null;
+      if (parsed.hostname.endsWith('youtu.be')) return parsed.pathname.split('/').filter(Boolean)[0] || null;
+      if (parsed.pathname === '/watch') return parsed.searchParams.get('v');
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      return ['shorts', 'live', 'embed'].includes(parts[0]) ? parts[1] || null : null;
+    } catch { return null; }
+  };
+  const publish = (payload) => fetch(bridgeUrl, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  }).catch(() => {});
+  const collect = () => {
+    const videoId = videoIdFromUrl(location.href);
+    if (!videoId) return;
+    const video = document.querySelector('video');
+    const currentTime = Number.isFinite(video?.currentTime) ? video.currentTime : 0;
+    const payload = {
+      videoUrl: location.href,
+      videoId,
+      title: (document.querySelector('h1 yt-formatted-string')?.textContent || document.title || 'YouTube video').trim(),
+      currentTime,
+      isPlaying: Boolean(video && !video.paused && !video.ended),
+    };
+    const signature = videoId + ':' + Math.floor(currentTime) + ':' + payload.isPlaying;
+    if (signature !== lastSignature || Date.now() - lastPublishedAt > 3000) {
+      publish(payload);
+      lastPublishedAt = Date.now();
+    }
+    lastSignature = signature;
+  };
+  clearInterval(window.__attuneYoutubeSourceInterval);
+  window.__attuneYoutubeSourceInterval = setInterval(collect, 1000);
+  collect();
+  const cleanup = () => {
+    clearInterval(window.__attuneYoutubeSourceInterval);
+  };
+  window.__attuneYoutubeSourceCleanup = cleanup;
+  window.__attuneRegisterCleanup?.(cleanup);
+})();
+@end-attune-script */
+`;
+const CODEX_YOUTUBE_PLAYER_CSS = `/* Attune managed: codex-youtube-player */
+#attune-codex-youtube-player { position: fixed; right: 18px; bottom: 18px; z-index: 2147483647; width: min(440px, calc(100vw - 36px)); overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 10px; background: color-mix(in srgb, Canvas 94%, CanvasText 6%); color: CanvasText; box-shadow: 0 20px 60px rgb(0 0 0 / 38%); font: 12px/1.35 ui-sans-serif, system-ui, sans-serif; }
+#attune-codex-youtube-player header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent); }
+#attune-codex-youtube-player strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#attune-codex-youtube-player .attune-youtube-status { color: color-mix(in srgb, CanvasText 62%, transparent); white-space: nowrap; }
+#attune-codex-youtube-player iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; background: #000; }
+#attune-codex-youtube-player footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px; }
+#attune-codex-youtube-player button, #attune-codex-youtube-player a { appearance: none; border: 0; border-radius: 5px; padding: 6px 8px; background: color-mix(in srgb, CanvasText 11%, transparent); color: CanvasText; cursor: pointer; font: inherit; text-decoration: none; }
+#attune-codex-youtube-player button:hover, #attune-codex-youtube-player a:hover { background: color-mix(in srgb, CanvasText 18%, transparent); }
+
+/* @attune-script
+(() => {
+  const validVideoId = (value) => /^[A-Za-z0-9_-]{6,}$/.test(value || '') ? value : null;
+  let shownVideoId = null;
+
+  const remove = () => document.getElementById('attune-codex-youtube-player')?.remove();
+  const render = (state) => {
+    const payload = state?.payload;
+    const videoId = validVideoId(payload?.videoId);
+    const updatedAt = Date.parse(state?.updatedAt || '');
+    if (!videoId || !Number.isFinite(updatedAt) || Date.now() - updatedAt > 8000) { remove(); shownVideoId = null; return; }
+    let root = document.getElementById('attune-codex-youtube-player');
+    const seconds = Math.max(0, Math.floor(Number(payload.currentTime) || 0));
+    const label = payload.isPlaying ? 'Playing in Chrome' : 'Paused in Chrome';
+    if (!root || shownVideoId !== videoId) {
+      root?.remove();
+      root = document.createElement('aside');
+      root.id = 'attune-codex-youtube-player';
+      root.setAttribute('aria-label', 'YouTube player from Google Chrome');
+      root.innerHTML = '<header><strong></strong><span class="attune-youtube-status"></span></header><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe><footer><button type="button">Sync to Chrome</button><a target="_blank" rel="noreferrer">Open in YouTube</a></footer>';
+      document.body.append(root);
+      shownVideoId = videoId;
+    }
+    root.querySelector('strong').textContent = payload.title || 'YouTube video';
+    root.querySelector('.attune-youtube-status').textContent = label;
+    const iframe = root.querySelector('iframe');
+    const embedUrl = 'https://www.youtube-nocookie.com/embed/' + videoId + '?rel=0&start=' + seconds;
+    if (!iframe.getAttribute('src')) iframe.src = embedUrl;
+    const link = root.querySelector('a');
+    link.href = payload.videoUrl || 'https://www.youtube.com/watch?v=' + videoId;
+    root.querySelector('button').onclick = () => { iframe.src = embedUrl; };
+  };
+  const refresh = () => {
+    render(window.__attuneWorkspaceBridge?.['youtube-now-playing'] || null);
+  };
+  window.__attuneCodexYoutubeRefresh = refresh;
+  clearInterval(window.__attuneCodexYoutubeInterval);
+  window.__attuneCodexYoutubeInterval = setInterval(refresh, 1000);
+  refresh();
+  const cleanup = () => { clearInterval(window.__attuneCodexYoutubeInterval); remove(); };
+  window.__attuneCodexYoutubeCleanup = cleanup;
+  window.__attuneRegisterCleanup?.(cleanup);
+})();
+@end-attune-script */
+`;
 const ATTUNEMENT_RUNTIME_CLEANUP_CSS = `/* @attune-script
 (() => {
   window.__attuneCodexGitActionsCleanup?.();
+  window.__attuneYoutubeSourceCleanup?.();
+  window.__attuneCodexYoutubeCleanup?.();
+  window.__attuneLinearTodosSourceCleanup?.();
+  window.__attuneCodexLinearTodosCleanup?.();
 })();
 @end-attune-script */`;
 
 let mainWindow: BrowserWindow | null = null;
 let autoWrapTimer: NodeJS.Timeout | null = null;
+let linearTodosBridgeTimer: NodeJS.Timeout | null = null;
 const wrappingAppIds = new Set<string>();
 const lastWrapAtByAppId = new Map<string, number>();
 const iconDataUrlByAppPath = new Map<string, Promise<string | null>>();
 
 configureUserDataPath();
 
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+});
+
 app.whenReady().then(() => {
   registerIpc();
   createWindow();
   startAutoWrapMonitor();
+  startLinearTodosBridge();
+  void reapplyEnabledStylesheets();
   void syncActiveThemeWallpaper();
 
   app.on('activate', () => {
@@ -514,6 +983,211 @@ function configureUserDataPath(): void {
   const userDataPath = join(app.getPath('home'), 'Library', 'Application Support', USER_DATA_FOLDER_NAME);
   mkdirSync(userDataPath, { recursive: true });
   app.setPath('userData', userDataPath);
+}
+
+function startLinearTodosBridge(): void {
+  linearTodosBridgeTimer ??= setInterval(() => void refreshLinearTodosBridge(), 2000);
+  void refreshLinearTodosBridge();
+}
+
+async function reapplyEnabledStylesheets(): Promise<void> {
+  try {
+    const environment = getEnvironment();
+    const [scanModule, configModule] = await Promise.all([
+      loadAttuneModule<ScanModule>('scan.js'),
+      loadAttuneModule<ConfigModule>('config.js'),
+    ]);
+    const profile = readProfile();
+    const enabledAppIds = getEnabledStyleAppIds(profile);
+    if (enabledAppIds.size === 0) return;
+    const themes = discoverThemes(environment);
+    const workspaces = discoverWorkspaces(environment);
+    for (const appInfo of scanModule.scanForSupportedApps()) {
+      const appId = scanModule.getAppId(appInfo);
+      if (!enabledAppIds.has(appId)) continue;
+      applyCompositeStylesheet(appId, appInfo.name, configModule, themes, workspaces, profile);
+    }
+  } catch (error) {
+    console.error('[attune] unable to reapply enabled stylesheets', error);
+  }
+}
+
+async function refreshLinearTodosBridge(): Promise<void> {
+  try {
+    const sessionModule = await loadAttuneModule<SessionModule>('session.js');
+    const session = sessionModule.getSession('com.linear');
+    if (!session || session.status !== 'attached') return;
+    const targets = await fetch(`http://127.0.0.1:${session.port}/json`).then((response) => response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
+    const target = targets.find((item) => item.type === 'page' && item.webSocketDebuggerUrl);
+    if (!target?.webSocketDebuggerUrl) return;
+    const expression = `JSON.stringify((() => { const seen = new Set(); const list = document.querySelector('[data-list-wrapper]'); const stateFor = (link) => { if (!list) return ''; let state = ''; for (const row of list.querySelectorAll('[data-list-row]')) { if (row === link || row.contains(link)) break; const group = row.getAttribute('data-list-key') || ''; if (group.startsWith('GROUP_')) state = group.slice(6).replace(/_/g, ' '); } return state; }; return { isIssuePage: location.pathname.includes('/issue/'), issues: [...document.querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')].map((link) => { const text = (link.innerText || link.textContent || link.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim(); const href = link.href || ''; const key = text.match(/\\b[A-Z][A-Z0-9]+-\\d+\\b/)?.[0] || href.match(/\\/issue\\/([A-Z][A-Z0-9]+-\\d+)/)?.[1] || ''; const title = text.includes(key) ? text.slice(text.indexOf(key) + key.length).replace(/\\s+(Created|Jul|Jan|Feb|Mar|Apr|May|Jun|Aug|Sep|Oct|Nov|Dec)\\b.*$/i, '').trim() : decodeURIComponent(href.split('/').filter(Boolean).at(-1) || '').replace(/-/g, ' '); return { key, title, href, workflowState: stateFor(link) }; }).filter((issue) => issue.key && issue.title && issue.title.length > 2).filter((issue) => !seen.has(issue.key) && seen.add(issue.key)).slice(0, 50) }; })())`;
+    const snapshot = await evaluatePageJson(target.webSocketDebuggerUrl, expression) as { isIssuePage?: boolean; issues?: unknown } | null;
+    if (!snapshot || !Array.isArray(snapshot.issues)) return;
+    const bridgePath = join(app.getPath('home'), '.attune', 'workspace-bridge.json');
+    let store: Record<string, unknown> = {};
+    try { store = JSON.parse(readFileSync(bridgePath, 'utf8')) as Record<string, unknown>; } catch {}
+    const next = snapshot.isIssuePage && store[LINEAR_TODOS_BRIDGE_KEY]
+      ? store[LINEAR_TODOS_BRIDGE_KEY]
+      : { updatedAt: new Date().toISOString(), payload: { issues: snapshot.issues } };
+    store[LINEAR_TODOS_BRIDGE_KEY] = next;
+    const action = await readLinearTodoActionFromApp(sessionModule, 'Codex')
+      ?? await readLinearTodoActionFromApp(sessionModule, 'Cursor');
+    if (action) {
+      if (action.type === 'details') {
+        const details = await readLinearTodoDetails(target.webSocketDebuggerUrl, action.key, action.href);
+        store['linear-todos-details'] = { updatedAt: new Date().toISOString(), payload: { ...action, ...details } };
+      } else if (action.type === 'focus') {
+        await focusLinearApp();
+      } else if (action.type === 'my-issues') {
+        await showLinearMyIssues(target.webSocketDebuggerUrl);
+      } else if (action.type === 'priority') {
+        const result = await setLinearIssuePriority(target.webSocketDebuggerUrl, action.key, action.value);
+        const details = await readLinearTodoDetails(target.webSocketDebuggerUrl, action.key);
+        store['linear-todos-details'] = { updatedAt: new Date().toISOString(), payload: { ...action, ...result, ...details } };
+      } else {
+        const completion = await completeLinearTodo(target.webSocketDebuggerUrl, action.key);
+        store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] = { updatedAt: new Date().toISOString(), payload: { ...action, ...completion } };
+      }
+    }
+    mkdirSync(dirname(bridgePath), { recursive: true });
+    writeFileSync(bridgePath, JSON.stringify(store, null, 2));
+    await Promise.all([
+      pushLinearTodosToApp(sessionModule, 'Codex', next, store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] ?? null, store['linear-todos-details'] ?? null),
+      pushLinearTodosToApp(sessionModule, 'Cursor', next, store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] ?? null, store['linear-todos-details'] ?? null),
+    ]);
+  } catch {}
+}
+
+async function getAttachedSessionForAppName(sessionModule: SessionModule, appName: string): Promise<SessionRecord | null> {
+  const scanModule = await loadAttuneModule<ScanModule>('scan.js');
+  const apps = scanModule.scanForSupportedApps();
+  const appInfo = apps.find((candidate) => candidate.name === appName)
+    ?? (appName === 'Codex' ? apps.find((candidate) => scanModule.getAppId(candidate) === 'com.openai.codex') : undefined);
+  const appId = appInfo ? scanModule.getAppId(appInfo) : appName === 'Codex' ? 'com.openai.codex' : null;
+  if (!appId) return null;
+  const session = sessionModule.getSession(appId);
+  return session?.status === 'attached' ? session : null;
+}
+
+async function pushLinearTodosToApp(sessionModule: SessionModule, appName: string, todos: unknown, completion: unknown, details: unknown): Promise<void> {
+  const session = await getAttachedSessionForAppName(sessionModule, appName);
+  if (!session || session.status !== 'attached') return;
+  const targets = await fetch(`http://127.0.0.1:${session.port}/json`).then((response) => response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
+  const expression = `(() => { window.__attuneWorkspaceBridge = { ...(window.__attuneWorkspaceBridge || {}), 'linear-todos': ${JSON.stringify(todos)}, 'linear-todos-completion': ${JSON.stringify(completion)}, 'linear-todos-details': ${JSON.stringify(details)} }; return JSON.stringify(true); })()`;
+  await Promise.all(targets
+    .filter((target) => target.type === 'page' && target.webSocketDebuggerUrl)
+    .map((target) => evaluatePageJson(target.webSocketDebuggerUrl!, expression)));
+}
+
+async function readLinearTodoActionFromApp(sessionModule: SessionModule, appName: string): Promise<{ id: string; key: string; href?: string; type?: string; value?: string } | null> {
+  const session = await getAttachedSessionForAppName(sessionModule, appName);
+  if (!session || session.status !== 'attached') return null;
+  const targets = await fetch(`http://127.0.0.1:${session.port}/json`).then((response) => response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
+  for (const target of targets.filter((item) => item.type === 'page' && item.webSocketDebuggerUrl)) {
+    const raw = await evaluatePageJson(target.webSocketDebuggerUrl!, `(() => { const value = document.documentElement.dataset.attuneLinearTodosAction || ''; delete document.documentElement.dataset.attuneLinearTodosAction; return JSON.stringify(value ? JSON.parse(value) : null); })()`);
+    if (raw && typeof raw === 'object' && typeof (raw as { id?: unknown }).id === 'string' && typeof (raw as { key?: unknown }).key === 'string') {
+      return raw as { id: string; key: string; href?: string; type?: string; value?: string };
+    }
+  }
+  return null;
+}
+
+async function setLinearIssuePriority(webSocketDebuggerUrl: string, key: string, value: string | undefined): Promise<{ status: 'updated' | 'error'; message?: string }> {
+  const expression = `(async () => { const key = ${JSON.stringify(key)}; if (!location.href.includes('/issue/' + key + '/')) return JSON.stringify({ status: 'error', message: 'Linear is not displaying ' + key + '.' }); const priority = [...document.querySelectorAll('button[data-detail-button="true"]')].find((element) => /^(set priority|no priority|urgent|high|medium|low)$/i.test(((element.innerText || element.textContent || '')).replace(/\\s+/g, ' ').trim())); if (!priority) return JSON.stringify({ status: 'error', message: 'Linear did not expose the priority property.' }); priority.click(); await new Promise((resolve) => setTimeout(resolve, 350)); return JSON.stringify({ status: 'menu-open' }); })()`;
+  const result = await evaluatePageJson(webSocketDebuggerUrl, expression, true);
+  if (result && typeof result === 'object' && (result as { status?: unknown }).status === 'menu-open' && await selectLinearMenuOptionViaAx(webSocketDebuggerUrl, value || 'No priority', 0)) {
+    return { status: 'updated' };
+  }
+  return { status: 'error', message: (result as { message?: string } | null)?.message ?? 'Unable to update priority in Linear.' };
+}
+
+async function focusLinearApp(): Promise<void> {
+  await new Promise<void>((resolve) => execFile('open', ['-a', 'Linear'], () => resolve()));
+}
+
+async function showLinearMyIssues(webSocketDebuggerUrl: string): Promise<void> {
+  await evaluatePageJson(webSocketDebuggerUrl, `(() => { const link = [...document.querySelectorAll('a')].find((item) => (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim() === 'My issues' || item.href.includes('/my-issues/assigned')); if (link) { link.click(); return JSON.stringify(true); } return JSON.stringify(false); })()`);
+}
+
+async function readLinearTodoDetails(webSocketDebuggerUrl: string, key: string, href?: string): Promise<{ status: 'ready' | 'error'; details?: string; priority?: string; workflowState?: string; message?: string }> {
+  const open = await evaluatePageJson(webSocketDebuggerUrl, `(() => { const key = ${JSON.stringify(key)}; const requestedHref = ${JSON.stringify(href ?? '')}; if (location.href.includes('/issue/' + key + '/')) return JSON.stringify({ status: 'ready' }); const link = [...document.querySelectorAll('a[href*="/issue/"]')].find((item) => (item.innerText || item.textContent || '').includes(key) || item.href.includes('/issue/' + key + '/')); if (link) { link.click(); return JSON.stringify({ status: 'ready' }); } try { const target = new URL(requestedHref, location.origin); if (target.origin === location.origin && target.pathname.includes('/issue/' + key + '/')) { location.assign(target.href); return JSON.stringify({ status: 'ready' }); } } catch {} return JSON.stringify({ status: 'error', message: 'Linear could not resolve the selected issue.' }); })()`);
+  if (!open || typeof open !== 'object' || (open as { status?: unknown }).status !== 'ready') {
+    return { status: 'error', message: (open as { message?: string } | null)?.message ?? 'Issue is not visible in Linear.' };
+  }
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const result = await evaluatePageJson(webSocketDebuggerUrl, `JSON.stringify((() => { const controls = [...document.querySelectorAll('button[data-detail-button="true"]')].map((item) => (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim()); const description = document.querySelector('[aria-label="Issue description"]')?.innerText?.trim() || ''; return { status: 'ready', details: description.slice(0, 16000), workflowState: controls.find((value) => /^(todo|backlog|in progress|started|open|done|completed)$/i.test(value)) || '', priority: controls.find((value) => /^(no priority|urgent|high|medium|low)$/i.test(value)) || 'No priority' }; })())`);
+  return result && typeof result === 'object' && (result as { status?: unknown }).status === 'ready'
+    ? result as { status: 'ready'; details: string; priority: string; workflowState: string }
+    : { status: 'error', message: (result as { message?: string } | null)?.message ?? 'Unable to load the Linear issue.' };
+}
+
+async function completeLinearTodo(webSocketDebuggerUrl: string, key: string): Promise<{ status: 'completed' | 'error'; message?: string }> {
+  const expression = `(async () => { const key = ${JSON.stringify(key)}; if (!location.href.includes('/issue/' + key + '/')) return JSON.stringify({ status: 'error', message: 'Linear is not displaying ' + key + '.' }); const controls = [...document.querySelectorAll('button, [role="button"]')]; const direct = controls.find((element) => { const label = ((element.getAttribute('aria-label') || '') + ' ' + (element.innerText || element.textContent || '')).replace(/\\s+/g, ' ').trim().toLowerCase(); return !label.includes('incomplete') && (label.includes('mark as complete') || label === 'complete'); }); if (direct) { direct.click(); return JSON.stringify({ status: 'completed' }); } const status = [...document.querySelectorAll('button[data-detail-button="true"]')].find((element) => /^(todo|backlog|in progress|started|open)$/i.test((element.innerText || element.textContent || '').replace(/\\s+/g, ' ').trim())); if (!status) return JSON.stringify({ status: 'error', message: 'Linear did not expose the issue status property.' }); status.click(); await new Promise((resolve) => setTimeout(resolve, 350)); return JSON.stringify({ status: 'menu-open' }); })()`;
+  const result = await evaluatePageJson(webSocketDebuggerUrl, expression, true);
+  if (result && typeof result === 'object' && (result as { status?: unknown }).status === 'completed') return { status: 'completed' };
+  if (result && typeof result === 'object' && (result as { status?: unknown }).status === 'menu-open' && await selectLinearMenuOptionViaAx(webSocketDebuggerUrl, 'Done', 1)) return { status: 'completed' };
+  return { status: 'error', message: (result as { message?: string } | null)?.message ?? 'Unable to complete this issue.' };
+}
+
+async function selectLinearMenuOptionViaAx(webSocketDebuggerUrl: string, label: string, shortcutOffset: number): Promise<boolean> {
+  const WebSocketConstructor = (globalThis as unknown as { WebSocket?: new (url: string) => { addEventListener(type: string, listener: (event: any) => void): void; send(message: string): void; close(): void } }).WebSocket;
+  if (!WebSocketConstructor) return false;
+  const options = await new Promise<string[]>((resolve) => {
+    const socket = new WebSocketConstructor(webSocketDebuggerUrl);
+    const timeout = setTimeout(() => { socket.close(); resolve([]); }, 1000);
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(event.data) as { id?: number; result?: { nodes?: Array<{ role?: { value?: string }; name?: { value?: string } }> } };
+        if (message.id !== 1) return;
+        clearTimeout(timeout);
+        socket.close();
+        resolve((message.result?.nodes ?? []).filter((node) => node.role?.value === 'option').map((node) => node.name?.value ?? '').filter(Boolean));
+      } catch {}
+    });
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method: 'Accessibility.getFullAXTree', params: {} })));
+  });
+  const optionIndex = options.findIndex((option) => option.trim().toLowerCase() === label.trim().toLowerCase());
+  if (optionIndex < 0) return false;
+  const digit = String(optionIndex + shortcutOffset);
+  await dispatchCdpDigitKey(webSocketDebuggerUrl, digit);
+  return true;
+}
+
+async function dispatchCdpDigitKey(webSocketDebuggerUrl: string, digit: string): Promise<void> {
+  const WebSocketConstructor = (globalThis as unknown as { WebSocket?: new (url: string) => { addEventListener(type: string, listener: (event: any) => void): void; send(message: string): void; close(): void } }).WebSocket;
+  if (!WebSocketConstructor) return;
+  await new Promise<void>((resolve) => {
+    const socket = new WebSocketConstructor(webSocketDebuggerUrl);
+    const timeout = setTimeout(() => { socket.close(); resolve(); }, 1000);
+    const keyParams = { key: digit, code: `Digit${digit}`, windowsVirtualKeyCode: 48 + Number(digit), nativeVirtualKeyCode: 48 + Number(digit) };
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(event.data) as { id?: number };
+        if (message.id === 1) socket.send(JSON.stringify({ id: 2, method: 'Input.dispatchKeyEvent', params: { type: 'keyUp', ...keyParams } }));
+        else if (message.id === 2) { clearTimeout(timeout); socket.close(); resolve(); }
+      } catch {}
+    });
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method: 'Input.dispatchKeyEvent', params: { type: 'keyDown', text: digit, unmodifiedText: digit, ...keyParams } })));
+  });
+}
+
+async function evaluatePageJson(webSocketDebuggerUrl: string, expression: string, awaitPromise = false): Promise<unknown> {
+  const WebSocketConstructor = (globalThis as unknown as { WebSocket?: new (url: string) => { addEventListener(type: string, listener: (event: any) => void): void; send(message: string): void; close(): void } }).WebSocket;
+  if (!WebSocketConstructor) return null;
+  return new Promise((resolve) => {
+    const socket = new WebSocketConstructor(webSocketDebuggerUrl);
+    const timeout = setTimeout(() => { socket.close(); resolve(null); }, 1500);
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(event.data) as { id?: number; result?: { result?: { value?: string } } };
+        if (message.id !== 1) return;
+        clearTimeout(timeout);
+        socket.close();
+        resolve(JSON.parse(message.result?.result?.value ?? 'null'));
+      } catch { clearTimeout(timeout); socket.close(); resolve(null); }
+    });
+    socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise, returnByValue: true } })));
+  });
 }
 
 function createWindow(): void {
@@ -651,6 +1325,9 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
 
   seedCodexGitActionsAttunement(workspacesRoot);
   seedBlueMessagesAttunement(workspacesRoot);
+  seedCodexYouTubeAttunement(workspacesRoot);
+  seedCodexLinearTodosAttunement(workspacesRoot);
+  seedCursorLinearTodosAttunement(workspacesRoot);
   return workspacesRoot;
 }
 
@@ -693,6 +1370,79 @@ function seedBlueMessagesAttunement(workspacesRoot: string): void {
   const stylesheetPath = join(appsRoot, 'chatgpt-blue-messages.css');
   if (!existsSync(stylesheetPath) || readFileSync(stylesheetPath, 'utf8').includes('/* Attune managed: blue-messages */')) {
     writeFileSync(stylesheetPath, BLUE_MESSAGES_CSS);
+  }
+}
+
+function seedCodexYouTubeAttunement(workspacesRoot: string): void {
+  const attunementRoot = join(workspacesRoot, CODEX_YOUTUBE_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  mkdirSync(appsRoot, { recursive: true });
+
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8').includes('"name": "YouTube in Codex"')) {
+    writeFileSync(manifestPath, CODEX_YOUTUBE_MANIFEST);
+  }
+  writeSeedFile(join(attunementRoot, 'preview.svg'), CODEX_YOUTUBE_PREVIEW_SVG);
+
+  const chromePatch = join(appsRoot, 'chrome-youtube-source.css');
+  if (!existsSync(chromePatch) || readFileSync(chromePatch, 'utf8').includes('/* Attune managed: codex-youtube-player source */')) {
+    writeFileSync(chromePatch, CODEX_YOUTUBE_SOURCE_CSS);
+  }
+  const codexPatch = join(appsRoot, 'codex-youtube-player.css');
+  if (!existsSync(codexPatch) || readFileSync(codexPatch, 'utf8').includes('/* Attune managed: codex-youtube-player */')) {
+    writeFileSync(codexPatch, CODEX_YOUTUBE_PLAYER_CSS);
+  }
+}
+
+function seedCodexLinearTodosAttunement(workspacesRoot: string): void {
+  const attunementRoot = join(workspacesRoot, CODEX_LINEAR_TODOS_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  mkdirSync(appsRoot, { recursive: true });
+
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  if (!existsSync(manifestPath)
+    || readFileSync(manifestPath, 'utf8').includes('"name": "Linear To-dos in Codex"')
+    || readFileSync(manifestPath, 'utf8').includes('"preview": "preview.svg"')) {
+    writeFileSync(manifestPath, CODEX_LINEAR_TODOS_MANIFEST);
+  }
+  const previewPath = join(attunementRoot, 'preview.png');
+  if (existsSync(CODEX_LINEAR_TODOS_PREVIEW_SOURCE_PATH)) {
+    copyFileSync(CODEX_LINEAR_TODOS_PREVIEW_SOURCE_PATH, previewPath);
+  }
+  writeSeedFile(join(attunementRoot, 'preview.svg'), CODEX_LINEAR_TODOS_PREVIEW_SVG);
+
+  const linearPatch = join(appsRoot, 'linear-todos-source.css');
+  if (!existsSync(linearPatch) || readFileSync(linearPatch, 'utf8').includes('/* Attune managed: codex-linear-todos source */')) {
+    writeFileSync(linearPatch, CODEX_LINEAR_TODOS_SOURCE_CSS);
+  }
+  const codexPatch = join(appsRoot, 'codex-linear-todos.css');
+  if (!existsSync(codexPatch) || readFileSync(codexPatch, 'utf8').includes('/* Attune managed: codex-linear-todos */')) {
+    writeFileSync(codexPatch, CODEX_LINEAR_TODOS_CODEX_CSS);
+  }
+}
+
+function seedCursorLinearTodosAttunement(workspacesRoot: string): void {
+  const attunementRoot = join(workspacesRoot, CURSOR_LINEAR_TODOS_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  mkdirSync(appsRoot, { recursive: true });
+
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8').includes('"name": "Linear To-dos in Cursor"')) {
+    writeFileSync(manifestPath, CURSOR_LINEAR_TODOS_MANIFEST);
+  }
+  const previewPath = join(attunementRoot, 'preview.png');
+  if (existsSync(CURSOR_LINEAR_TODOS_PREVIEW_SOURCE_PATH)) {
+    copyFileSync(CURSOR_LINEAR_TODOS_PREVIEW_SOURCE_PATH, previewPath);
+  }
+  writeSeedFile(join(attunementRoot, 'preview.svg'), CODEX_LINEAR_TODOS_PREVIEW_SVG);
+
+  const linearPatch = join(appsRoot, 'linear-todos-source.css');
+  if (!existsSync(linearPatch) || readFileSync(linearPatch, 'utf8').includes('/* Attune managed: codex-linear-todos source */')) {
+    writeFileSync(linearPatch, CODEX_LINEAR_TODOS_SOURCE_CSS);
+  }
+  const cursorPatch = join(appsRoot, 'cursor-linear-todos.css');
+  if (!existsSync(cursorPatch) || readFileSync(cursorPatch, 'utf8').includes('/* Attune managed: codex-linear-todos */')) {
+    writeFileSync(cursorPatch, CURSOR_LINEAR_TODOS_CSS);
   }
 }
 
@@ -750,6 +1500,7 @@ function seedMissingArrakisFont(arrakisSource: string, arrakisTheme: string): vo
   font-style: normal;
   font-weight: 400;
 }`;
+
   writeFileSync(userTokensPath, `${fontFace}\n\n${tokens}`);
 }
 
@@ -772,11 +1523,13 @@ async function discoverApps(
   ]);
 
   const apps: AttuneAppInfo[] = [];
-  const activeWorkspace = workspaces.find((workspace) => workspace.id === profile.activeWorkspaceId);
+  const activeWorkspaces = profile.workspaceEnabled
+    ? workspaces.filter((workspace) => profile.enabledWorkspaceIds.includes(workspace.id))
+    : [];
   for (const appInfo of scanModule.scanForSupportedApps()) {
     const id = scanModule.getAppId(appInfo);
     const session = sessionModule.getSession(id);
-    const workspacePatch = activeWorkspace ? findMatchingWorkspacePatch(activeWorkspace, appInfo.name) : undefined;
+    const workspacePatch = activeWorkspaces.some((workspace) => findMatchingWorkspacePatch(workspace, appInfo.name));
     apps.push({
       id,
       name: appInfo.name,
@@ -793,7 +1546,7 @@ async function discoverApps(
       targetProfileApp: isProfileTarget(appInfo.name),
       hasMatchingWorkspace: workspaces.some((workspace) => findMatchingWorkspacePatch(workspace, appInfo.name)),
       workspaceEnabled: profile.workspaceEnabled && profile.enabledWorkspaceAppIds.includes(id),
-      targetWorkspaceApp: Boolean(workspacePatch),
+      targetWorkspaceApp: workspacePatch,
     });
   }
   return apps;
@@ -857,7 +1610,7 @@ async function applyTheme(appId: string, themeId: string): Promise<string> {
 }
 
 async function refreshThemes(noActiveMessage = 'Themes refreshed.'): Promise<string> {
-  const profile = readProfile();
+  let profile = readProfile();
   if (!profile.enabled && !profile.workspaceEnabled) return noActiveMessage;
 
   const environment = getEnvironment();
@@ -870,6 +1623,31 @@ async function refreshThemes(noActiveMessage = 'Themes refreshed.'): Promise<str
 
   if (profile.enabled && !themes.some((candidate) => candidate.id === profile.activeThemeId)) {
     throw new Error(`Theme not found: ${profile.activeThemeId}`);
+  }
+
+  if (profile.enabled) {
+    const activeTheme = themes.find((candidate) => candidate.id === profile.activeThemeId);
+    const needsTargetUpgrade = PROFILE_TARGET_APP_NAMES.some((targetName) => (
+      !profile.targetAppNames.some((savedTarget) => namesMatch(savedTarget, targetName))
+    ));
+
+    // Profiles created before Cursor and Claude support only list the original
+    // targets. Add the new compatible apps once, without re-enabling an app the
+    // user has subsequently paused.
+    if (activeTheme && needsTargetUpgrade) {
+      const enabledAppIds = new Set(profile.enabledAppIds);
+      for (const appInfo of scanModule.scanForSupportedApps()) {
+        if (isProfileTarget(appInfo.name) && findMatchingAdapter(activeTheme, appInfo.name)?.absolutePath) {
+          enabledAppIds.add(scanModule.getAppId(appInfo));
+        }
+      }
+      profile = {
+        ...profile,
+        enabledAppIds: [...enabledAppIds],
+        targetAppNames: PROFILE_TARGET_APP_NAMES,
+      };
+      writeProfile(profile);
+    }
   }
 
   const styledAppIds = getEnabledStyleAppIds(profile);
@@ -929,6 +1707,7 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
       wallpaperEnabled: profile.wallpaperEnabled,
       activeWorkspaceId: profile.activeWorkspaceId,
       workspaceEnabled: profile.workspaceEnabled,
+      enabledWorkspaceIds: profile.enabledWorkspaceIds,
       enabledWorkspaceAppIds: profile.enabledWorkspaceAppIds,
     };
 
@@ -957,6 +1736,7 @@ async function setProfileEnabled(themeId: string, enabled: boolean): Promise<str
     wallpaperEnabled: profile.wallpaperEnabled,
     activeWorkspaceId: profile.activeWorkspaceId,
     workspaceEnabled: profile.workspaceEnabled,
+    enabledWorkspaceIds: profile.enabledWorkspaceIds,
     enabledWorkspaceAppIds: profile.enabledWorkspaceAppIds,
   };
 
@@ -1016,17 +1796,22 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
 
   const discoveredApps = scanModule.scanForSupportedApps()
     .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }));
-  const targetApps = discoveredApps.filter((target) => Boolean(findMatchingWorkspacePatch(workspace, target.appInfo.name)));
+  const enabledWorkspaceIds = new Set(profile.enabledWorkspaceIds);
+  if (enabled) enabledWorkspaceIds.add(workspaceId);
+  else enabledWorkspaceIds.delete(workspaceId);
+  const activeWorkspaces = workspaces.filter((candidate) => enabledWorkspaceIds.has(candidate.id));
+  const targetApps = discoveredApps.filter((target) => activeWorkspaces.some((candidate) => findMatchingWorkspacePatch(candidate, target.appInfo.name)));
   const changedAppIds = new Set([
     ...profile.enabledWorkspaceAppIds,
     ...targetApps.map((target) => target.appId),
   ]);
   const newProfile: ThemeProfile = {
     ...profile,
-    activeWorkspaceId: workspaceId,
-    workspaceEnabled: enabled,
+    activeWorkspaceId: enabled ? workspaceId : activeWorkspaces[0]?.id ?? null,
+    workspaceEnabled: activeWorkspaces.length > 0,
     autoWrapEnabled: enabled ? true : profile.autoWrapEnabled,
-    enabledWorkspaceAppIds: enabled ? targetApps.map((target) => target.appId) : [],
+    enabledWorkspaceIds: [...enabledWorkspaceIds],
+    enabledWorkspaceAppIds: targetApps.map((target) => target.appId),
   };
 
   for (const target of discoveredApps.filter((candidate) => changedAppIds.has(candidate.appId))) {
@@ -1648,21 +2433,26 @@ function compileCompositeStylesheet(
     if (!adapter?.absolutePath) throw new Error(`${theme.name} has no available adapter for ${appName}.`);
     const themeStylesheet = compileThemeStylesheet(theme, adapter);
     parts.push(readFileSync(themeStylesheet.path, 'utf8'));
+    if (isCursorApp(appName)) parts.push(CURSOR_ICON_FONT_GUARD);
     sourcePaths.push(themeStylesheet.path);
   }
 
   if (profile.workspaceEnabled && profile.enabledWorkspaceAppIds.includes(appId)) {
-    if (!profile.activeWorkspaceId) throw new Error('No active attunement selected.');
-    const workspace = workspaces.find((candidate) => candidate.id === profile.activeWorkspaceId);
-    if (!workspace) throw new Error(`Attunement not found: ${profile.activeWorkspaceId}`);
-
-    const patch = findMatchingWorkspacePatch(workspace, appName);
-    if (!patch?.absolutePath) throw new Error(`${workspace.name} has no available attunement patch for ${appName}.`);
-    parts.push([
-      `/* Attunement ${workspace.id}: ${patch.appName}. */`,
-      readWorkspaceCssSource(patch.absolutePath),
-    ].join('\n'));
-    sourcePaths.push(patch.absolutePath);
+    const activeWorkspaces = workspaces.filter((workspace) => profile.enabledWorkspaceIds.includes(workspace.id));
+    const includedWorkspaceSources = new Set<string>();
+    for (const workspace of activeWorkspaces) {
+      const patch = findMatchingWorkspacePatch(workspace, appName);
+      if (!patch?.absolutePath) continue;
+      const source = readWorkspaceCssSource(patch.absolutePath);
+      const sourceSignature = `${patch.appName}\u0000${source}`;
+      if (includedWorkspaceSources.has(sourceSignature)) continue;
+      includedWorkspaceSources.add(sourceSignature);
+      parts.push([
+        `/* Attunement ${workspace.id}: ${patch.appName}. */`,
+        source,
+      ].join('\n'));
+      sourcePaths.push(patch.absolutePath);
+    }
   }
 
   if (parts.length === 0) return null;
@@ -1734,7 +2524,7 @@ function safeFileName(value: string): string {
 
 function findMatchingAdapter(theme: ThemeInfo, appName: string): ThemeAdapterInfo | undefined {
   const normalizedApp = normalizeAppName(appName);
-  return theme.adapters.find((adapter) => {
+  const directAdapter = theme.adapters.find((adapter) => {
     const normalizedAdapter = normalizeAppName(adapter.appName);
     return adapter.available && (
       normalizedAdapter === normalizedApp
@@ -1742,6 +2532,21 @@ function findMatchingAdapter(theme: ThemeInfo, appName: string): ThemeAdapterInf
       || normalizedAdapter.includes(normalizedApp)
     );
   });
+  if (directAdapter) return directAdapter;
+
+  // Cursor is built on the VS Code workbench, so existing themes remain
+  // compatible without requiring every theme author to add another adapter.
+  if (isCursorApp(appName)) {
+    return theme.adapters.find((adapter) => (
+      adapter.available && normalizeAppName(adapter.appName) === 'vscode'
+    ));
+  }
+
+  return undefined;
+}
+
+function isCursorApp(appName: string): boolean {
+  return normalizeAppName(appName).includes('cursor');
 }
 
 function findMatchingWorkspacePatch(workspace: WorkspaceInfo, appName: string): WorkspacePatchInfo | undefined {
@@ -1795,6 +2600,7 @@ function readProfile(): ThemeProfile {
     wallpaperEnabled: true,
     activeWorkspaceId: null,
     workspaceEnabled: false,
+    enabledWorkspaceIds: [],
     enabledWorkspaceAppIds: [],
   };
 
@@ -1811,7 +2617,9 @@ function readProfile(): ThemeProfile {
       enabledAppIds: Array.isArray(raw.enabledAppIds)
         ? raw.enabledAppIds.filter((id): id is string => typeof id === 'string')
         : defaultProfile.enabledAppIds,
-      targetAppNames: defaultProfile.targetAppNames,
+      targetAppNames: Array.isArray(raw.targetAppNames)
+        ? raw.targetAppNames.filter((name): name is string => typeof name === 'string')
+        : defaultProfile.targetAppNames,
       wallpaperRestorePaths: Array.isArray(raw.wallpaperRestorePaths)
         ? raw.wallpaperRestorePaths.filter((path): path is string => typeof path === 'string')
         : defaultProfile.wallpaperRestorePaths,
@@ -1827,6 +2635,11 @@ function readProfile(): ThemeProfile {
       workspaceEnabled: typeof raw.workspaceEnabled === 'boolean'
         ? raw.workspaceEnabled
         : defaultProfile.workspaceEnabled,
+      enabledWorkspaceIds: Array.isArray(raw.enabledWorkspaceIds)
+        ? raw.enabledWorkspaceIds.filter((id): id is string => typeof id === 'string')
+        : raw.workspaceEnabled && typeof raw.activeWorkspaceId === 'string'
+          ? [raw.activeWorkspaceId]
+          : defaultProfile.enabledWorkspaceIds,
       enabledWorkspaceAppIds: Array.isArray(raw.enabledWorkspaceAppIds)
         ? raw.enabledWorkspaceAppIds.filter((id): id is string => typeof id === 'string')
         : defaultProfile.enabledWorkspaceAppIds,

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-export type RuntimeKind = 'electron' | 'cef';
+export type RuntimeKind = 'electron' | 'cef' | 'chrome';
 export type SessionStatus = 'starting' | 'attached' | 'waiting' | 'stopped' | 'none';
 
 export interface AttuneAppInfo {
@@ -79,6 +79,7 @@ export interface ThemeProfile {
   wallpaperEnabled: boolean;
   activeWorkspaceId: string | null;
   workspaceEnabled: boolean;
+  enabledWorkspaceIds: string[];
   enabledWorkspaceAppIds: string[];
 }
 

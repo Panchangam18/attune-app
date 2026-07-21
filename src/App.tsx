@@ -41,6 +41,7 @@ const statusLabels: Record<AttuneAppInfo['status'], string> = {
   stopped: 'Stopped',
   none: 'Ready',
 };
+const TEMPORARILY_HIDDEN_ATTUNEMENT_IDS = new Set<string>(['codex-youtube-player']);
 
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -161,6 +162,10 @@ export function App() {
       return left.name.localeCompare(right.name);
     })
   ), [selectedTheme, selectedWorkspace, snapshot?.apps]);
+  const visibleWorkspaces = useMemo(
+    () => snapshot?.workspaces.filter((workspace) => !TEMPORARILY_HIDDEN_ATTUNEMENT_IDS.has(workspace.id)) ?? [],
+    [snapshot?.workspaces],
+  );
 
   return (
     <main className="shell">
@@ -252,14 +257,14 @@ export function App() {
             <section className="workspaces-overview">
               <h2>Attunements</h2>
               <div className="workspace-gallery">
-                {snapshot.workspaces.map((workspace) => (
+                {visibleWorkspaces.map((workspace) => (
                   <WorkspaceCard
                     key={workspace.id}
                     workspace={workspace}
-                    selected={workspace.id === selectedWorkspaceId}
+                    selected={snapshot.profile.enabledWorkspaceIds.includes(workspace.id)}
                     disabled={busy !== null}
                     onSelect={() => {
-                      const enabled = !(snapshot.profile.workspaceEnabled && snapshot.profile.activeWorkspaceId === workspace.id);
+                      const enabled = !snapshot.profile.enabledWorkspaceIds.includes(workspace.id);
                       setSelectedWorkspaceId(enabled ? workspace.id : null);
                       void runAction('workspace', () => window.attune.setWorkspaceEnabled(workspace.id, enabled), true, true);
                     }}
@@ -675,7 +680,7 @@ Themes folder: ${themePath}
 Editable Arrakis theme: ${themePath}/arrakis
 Arrakis image: ${themePath}/arrakis/arrakis.jpg
 
-Read the editable Arrakis theme first. To adjust Arrakis, edit that folder directly. To create a new theme, create a new sibling folder with manifest.json, tokens.css, base-layout.css, and adapters for ChatGPT, Slack, Spotify, Visual Studio Code, and Claude. Do not edit the signed app bundle. Use relative adapter paths like "adapters/chatgpt.css". When done, tell me to click Refresh themes in Attune App.`;
+Read the editable Arrakis theme first. To adjust Arrakis, edit that folder directly. To create a new theme, create a new sibling folder with manifest.json, tokens.css, base-layout.css, and adapters for ChatGPT, Slack, Spotify, Visual Studio Code, Cursor, and Claude. A Visual Studio Code adapter automatically applies to Cursor unless you add a dedicated Cursor adapter. Do not edit the signed app bundle. Use relative adapter paths like "adapters/chatgpt.css". When done, tell me to click Refresh themes in Attune App.`;
 }
 
 function buildAddWorkspacePrompt(workspacesRoot: string | undefined): string {
