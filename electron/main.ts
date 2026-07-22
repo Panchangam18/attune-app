@@ -72,6 +72,7 @@ const AUTO_WRAP_INTERVAL_MS = 2000;
 const AUTO_WRAP_COOLDOWN_MS = 15000;
 const LINEAR_TODOS_BRIDGE_KEY = 'linear-todos';
 const LINEAR_TODOS_COMPLETION_BRIDGE_KEY = 'linear-todos-completion';
+const LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY = 'linear-completed-slack-dm';
 const BUILT_IN_THEME_WALLPAPERS: Record<string, string> = {
   arrakis: 'arrakis.jpg',
   cyberpunk: 'cyberpunk.jpg',
@@ -173,6 +174,7 @@ const BLUE_MESSAGES_ATTUNEMENT_ID = 'blue-messages';
 const CODEX_YOUTUBE_ATTUNEMENT_ID = 'codex-youtube-player';
 const CODEX_LINEAR_TODOS_ATTUNEMENT_ID = 'codex-linear-todos';
 const CURSOR_LINEAR_TODOS_ATTUNEMENT_ID = 'cursor-linear-todos';
+const LINEAR_COMPLETED_SLACK_DM_ATTUNEMENT_ID = 'linear-completed-to-slack';
 const CODEX_LINEAR_TODOS_PREVIEW_SOURCE_PATH = '/var/folders/tf/20fh8jh132d4b9chynvh911w0000gn/T/codex-clipboard-6465b8ad-a637-4d01-a25e-d583800c7ec6.png';
 const CURSOR_LINEAR_TODOS_PREVIEW_SOURCE_PATH = '/var/folders/tf/20fh8jh132d4b9chynvh911w0000gn/T/codex-clipboard-a627900d-463d-4cf7-bd7a-7e7e951cd437.png';
 const LINEAR_DARK_LOGO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PHBhdGggZmlsbD0iIzIyMjMyNiIgZD0iTTEuMjI1NDEgNjEuNTIyOGMtLjIyMjUtLjk0ODUuOTA3NDgtMS41NDU5IDEuNTk2MzgtLjg1N0wzOS4zMzQyIDk3LjE3ODJjLjY4ODkuNjg4OS4wOTE1IDEuODE4OS0uODU3IDEuNTk2NEMyMC4wNTE1IDk0LjQ1MjIgNS41NDc3OSA3OS45NDg1IDEuMjI1NDEgNjEuNTIyOFpNLjAwMTg5MTM1IDQ2Ljg4OTFjLS4wMTc2NDM3NS4yODMzLjA4ODg3MjE1LjU1OTkuMjg5NTcxNjUuNzYwNkw1Mi4zNTAzIDk5LjcwODVjLjIwMDcuMjAwNy40NzczLjMwNzUuNzYwNi4yODk2IDIuMzY5Mi0uMTQ3NiA0LjY5MzgtLjQ2IDYuOTYyNC0uOTI1OS43NjQ1LS4xNTcgMS4wMzAxLTEuMDk2My40NzgyLTEuNjQ4MUwyLjU3NTk1IDM5LjQ0ODVjLS41NTE4Ni0uNTUxOS0xLjQ5MTE3LS4yODYzLTEuNjQ4MTc0LjQ3ODItLjQ2NTkxNSAyLjI2ODYtLjc3ODMyIDQuNTkzMi0uOTI1ODg0NjUgNi45NjI0Wk00LjIxMDkzIDI5LjcwNTRjLS4xNjY0OS4zNzM4LS4wODE2OS44MTA2LjIwNzY1IDEuMWw2NC43NzYwMiA2NC43NzZjLjI4OTQuMjg5NC43MjYyLjM3NDIgMS4xLjIwNzcgMS43ODYxLS43OTU2IDMuNTE3MS0xLjY5MjcgNS4xODU1LTIuNjg0LjU1MjEtLjMyOC42MzczLTEuMDg2Ny4xODMyLTEuNTQwN0w4LjQzNTY2IDI0LjMzNjdjLS40NTQwOS0uNDU0MS0xLjIxMjcxLS4zNjg5LTEuNTQwNzQuMTgzMi0uOTkxMzIgMS42Njg0LTEuODg4NDMgMy4zOTk0LTIuNjgzOTkgNS4xODU1Wk0xMi42NTg3IDE4LjA3NGMtLjM3MDEtLjM3MDEtLjM5My0uOTYzNy0uMDQ0My0xLjM1NDFDMjEuNzc5NSA2LjQ1OTMxIDM1LjExMTQgMCA0OS45NTE5IDAgNzcuNTkyNyAwIDEwMCAyMi40MDczIDEwMCA1MC4wNDgxYzAgMTQuODQwNS02LjQ1OTMgMjguMTcyNC0xNi43MTk5IDM3LjMzNzUtLjM5MDMuMzQ4Ny0uOTg0LjMyNTgtMS4zNTQyLS4wNDQzTDEyLjY1ODcgMTguMDc0WiIvPjwvc3ZnPg==';
@@ -1049,13 +1051,25 @@ async function refreshLinearTodosBridge(): Promise<void> {
         store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] = { updatedAt: new Date().toISOString(), payload: { ...action, ...completion } };
       }
     }
+    const slackDmEvent = await readLinearCompletedSlackDmEvent(target.webSocketDebuggerUrl);
+    if (slackDmEvent) {
+      store[LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY] = { updatedAt: new Date().toISOString(), payload: slackDmEvent };
+    }
     mkdirSync(dirname(bridgePath), { recursive: true });
     writeFileSync(bridgePath, JSON.stringify(store, null, 2));
     await Promise.all([
       pushLinearTodosToApp(sessionModule, 'Codex', next, store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] ?? null, store['linear-todos-details'] ?? null),
       pushLinearTodosToApp(sessionModule, 'Cursor', next, store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] ?? null, store['linear-todos-details'] ?? null),
+      pushWorkspaceBridgeValueToApp(sessionModule, 'Slack', LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY, store[LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY] ?? null),
     ]);
   } catch {}
+}
+
+async function readLinearCompletedSlackDmEvent(webSocketDebuggerUrl: string): Promise<Record<string, unknown> | null> {
+  const result = await evaluatePageJson(webSocketDebuggerUrl, `(() => { const value = document.documentElement.dataset.attuneLinearCompletedSlackDm || ''; delete document.documentElement.dataset.attuneLinearCompletedSlackDm; return JSON.stringify(value ? JSON.parse(value) : null); })()`);
+  return result && typeof result === 'object' && typeof (result as { eventId?: unknown }).eventId === 'string'
+    ? result as Record<string, unknown>
+    : null;
 }
 
 async function getAttachedSessionForAppName(sessionModule: SessionModule, appName: string): Promise<SessionRecord | null> {
@@ -1074,6 +1088,16 @@ async function pushLinearTodosToApp(sessionModule: SessionModule, appName: strin
   if (!session || session.status !== 'attached') return;
   const targets = await fetch(`http://127.0.0.1:${session.port}/json`).then((response) => response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
   const expression = `(() => { window.__attuneWorkspaceBridge = { ...(window.__attuneWorkspaceBridge || {}), 'linear-todos': ${JSON.stringify(todos)}, 'linear-todos-completion': ${JSON.stringify(completion)}, 'linear-todos-details': ${JSON.stringify(details)} }; return JSON.stringify(true); })()`;
+  await Promise.all(targets
+    .filter((target) => target.type === 'page' && target.webSocketDebuggerUrl)
+    .map((target) => evaluatePageJson(target.webSocketDebuggerUrl!, expression)));
+}
+
+async function pushWorkspaceBridgeValueToApp(sessionModule: SessionModule, appName: string, key: string, value: unknown): Promise<void> {
+  const session = await getAttachedSessionForAppName(sessionModule, appName);
+  if (!session || session.status !== 'attached') return;
+  const targets = await fetch(`http://127.0.0.1:${session.port}/json`).then((response) => response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
+  const expression = `(() => { window.__attuneWorkspaceBridge = { ...(window.__attuneWorkspaceBridge || {}), [${JSON.stringify(key)}]: ${JSON.stringify(value)} }; return JSON.stringify(true); })()`;
   await Promise.all(targets
     .filter((target) => target.type === 'page' && target.webSocketDebuggerUrl)
     .map((target) => evaluatePageJson(target.webSocketDebuggerUrl!, expression)));
@@ -1328,7 +1352,30 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
   seedCodexYouTubeAttunement(workspacesRoot);
   seedCodexLinearTodosAttunement(workspacesRoot);
   seedCursorLinearTodosAttunement(workspacesRoot);
+  seedLinearCompletedSlackDmAttunement(workspacesRoot);
   return workspacesRoot;
+}
+
+function seedLinearCompletedSlackDmAttunement(workspacesRoot: string): void {
+  const bundledRoot = join(__dirname, 'assets', LINEAR_COMPLETED_SLACK_DM_ATTUNEMENT_ID);
+  if (!existsSync(bundledRoot)) return;
+
+  const attunementRoot = join(workspacesRoot, LINEAR_COMPLETED_SLACK_DM_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  const managed = !existsSync(manifestPath)
+    || readFileSync(manifestPath, 'utf8').includes('"name": "Linear completed → Slack DM"');
+  if (!managed) return;
+
+  mkdirSync(appsRoot, { recursive: true });
+  for (const relativePath of [
+    'manifest.json',
+    'preview.png',
+    join('apps', 'linear-completion-source.css'),
+    join('apps', 'slack-completion-dm.css'),
+  ]) {
+    copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
+  }
 }
 
 function seedCodexGitActionsAttunement(workspacesRoot: string): void {

@@ -1,0 +1,15 @@
+{
+  "name": "Linear completed → Slack DM",
+  "description": "Send Madhavan Panchangam a Slack DM with issue details when a Linear task is completed.",
+  "preview": "preview.png",
+  "patches": {
+    "Linear": {
+      "source": "apps/linear-completion-source.css",
+      "intent": "Detect native Linear completion actions and publish the completed issue to the local Attune bridge."
+    },
+    "Slack": {
+      "source": "apps/slack-completion-dm.css",
+      "intent": "Open Madhavan Panchangam's DM, fill Slack's native composer, and click Send once per completion."
+    }
+  }
+}

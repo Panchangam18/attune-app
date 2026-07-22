@@ -1,0 +1,118 @@
+/* Linear completed → Slack DM: Linear publisher */
+/* @attune-script
+(() => {
+  window.__attuneLinearCompletionSlackCleanup?.();
+
+  const donePattern = /^(done|completed|complete)(?:\s+\d+)?$/i;
+  const completeActionPattern = /\b(mark as complete|complete issue|move to done)\b/i;
+  const dateSuffixPattern = /\s+(Created|Updated|Today|Yesterday|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b.*$/i;
+  const publishedAt = new Map();
+  let pendingIssue = null;
+  let previousPageKey = '';
+  let previousPageStatus = '';
+  const debug = window.__attuneLinearCompletionSlackDebug = { startedAt: new Date().toISOString() };
+
+  const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const controlLabel = (node) => clean((node?.getAttribute?.('aria-label') || '') + ' ' + (node?.innerText || node?.textContent || ''));
+  const issueKeyFrom = (value) => clean(value).match(/\b[A-Z][A-Z0-9]+-\d+\b/)?.[0] || '';
+
+  const issueFromRow = (row) => {
+    if (!row) return null;
+    const link = row.matches?.('a[href*="/issue/"]') ? row : row.querySelector?.('a[href*="/issue/"]');
+    const href = link?.href || row.href || '';
+    const text = clean(row.innerText || row.textContent || link?.getAttribute?.('aria-label'));
+    const key = issueKeyFrom(text) || href.match(/\/issue\/([A-Z][A-Z0-9]+-\d+)/i)?.[1]?.toUpperCase() || '';
+    if (!key) return null;
+    const title = clean(text.slice(Math.max(0, text.indexOf(key) + key.length)).replace(dateSuffixPattern, ''))
+      || decodeURIComponent(href.split('/').filter(Boolean).at(-1) || '').replace(/-/g, ' ');
+    return { key, title, url: href || location.href, description: '', priority: '', assignee: '', status: 'Done' };
+  };
+
+  const currentIssue = () => {
+    const pathKey = location.pathname.match(/\/issue\/([A-Z][A-Z0-9]+-\d+)(?:\/|$)/i)?.[1]?.toUpperCase() || '';
+    if (!pathKey) return null;
+    const controls = [...document.querySelectorAll('button[data-detail-button="true"]')].map(controlLabel).filter(Boolean);
+    const status = controls.find((value) => /^(todo|backlog|in progress|started|open|done|completed|canceled|duplicate)$/i.test(value)) || '';
+    const priority = controls.find((value) => /^(no priority|urgent|high|medium|low)$/i.test(value)) || '';
+    const assigneeButton = [...document.querySelectorAll('button[data-detail-button="true"]')].find((node) => /assignee/i.test(node.getAttribute('aria-label') || ''));
+    const assignee = assigneeButton ? clean(assigneeButton.innerText || assigneeButton.textContent || assigneeButton.getAttribute('aria-label')).replace(/^assignee\s*/i, '') : '';
+    const description = clean(document.querySelector('[aria-label="Issue description"]')?.innerText || '').slice(0, 1800);
+    const titleFromDocument = clean(document.title).replace(/^.*?\b[A-Z][A-Z0-9]+-\d+\b\s*[-–—:]?\s*/, '').replace(/\s*[|·–—]\s*Linear.*$/i, '');
+    const titleNode = document.querySelector('textarea[aria-label*="title" i], input[aria-label*="title" i], [contenteditable="true"][data-placeholder*="title" i], h1');
+    const title = clean(titleNode?.value || titleNode?.innerText || titleNode?.textContent || titleFromDocument).replace(dateSuffixPattern, '');
+    return { key: pathKey, title, url: location.href, description, priority, assignee, status };
+  };
+
+  const issueNear = (target) => {
+    const row = target?.closest?.('[data-list-row], a[href*="/issue/"]');
+    const recentPending = pendingIssue && Date.now() - pendingIssue.capturedAt < 8000 ? pendingIssue.issue : null;
+    return issueFromRow(row) || currentIssue() || recentPending;
+  };
+
+  const publish = async (issue, source) => {
+    if (!issue?.key) return;
+    const now = Date.now();
+    if (now - (publishedAt.get(issue.key) || 0) < 6000) return;
+    publishedAt.set(issue.key, now);
+    const event = {
+      eventId: issue.key + '-' + now.toString(36),
+      completedAt: new Date(now).toISOString(),
+      source,
+      issue: { ...issue, status: 'Done' },
+    };
+    debug.lastPublish = event;
+    document.documentElement.dataset.attuneLinearCompletedSlackDm = JSON.stringify(event);
+  };
+
+  const onPointerDown = (event) => {
+    const rowIssue = issueFromRow(event.target?.closest?.('[data-list-row], a[href*="/issue/"]'));
+    if (rowIssue) pendingIssue = { issue: rowIssue, capturedAt: Date.now() };
+  };
+
+  const onClick = (event) => {
+    const actionable = event.target?.closest?.('button, [role="button"], [role="option"], [role="menuitem"]') || event.target;
+    const label = controlLabel(actionable);
+    const role = actionable?.getAttribute?.('role') || '';
+    const isDoneChoice = donePattern.test(label) && /^(option|menuitem|menuitemradio)$/.test(role);
+    const isCompletionAction = completeActionPattern.test(label);
+    debug.lastClick = { label, role, isDoneChoice, isCompletionAction, at: new Date().toISOString() };
+    if (!isDoneChoice && !isCompletionAction) return;
+    const issue = issueNear(event.target);
+    debug.lastClickIssue = issue;
+    if (!issue) return;
+    setTimeout(() => void publish(currentIssue()?.key === issue.key ? { ...issue, ...currentIssue() } : issue, 'linear-ui'), 900);
+  };
+
+  const poll = () => {
+    const issue = currentIssue();
+    debug.lastPoll = { issue, previousPageKey, previousPageStatus, at: new Date().toISOString() };
+    if (!issue) {
+      previousPageKey = '';
+      previousPageStatus = '';
+      return;
+    }
+    if (issue.key !== previousPageKey) {
+      previousPageKey = issue.key;
+      previousPageStatus = issue.status;
+      return;
+    }
+    if (donePattern.test(issue.status) && previousPageStatus && !donePattern.test(previousPageStatus)) {
+      void publish(issue, 'linear-status-transition');
+    }
+    previousPageStatus = issue.status;
+  };
+
+  document.addEventListener('pointerdown', onPointerDown, true);
+  document.addEventListener('click', onClick, true);
+  window.__attuneLinearCompletionSlackTimer = setInterval(poll, 700);
+  poll();
+
+  const cleanup = () => {
+    document.removeEventListener('pointerdown', onPointerDown, true);
+    document.removeEventListener('click', onClick, true);
+    clearInterval(window.__attuneLinearCompletionSlackTimer);
+  };
+  window.__attuneLinearCompletionSlackCleanup = cleanup;
+  window.__attuneRegisterCleanup?.(cleanup);
+})();
+@end-attune-script */

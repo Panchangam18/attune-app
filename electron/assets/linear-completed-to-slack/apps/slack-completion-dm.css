@@ -1,0 +1,109 @@
+/* Linear completed → Slack DM: Slack consumer */
+/* @attune-script
+(() => {
+  window.__attuneLinearCompletionSlackDmCleanup?.();
+
+  const bridgeKey = 'linear-completed-slack-dm';
+  const destination = {
+    name: 'Madhavan Panchangam',
+    workspaceId: 'T08KL49B604',
+    conversationId: 'D09ARMTEASE',
+  };
+  const storageKey = 'attune.linear-completed-slack-dm.last-event';
+  let busy = false;
+  let initialized = false;
+  let lastEventId = localStorage.getItem(storageKey) || '';
+  const debug = window.__attuneLinearCompletionSlackDmDebug = { startedAt: new Date().toISOString() };
+
+  const clean = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+  const formatMessage = (event) => {
+    const issue = event.issue || {};
+    const key = clean(issue.key) || 'Linear issue';
+    const title = clean(issue.title) || 'Untitled issue';
+    const rows = ['✅ Completed ' + key + ' — ' + title, '- Status: Done'];
+    if (clean(issue.priority)) rows.push('- Priority: ' + clean(issue.priority));
+    if (clean(issue.assignee)) rows.push('- Assignee: ' + clean(issue.assignee));
+    if (clean(issue.description)) rows.push('', clean(issue.description).slice(0, 1200));
+    if (clean(issue.url)) rows.push('', 'Open in Linear: ' + clean(issue.url));
+    return rows.join('\n');
+  };
+
+  const inDestination = () => location.pathname.includes('/client/' + destination.workspaceId + '/' + destination.conversationId);
+
+  const openDestination = async () => {
+    if (inDestination()) return true;
+    const link = [...document.querySelectorAll('a[href]')].find((node) => node.href.includes('/client/' + destination.workspaceId + '/' + destination.conversationId));
+    if (link) link.click();
+    else location.assign('https://app.slack.com/client/' + destination.workspaceId + '/' + destination.conversationId);
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await wait(500);
+      if (inDestination() && document.querySelector('[data-qa="texty_input"][contenteditable="true"]')) return true;
+    }
+    return false;
+  };
+
+  const composerText = (composer) => clean(composer?.innerText || composer?.textContent || '');
+
+  const send = async (event) => {
+    if (!await openDestination()) throw new Error('Could not open the Slack DM.');
+    const composer = document.querySelector('[data-qa="texty_input"][contenteditable="true"]');
+    if (!composer) throw new Error('Slack composer is unavailable.');
+    if (composerText(composer)) throw new Error('Slack composer is in use; waiting to preserve the draft.');
+
+    composer.focus();
+    const message = formatMessage(event);
+    if (!document.execCommand('insertText', false, message)) {
+      composer.textContent = message;
+      composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: message }));
+    }
+    await wait(250);
+
+    const button = document.querySelector('button[data-qa="texty_send_button"]');
+    if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
+      throw new Error('Slack Send button is unavailable.');
+    }
+    button.click();
+    await wait(400);
+    return message;
+  };
+
+  const check = async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const state = window.__attuneWorkspaceBridge?.[bridgeKey] || null;
+      const event = state?.payload;
+      const eventId = clean(event?.eventId);
+      if (!eventId || eventId === lastEventId) return;
+
+      if (!initialized && !lastEventId) {
+        const age = Date.now() - Date.parse(state.updatedAt || '');
+        if (!Number.isFinite(age) || age > 30000) {
+          lastEventId = eventId;
+          localStorage.setItem(storageKey, eventId);
+          return;
+        }
+      }
+
+      const message = await send(event);
+      lastEventId = eventId;
+      localStorage.setItem(storageKey, eventId);
+      debug.lastSent = { eventId, destination: destination.name, sentAt: new Date().toISOString(), message };
+    } catch (error) {
+      debug.lastError = String(error?.message || error);
+    }
+    finally {
+      initialized = true;
+      busy = false;
+    }
+  };
+
+  window.__attuneLinearCompletionSlackDmTimer = setInterval(() => void check(), 1200);
+  void check();
+  const cleanup = () => clearInterval(window.__attuneLinearCompletionSlackDmTimer);
+  window.__attuneLinearCompletionSlackDmCleanup = cleanup;
+  window.__attuneRegisterCleanup?.(cleanup);
+})();
+@end-attune-script */
