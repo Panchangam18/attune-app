@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron';
 import { execFile } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
@@ -947,6 +947,8 @@ const ATTUNEMENT_RUNTIME_CLEANUP_CSS = `/* @attune-script
 let mainWindow: BrowserWindow | null = null;
 let autoWrapTimer: NodeJS.Timeout | null = null;
 let linearTodosBridgeTimer: NodeJS.Timeout | null = null;
+let scaffoldRefreshTimer: NodeJS.Timeout | null = null;
+const scaffoldWatchers: FSWatcher[] = [];
 const wrappingAppIds = new Set<string>();
 const lastWrapAtByAppId = new Map<string, number>();
 const iconDataUrlByAppPath = new Map<string, Promise<string | null>>();
@@ -969,6 +971,7 @@ app.whenReady().then(() => {
   createWindow();
   startAutoWrapMonitor();
   startLinearTodosBridge();
+  startScaffoldMonitor();
   void reapplyEnabledStylesheets();
   void syncActiveThemeWallpaper();
 
@@ -981,6 +984,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+app.on('before-quit', () => {
+  if (scaffoldRefreshTimer) clearTimeout(scaffoldRefreshTimer);
+  for (const watcher of scaffoldWatchers.splice(0)) watcher.close();
+});
+
 function configureUserDataPath(): void {
   const userDataPath = join(app.getPath('home'), 'Library', 'Application Support', USER_DATA_FOLDER_NAME);
   mkdirSync(userDataPath, { recursive: true });
@@ -990,6 +998,24 @@ function configureUserDataPath(): void {
 function startLinearTodosBridge(): void {
   linearTodosBridgeTimer ??= setInterval(() => void refreshLinearTodosBridge(), 2000);
   void refreshLinearTodosBridge();
+}
+
+function startScaffoldMonitor(): void {
+  if (scaffoldWatchers.length > 0) return;
+  const environment = getEnvironment();
+  for (const root of [environment.userThemesRoot, environment.userWorkspacesRoot]) {
+    const watcher = watch(root, { recursive: true }, (_eventType, fileName) => {
+      const relativePath = String(fileName ?? '');
+      if (!relativePath || relativePath.split('/').includes('.inspection')) return;
+      if (scaffoldRefreshTimer) clearTimeout(scaffoldRefreshTimer);
+      scaffoldRefreshTimer = setTimeout(() => {
+        scaffoldRefreshTimer = null;
+        void reapplyEnabledStylesheets();
+      }, 250);
+    });
+    watcher.on('error', error => console.warn(`[attune] unable to watch ${root}:`, error));
+    scaffoldWatchers.push(watcher);
+  }
 }
 
 async function reapplyEnabledStylesheets(): Promise<void> {

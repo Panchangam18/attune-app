@@ -62,12 +62,28 @@ export function App() {
     snapshot?.workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null
   ), [selectedWorkspaceId, snapshot?.workspaces]);
   const addThemePrompt = useMemo(
-    () => buildAddThemePrompt(snapshot?.environment.userThemesRoot),
-    [snapshot?.environment.userThemesRoot],
+    () => buildAddThemePrompt(
+      snapshot?.environment.userThemesRoot,
+      snapshot?.environment.nodePath,
+      snapshot?.environment.cliPath,
+    ),
+    [
+      snapshot?.environment.userThemesRoot,
+      snapshot?.environment.nodePath,
+      snapshot?.environment.cliPath,
+    ],
   );
   const addWorkspacePrompt = useMemo(
-    () => buildAddWorkspacePrompt(snapshot?.environment.userWorkspacesRoot),
-    [snapshot?.environment.userWorkspacesRoot],
+    () => buildAddWorkspacePrompt(
+      snapshot?.environment.userWorkspacesRoot,
+      snapshot?.environment.nodePath,
+      snapshot?.environment.cliPath,
+    ),
+    [
+      snapshot?.environment.userWorkspacesRoot,
+      snapshot?.environment.nodePath,
+      snapshot?.environment.cliPath,
+    ],
   );
 
   useEffect(() => {
@@ -670,8 +686,13 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number, message: stri
   });
 }
 
-function buildAddThemePrompt(themesRoot: string | undefined): string {
+function buildAddThemePrompt(
+  themesRoot: string | undefined,
+  nodePath: string | undefined,
+  cliPath: string | undefined,
+): string {
   const themePath = themesRoot ?? '~/Library/Application Support/Attune/themes';
+  const inspectionInstructions = buildAgentInspectionInstructions(nodePath, cliPath);
 
   return `Create a custom Attune theme.
 
@@ -680,11 +701,20 @@ Themes folder: ${themePath}
 Editable Arrakis theme: ${themePath}/arrakis
 Arrakis image: ${themePath}/arrakis/arrakis.jpg
 
-Read the editable Arrakis theme first. To adjust Arrakis, edit that folder directly. To create a new theme, create a new sibling folder with manifest.json, tokens.css, base-layout.css, and adapters for ChatGPT, Slack, Spotify, Visual Studio Code, Cursor, and Claude. A Visual Studio Code adapter automatically applies to Cursor unless you add a dedicated Cursor adapter. Do not edit the signed app bundle. Use relative adapter paths like "adapters/chatgpt.css". When done, tell me to click Refresh themes in Attune App.`;
+Read the editable Arrakis theme first. To adjust Arrakis, edit that folder directly. To create a new theme, create a new sibling folder with manifest.json, tokens.css, base-layout.css, and adapters for ChatGPT, Slack, Spotify, Visual Studio Code, Cursor, and Claude. A Visual Studio Code adapter automatically applies to Cursor unless you add a dedicated Cursor adapter. Do not edit the signed app bundle. Use relative adapter paths like "adapters/chatgpt.css".
+
+${inspectionInstructions}
+
+When done, tell me to click Refresh themes in Attune App.`;
 }
 
-function buildAddWorkspacePrompt(workspacesRoot: string | undefined): string {
+function buildAddWorkspacePrompt(
+  workspacesRoot: string | undefined,
+  nodePath: string | undefined,
+  cliPath: string | undefined,
+): string {
   const workspacePath = workspacesRoot ?? '~/Library/Application Support/Attune/workspaces';
+  const inspectionInstructions = buildAgentInspectionInstructions(nodePath, cliPath);
 
   return `Create a custom Attune attunement.
 
@@ -703,5 +733,23 @@ For simple layout changes, write CSS only. For app embeds, put idempotent JavaSc
 })();
 @end-attune-script */
 
-Do not edit the signed app bundle. Keep scripts local-only, defensive, and safe to re-run. When done, tell me to click Refresh attunements in Attune App.`;
+Do not edit the signed app bundle. Keep scripts local-only, defensive, and safe to re-run.
+
+${inspectionInstructions}
+
+When done, tell me to click Refresh attunements in Attune App.`;
+}
+
+function buildAgentInspectionInstructions(
+  nodePath: string | undefined,
+  cliPath: string | undefined,
+): string {
+  if (!nodePath || !cliPath) return '';
+  const command = `ELECTRON_RUN_AS_NODE=1 ${JSON.stringify(nodePath)} ${JSON.stringify(cliPath)}`;
+  return `Attune App and the CLI share the same live sessions. Before writing app-specific CSS, inspect each target that Attune App reports as Open:
+
+${command} status "<App Name>"
+${command} inspect "<App Name>"
+
+Use the returned screenshot, compact selector sample, and viewport to write the CSS. The complete inspection is available at the returned temporary JSON path if targeted details are needed; do not load it wholesale unless necessary. Prefer high-stability selectors. Attune App automatically recompiles edits to the active theme or attunement, so inspect again after saving to verify the rendered result. For a new theme or attunement, ask me to refresh and enable it once before final visual verification. Inspection artifacts expire automatically after 24 hours. Visible private app content may appear in them; keep them local. If the target is not attached, ask me to open it through Attune App. Do not close or relaunch an app without asking me first.`;
 }
