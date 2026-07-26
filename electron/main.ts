@@ -1,5 +1,5 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type OpenDialogOptions } from 'electron';
-import { execFile } from 'node:child_process';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type NativeImage, type OpenDialogOptions } from 'electron';
+import { execFile, spawn } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -49,6 +49,22 @@ interface ConfigModule {
 interface SessionModule {
   getSession(appId: string): SessionRecord | null;
   stopSession(appId: string): boolean;
+}
+
+interface ChatGptCodexModule {
+  createCodexTaskFromChatGpt(transfer: unknown): {
+    threadId: string;
+    title: string;
+    cwd: string;
+    rolloutPath: string;
+  };
+}
+
+interface ClipboardSnapshot {
+  text: string;
+  html: string;
+  rtf: string;
+  image: NativeImage | null;
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -172,6 +188,8 @@ const SEEDED_WORKSPACE_ID = 'focus-flow';
 const CODEX_GIT_ACTIONS_ATTUNEMENT_ID = 'codex-git-actions';
 const BLUE_MESSAGES_ATTUNEMENT_ID = 'blue-messages';
 const CODEX_YOUTUBE_ATTUNEMENT_ID = 'codex-youtube-player';
+const CHATGPT_TO_CODEX_ATTUNEMENT_ID = 'chatgpt-to-codex';
+const CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL = '__ATTUNE_CHATGPT_TO_CODEX_V1__:';
 const CODEX_LINEAR_TODOS_ATTUNEMENT_ID = 'codex-linear-todos';
 const CURSOR_LINEAR_TODOS_ATTUNEMENT_ID = 'cursor-linear-todos';
 const LINEAR_COMPLETED_SLACK_DM_ATTUNEMENT_ID = 'linear-completed-to-slack';
@@ -521,6 +539,133 @@ const CODEX_YOUTUBE_MANIFEST = `{
   }
 }
 `;
+const CHATGPT_TO_CODEX_MANIFEST = `{
+  "name": "ChatGPT Web → Codex",
+  "description": "Copy the current ChatGPT conversation into a new filesystem-backed Codex chat.",
+  "preview": "preview.png",
+  "patches": {
+    "Google Chrome": {
+      "source": "apps/chrome-chatgpt-to-codex.css",
+      "intent": "Add a Send to Codex slash command to ChatGPT and hand the visible conversation to Attune."
+    },
+    "Codex": {
+      "source": "apps/codex-chatgpt-import.css",
+      "intent": "Codex chats are created directly in the local Codex session store; no renderer polling is required."
+    }
+  }
+}`;
+const CHATGPT_TO_CODEX_CSS = `/* Attune managed: chatgpt-to-codex */
+/* Codex chats are written directly to ~/.codex by Attune's local bridge. */
+`;
+const CHATGPT_TO_CODEX_BROWSER_CSS = `/* Attune managed: chatgpt-to-codex browser source v20 */
+#attune-chatgpt-to-codex { display: none !important; }
+#attune-codex-command-option { display: block; width: 100%; } #attune-codex-command-option .__menu-item { width: 100%; } #attune-codex-command-option .attune-command-icon { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; border-radius: 6px; background: color-mix(in srgb, CanvasText 11%, transparent); font-size: 12px; font-weight: 750; }
+#attune-codex-command-option .__menu-item:hover, #attune-codex-command-option .__menu-item[data-highlighted] { background: var(--token-main-surface-secondary, rgb(255 255 255 / 8%)); }
+#attune-codex-command-toast { position: fixed; right: 22px; bottom: 94px; z-index: 2147483647; max-width: min(340px, calc(100vw - 44px)); border-radius: 9px; padding: 9px 12px; background: CanvasText; color: Canvas; box-shadow: 0 10px 30px rgb(0 0 0 / 24%); font: 600 12px/1.3 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+/* @attune-script
+(() => {
+  const optionId = 'attune-codex-command-option'; const toastId = 'attune-codex-command-toast'; let activeComposer = null; let keyboardAction = null; let handoffInProgress = false;
+  window.__attuneChatGptToCodexChromeCleanup?.();
+  window.__attuneChatGptToCodexSlashCommandCleanup?.();
+  document.getElementById('attune-chatgpt-to-codex')?.remove();
+  const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const composerSelector = '#prompt-textarea, form[data-type="unified-composer"] textarea, form[data-type="unified-composer"] [contenteditable="true"], textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
+  const composer = (element) => element?.matches?.(composerSelector) ? element : element?.closest?.(composerSelector) || null;
+  const valueOf = (element) => element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement ? element.value : element?.innerText || element?.textContent || '';
+  const slashPending = (value) => { const source = String(value || '').trimEnd(); if (!source.endsWith('/')) return false; const previous = source.charCodeAt(source.length - 2); return source.length === 1 || previous === 32 || previous === 9 || previous === 10 || previous === 13; };
+  const setValue = (element, value) => { if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set?.call(element, value); else { element.focus(); document.execCommand('selectAll', false); document.execCommand('insertText', false, value); } element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); };
+  const isoTime = (value) => { const source = String(value ?? '').trim(); const numeric = typeof value === 'number' || /^\\d+(?:\\.\\d+)?$/.test(source) ? Number(value) : NaN; const date = Number.isFinite(numeric) ? new Date(numeric < 1e12 ? numeric * 1000 : numeric) : new Date(source); return Number.isFinite(date.getTime()) ? date.toISOString() : null; };
+  const visibleTime = (element) => { const label = element.closest('[data-turn-id-container]')?.querySelector('[role="separator"][aria-label]')?.getAttribute('aria-label'); if (!label) return null; const relative = label.match(/^(Today|Yesterday)\\s+(.+)$/i); if (!relative) return isoTime(label); const date = new Date(new Date().toDateString() + ' ' + relative[2]); if (/^Yesterday$/i.test(relative[1])) date.setDate(date.getDate() - 1); return isoTime(date.getTime()); };
+  const exactTimes = async () => { const match = location.pathname.match(/\\/c\\/([^/?#]+)/); if (!match) return []; const response = await fetch('/backend-api/conversation/' + encodeURIComponent(match[1]), { credentials: 'include' }); if (!response.ok) return []; const conversation = await response.json(); const chain = []; const visited = new Set(); let nodeId = conversation.current_node; while (nodeId && conversation.mapping?.[nodeId] && !visited.has(nodeId)) { visited.add(nodeId); const node = conversation.mapping[nodeId]; chain.push(node); nodeId = node.parent; } return chain.reverse().map((node) => node.message).filter((message) => /^(user|assistant)$/i.test(message?.author?.role || '') && !message?.metadata?.is_visually_hidden_from_conversation).map((message) => ({ role: message.author.role.toLowerCase(), text: (message.content?.parts || []).filter((part) => typeof part === 'string').join('\\n').trim(), timestamp: isoTime(message.create_time) })).filter((message) => message.text); };
+  const conversation = async () => { const seen = new Set(); const messages = [...document.querySelectorAll('[data-message-author-role], article[data-turn]')].map((element) => { const role = element.getAttribute('data-message-author-role') || element.getAttribute('data-turn'); const text = String(element.innerText || element.textContent || '').trim(); const key = role + '\\u0000' + clean(text); if (!/^(user|assistant)$/i.test(role || '') || !text || seen.has(key)) return null; seen.add(key); return { role: role.toLowerCase(), text, timestamp: visibleTime(element) }; }).filter(Boolean); if (!messages.length) throw new Error('No conversation messages were found on this page.'); try { const exact = await exactTimes(); let cursor = 0; for (const message of messages) { let index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role && (!candidate.text || clean(candidate.text) === clean(message.text) || clean(candidate.text).includes(clean(message.text)) || clean(message.text).includes(clean(candidate.text)))); if (index < 0) index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role); if (index >= 0) { message.text = exact[index].text || message.text; message.timestamp = exact[index].timestamp || message.timestamp; cursor = index + 1; } } } catch (error) { console.warn('[attune] Exact ChatGPT content unavailable; using rendered text.', error); } return { messages, history: messages.map((message) => (message.role === 'user' ? 'User:\\n' : 'ChatGPT:\\n') + message.text).join('\\n\\n') }; };
+  const dismiss = () => document.getElementById(optionId)?.remove();
+  const report = (message) => { document.getElementById(toastId)?.remove(); const toast = document.createElement('div'); toast.id = toastId; toast.setAttribute('role', 'status'); toast.textContent = message; document.body.append(toast); setTimeout(() => toast.remove(), 4200); };
+  const sendToCodex = async (input, option) => { if (handoffInProgress || option.getAttribute('aria-disabled') === 'true') return; handoffInProgress = true; try { option.setAttribute('aria-disabled', 'true'); const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); const response = await fetch('http://127.0.0.1:47655/v1/chatgpt-to-codex', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...await conversation(), title: document.title, sourceUrl: location.href }) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'Attune could not create the Codex chat.'); setValue(input, ''); dismiss(); } catch (error) { handoffInProgress = false; option.removeAttribute('aria-disabled'); report(error instanceof Error ? error.message : 'Could not reach Attune.'); } };
+  const popover = () => [...document.querySelectorAll('div.popover')].find((node) => node.getBoundingClientRect().width > 0);
+  const commandItem = (menu) => [...menu.querySelectorAll('.__menu-item')].find((node) => /^Add photos & files\\b/.test(clean(node.innerText)));
+  const visibleComposer = () => activeComposer || [...document.querySelectorAll(composerSelector)].find((node) => node.getBoundingClientRect().width > 0);
+  const menuAction = (row) => row?.matches?.('.__menu-item') ? row : row?.querySelector?.('.__menu-item');
+  const highlight = (menu, item) => { menu.querySelectorAll('.__menu-item[data-highlighted]').forEach((node) => node.removeAttribute('data-highlighted')); item.setAttribute('data-highlighted', ''); keyboardAction = item; };
+  const activate = (event, input, option) => { event.preventDefault(); event.stopImmediatePropagation(); void sendToCodex(input, option); };
+  const insert = () => { if (document.getElementById(optionId)) return true; const menu = popover(); const menuItem = menu && commandItem(menu); const template = menuItem?.parentElement; const input = visibleComposer(); const host = template?.parentElement; if (!menu || !menuItem || !template || !input || !host) return false; const option = template.cloneNode(true); const action = menuAction(option); option.id = optionId; option.removeAttribute('disabled'); option.removeAttribute('aria-disabled'); option.setAttribute('aria-label', 'Send to Codex'); action?.removeAttribute('data-highlighted'); action?.setAttribute('aria-label', 'Send to Codex'); action?.addEventListener('pointerenter', () => highlight(menu, action)); const icon = option.querySelector('svg'); if (icon) { icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('fill', 'currentColor'); icon.setAttribute('fill-rule', 'evenodd'); icon.innerHTML = '<title>Codex</title><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path>'; } const textLeaves = [...option.querySelectorAll('*')].filter((node) => node.children.length === 0 && clean(node.textContent)); const title = textLeaves.find((node) => /Add photos & files/.test(clean(node.textContent))); const description = textLeaves.find((node) => /Upload from computer/.test(clean(node.textContent))); if (title) title.textContent = 'Send to Codex'; if (description) description.textContent = 'Copy this conversation into a new Codex chat'; if (!title) option.textContent = 'Send to Codex'; option.addEventListener('click', (event) => activate(event, input, option), true); host.insertBefore(option, template.nextSibling); keyboardAction = menuItem; return true; };
+  const keyOf = (event) => event.keyCode === 40 || event.key === 'Down' ? 'ArrowDown' : event.keyCode === 38 || event.key === 'Up' ? 'ArrowUp' : event.keyCode === 13 ? 'Enter' : event.keyCode === 32 ? ' ' : event.key;
+  const bridgeMenuKey = (event) => { const key = keyOf(event); const option = document.getElementById(optionId); const menu = popover(); const ownAction = menuAction(option); if (!option || !menu || !ownAction) return false; const actions = [...menu.querySelectorAll('.__menu-item')].filter((node) => node.getBoundingClientRect().width > 0); const focused = document.activeElement?.closest?.('.__menu-item'); const highlighted = actions.find((node) => node.hasAttribute('data-highlighted')); const current = actions.includes(focused) ? focused : highlighted || (actions.includes(keyboardAction) ? keyboardAction : actions[0]); const ownSelected = current === ownAction || ownAction === document.activeElement || ownAction.contains(document.activeElement); if ((key === 'Enter' || key === ' ') && current) { if (ownSelected) activate(event, visibleComposer(), option); else { event.preventDefault(); event.stopImmediatePropagation(); current.click(); } return true; } if (key !== 'ArrowDown' && key !== 'ArrowUp') return false; const step = key === 'ArrowDown' ? 1 : -1; const currentIndex = Math.max(0, actions.indexOf(current)); const target = actions[Math.max(0, Math.min(actions.length - 1, currentIndex + step))]; if (!target) return false; event.preventDefault(); event.stopImmediatePropagation(); highlight(menu, target); return true; };
+  const onKeydown = (event) => { if (bridgeMenuKey(event)) return; if (keyOf(event) === '/' && !event.metaKey && !event.ctrlKey && !event.altKey) requestAnimationFrame(insert); };
+  const onMenuPointerUp = (event) => { const target = event.composedPath().find((node) => node instanceof Element && node.id === optionId); if (!target) return; activate(event, visibleComposer(), target); };
+  const onInput = (event) => { const input = composer(event.target); if (!input) return; activeComposer = input; if (!slashPending(valueOf(input))) dismiss(); else requestAnimationFrame(insert); };
+  window.addEventListener('keydown', onKeydown, true); window.addEventListener('pointerup', onMenuPointerUp, true); document.addEventListener('input', onInput, true); const observer = new MutationObserver(() => requestAnimationFrame(insert)); observer.observe(document.documentElement, { childList: true, subtree: true });
+  const slashPoll = setInterval(() => { const input = visibleComposer(); if (input && slashPending(valueOf(input))) { activeComposer = input; insert(); } }, 160);
+  insert();
+  const cleanup = () => { clearInterval(slashPoll); window.removeEventListener('keydown', onKeydown, true); window.removeEventListener('pointerup', onMenuPointerUp, true); document.removeEventListener('input', onInput, true); observer.disconnect(); dismiss(); document.getElementById(toastId)?.remove(); };
+  window.__attuneChatGptToCodexSlashCommandCleanup = cleanup; window.__attuneRegisterCleanup?.(cleanup);
+})();
+@end-attune-script */
+`;
+const SAFARI_CHATGPT_TO_CODEX_LISTENER = `(() => {
+  window.__attuneSafariChatGptToCodexCleanup?.();
+  const optionId = 'attune-safari-send-to-codex';
+  const toastId = 'attune-safari-send-to-codex-toast';
+  const hoverStyleId = 'attune-safari-send-to-codex-hover';
+  let activeComposer = null;
+  let keyboardAction = null;
+  let handoffInProgress = false;
+  let lastStatus = 'connected';
+  const hoverStyle = document.getElementById(hoverStyleId) || document.createElement('style');
+  hoverStyle.id = hoverStyleId;
+  hoverStyle.textContent = '#' + optionId + ' .__menu-item:hover, #' + optionId + ' .__menu-item[data-highlighted] { background: var(--token-main-surface-secondary, rgb(255 255 255 / 8%)); }';
+  if (!hoverStyle.isConnected) document.head.append(hoverStyle);
+  const status = (value) => { lastStatus = value; document.documentElement.dataset.attuneSafariCodexStatus = value; };
+  const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const composerSelector = '#prompt-textarea, form[data-type="unified-composer"] textarea, form[data-type="unified-composer"] [contenteditable="true"], textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
+  const composer = (node) => node?.matches?.(composerSelector) ? node : node?.closest?.(composerSelector) || null;
+  const valueOf = (node) => node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement ? node.value : node?.innerText || node?.textContent || '';
+  const slashPending = (value) => { const source = String(value || '').trimEnd(); if (!source.endsWith('/')) return false; const previous = source.charCodeAt(source.length - 2); return source.length === 1 || previous === 32 || previous === 9 || previous === 10 || previous === 13; };
+  const setValue = (node, value) => { if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value')?.set?.call(node, value); else { node.focus(); document.execCommand('selectAll', false); document.execCommand('insertText', false, value); } node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); };
+  const isoTime = (value) => { const source = String(value ?? '').trim(); const numeric = typeof value === 'number' || /^\\d+(?:\\.\\d+)?$/.test(source) ? Number(value) : NaN; const date = Number.isFinite(numeric) ? new Date(numeric < 1e12 ? numeric * 1000 : numeric) : new Date(source); return Number.isFinite(date.getTime()) ? date.toISOString() : null; };
+  const visibleTime = (node) => { const label = node.closest('[data-turn-id-container]')?.querySelector('[role="separator"][aria-label]')?.getAttribute('aria-label'); if (!label) return null; const relative = label.match(/^(Today|Yesterday)\\s+(.+)$/i); if (!relative) return isoTime(label); const date = new Date(new Date().toDateString() + ' ' + relative[2]); if (/^Yesterday$/i.test(relative[1])) date.setDate(date.getDate() - 1); return isoTime(date.getTime()); };
+  const exactTimes = async () => { const match = location.pathname.match(/\\/c\\/([^/?#]+)/); if (!match) return []; const response = await fetch('/backend-api/conversation/' + encodeURIComponent(match[1]), { credentials: 'include' }); if (!response.ok) return []; const conversation = await response.json(); const chain = []; const visited = new Set(); let nodeId = conversation.current_node; while (nodeId && conversation.mapping?.[nodeId] && !visited.has(nodeId)) { visited.add(nodeId); const node = conversation.mapping[nodeId]; chain.push(node); nodeId = node.parent; } return chain.reverse().map((node) => node.message).filter((message) => /^(user|assistant)$/i.test(message?.author?.role || '') && !message?.metadata?.is_visually_hidden_from_conversation).map((message) => ({ role: message.author.role.toLowerCase(), text: (message.content?.parts || []).filter((part) => typeof part === 'string').join('\\n').trim(), timestamp: isoTime(message.create_time) })).filter((message) => message.text); };
+  const conversation = async () => { const seen = new Set(); const messages = [...document.querySelectorAll('[data-message-author-role], article[data-turn]')].map((node) => { const role = node.getAttribute('data-message-author-role') || node.getAttribute('data-turn'); const text = String(node.innerText || node.textContent || '').trim(); const key = role + '\\u0000' + clean(text); if (!/^(user|assistant)$/i.test(role || '') || !text || seen.has(key)) return null; seen.add(key); return { role: role.toLowerCase(), text, timestamp: visibleTime(node) }; }).filter(Boolean); if (!messages.length) throw new Error('No conversation messages were found on this page.'); try { const exact = await exactTimes(); let cursor = 0; for (const message of messages) { let index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role && (!candidate.text || clean(candidate.text) === clean(message.text) || clean(candidate.text).includes(clean(message.text)) || clean(message.text).includes(clean(candidate.text)))); if (index < 0) index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role); if (index >= 0) { message.text = exact[index].text || message.text; message.timestamp = exact[index].timestamp || message.timestamp; cursor = index + 1; } } } catch (error) { console.warn('[attune] Exact ChatGPT content unavailable; using rendered text.', error); } return { messages, history: messages.map((message) => (message.role === 'user' ? 'User:\\n' : 'ChatGPT:\\n') + message.text).join('\\n\\n') }; };
+  const visiblePopover = () => [...document.querySelectorAll('div.popover')].find((node) => node.getBoundingClientRect().width > 0);
+  const visibleComposer = () => activeComposer || [...document.querySelectorAll(composerSelector)].find((node) => node.getBoundingClientRect().width > 0);
+  const menuAction = (row) => row?.matches?.('.__menu-item') ? row : row?.querySelector?.('.__menu-item');
+  const report = (message, failed = false) => { document.getElementById(toastId)?.remove(); const toast = document.createElement('div'); toast.id = toastId; toast.setAttribute('role', failed ? 'alert' : 'status'); toast.textContent = message; Object.assign(toast.style, { position: 'fixed', right: '22px', bottom: '94px', zIndex: '2147483647', maxWidth: 'min(360px, calc(100vw - 44px))', borderRadius: '10px', padding: '10px 13px', background: failed ? '#9f2d2d' : '#202020', color: '#fff', boxShadow: '0 10px 30px rgb(0 0 0 / 24%)', font: '600 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }); document.body.append(toast); setTimeout(() => toast.remove(), 4800); };
+  const highlight = (menu, item) => { menu.querySelectorAll('.__menu-item[data-highlighted]').forEach((node) => node.removeAttribute('data-highlighted')); item.setAttribute('data-highlighted', ''); keyboardAction = item; };
+  const pendingTransfers = window.__attuneSafariCodexTransfers ||= {};
+  const copySignal = async (value, input) => { const signal = document.createElement('textarea'); signal.value = value; Object.assign(signal.style, { position: 'fixed', left: '-10000px', top: '-10000px', opacity: '0' }); document.body.append(signal); signal.select(); const copied = document.execCommand('copy'); signal.remove(); input?.focus?.(); if (!copied) { if (!navigator.clipboard?.writeText) throw new Error('Safari could not signal Attune.'); await navigator.clipboard.writeText(value); } };
+  const send = async (input, option) => { if (handoffInProgress || option.getAttribute('aria-disabled') === 'true') return; handoffInProgress = true; let id = ''; try { option.setAttribute('aria-disabled', 'true'); id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); const transfer = await conversation(); pendingTransfers[id] = { id, ...transfer, title: document.title, sourceUrl: location.href }; await copySignal('${CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL}' + id, input); setValue(input, ''); document.getElementById(optionId)?.remove(); setTimeout(() => { if (!pendingTransfers[id]) return; delete pendingTransfers[id]; handoffInProgress = false; option.removeAttribute('aria-disabled'); report('Attune did not pick up this chat. Reconnect the Safari tab and try again.', true); }, 10000); } catch (error) { if (id) delete pendingTransfers[id]; handoffInProgress = false; option.removeAttribute('aria-disabled'); const message = error instanceof Error ? error.message : 'Could not send this conversation to Codex.'; report(message, true); console.warn('[attune] Send to Codex failed', error); } };
+  window.__attuneTakeCodexTransfer = (id) => { const transfer = pendingTransfers[id]; if (!transfer) return ''; delete pendingTransfers[id]; handoffInProgress = false; return JSON.stringify(transfer); };
+  const activate = (event, input, option) => { event.preventDefault(); event.stopImmediatePropagation(); void send(input, option); };
+  const insert = () => { if (document.getElementById(optionId)) { status('inserted'); return true; } const popover = visiblePopover(); if (!popover) { status('waiting-for-popover'); return false; } const menuItem = [...popover.querySelectorAll('.__menu-item')].find((node) => /^Add photos & files\\b/.test(clean(node.innerText))); if (!menuItem) { status('waiting-for-template'); return false; } const row = menuItem.parentElement; const group = row?.parentElement?.getAttribute('role') === 'group' ? row.parentElement : popover.querySelector('[role="group"]'); const input = visibleComposer(); if (!row || !group) { status('waiting-for-group'); return false; } if (!input) { status('waiting-for-composer'); return false; } const option = row.cloneNode(true); const action = menuAction(option); option.id = optionId; option.removeAttribute('disabled'); option.removeAttribute('aria-disabled'); option.setAttribute('aria-label', 'Send to Codex'); action?.removeAttribute('data-highlighted'); action?.setAttribute('aria-label', 'Send to Codex'); action?.addEventListener('pointerenter', () => highlight(popover, action)); const icon = option.querySelector('svg'); if (icon) { icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('fill', 'currentColor'); icon.setAttribute('fill-rule', 'evenodd'); icon.innerHTML = '<title>Codex</title><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path>'; } const leaves = [...option.querySelectorAll('*')].filter((node) => node.children.length === 0 && clean(node.textContent)); const title = leaves.find((node) => /Add photos & files/.test(clean(node.textContent))); const detail = leaves.find((node) => /Upload from computer/.test(clean(node.textContent))); if (title) title.textContent = 'Send to Codex'; if (detail) detail.textContent = 'Copy this conversation into a new Codex chat'; option.addEventListener('click', (event) => activate(event, input, option), true); group.insertBefore(option, row.nextSibling); keyboardAction = menuItem; status('inserted'); return true; };
+  const scheduleInsert = () => { let attempt = 0; const tryInsert = () => { if (insert() || attempt++ >= 40) return; setTimeout(tryInsert, 75); }; setTimeout(tryInsert, 0); };
+  const keyOf = (event) => event.keyCode === 40 || event.key === 'Down' ? 'ArrowDown' : event.keyCode === 38 || event.key === 'Up' ? 'ArrowUp' : event.keyCode === 13 ? 'Enter' : event.keyCode === 32 ? ' ' : event.key;
+  const bridgeMenuKey = (event) => { const key = keyOf(event); const option = document.getElementById(optionId); const menu = visiblePopover(); const ownAction = menuAction(option); if (!option || !menu || !ownAction) return false; const actions = [...menu.querySelectorAll('.__menu-item')].filter((node) => node.getBoundingClientRect().width > 0); const focused = document.activeElement?.closest?.('.__menu-item'); const highlighted = actions.find((node) => node.hasAttribute('data-highlighted')); const current = actions.includes(focused) ? focused : highlighted || (actions.includes(keyboardAction) ? keyboardAction : actions[0]); const ownSelected = current === ownAction || ownAction === document.activeElement || ownAction.contains(document.activeElement); if ((key === 'Enter' || key === ' ') && current) { if (ownSelected) activate(event, visibleComposer(), option); else { event.preventDefault(); event.stopImmediatePropagation(); current.click(); } return true; } if (key !== 'ArrowDown' && key !== 'ArrowUp') return false; const step = key === 'ArrowDown' ? 1 : -1; const currentIndex = Math.max(0, actions.indexOf(current)); const target = actions[Math.max(0, Math.min(actions.length - 1, currentIndex + step))]; if (!target) return false; event.preventDefault(); event.stopImmediatePropagation(); highlight(menu, target); status(target === ownAction ? 'keyboard-selected' : 'keyboard-native-selected'); return true; };
+  const onKeydown = (event) => { if (bridgeMenuKey(event)) return; if (keyOf(event) === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !insert()) scheduleInsert(); };
+  const onMenuPointerUp = (event) => { const target = event.composedPath().find((node) => node instanceof Element && node.id === optionId); if (!target) return; activate(event, visibleComposer(), target); };
+  const onInput = (event) => { const input = composer(event.target); if (!input) return; activeComposer = input; if (slashPending(valueOf(input))) scheduleInsert(); else document.getElementById(optionId)?.remove(); };
+  window.addEventListener('keydown', onKeydown, true);
+  window.addEventListener('pointerup', onMenuPointerUp, true);
+  document.addEventListener('input', onInput, true);
+  const slashPoll = setInterval(() => { const input = visibleComposer(); if (input && slashPending(valueOf(input))) { activeComposer = input; insert(); } }, 160);
+  window.__attuneSafariChatGptToCodexInsert = insert;
+  window.__attuneSafariChatGptToCodexStatus = () => lastStatus;
+  scheduleInsert();
+  window.__attuneSafariChatGptToCodexCleanup = () => { clearInterval(slashPoll); window.removeEventListener('keydown', onKeydown, true); window.removeEventListener('pointerup', onMenuPointerUp, true); document.removeEventListener('input', onInput, true); document.getElementById(optionId)?.remove(); document.getElementById(toastId)?.remove(); document.getElementById(hoverStyleId)?.remove(); delete window.__attuneSafariChatGptToCodexInsert; delete window.__attuneSafariChatGptToCodexStatus; delete window.__attuneTakeCodexTransfer; delete window.__attuneSafariChatGptToCodexCleanup; };
+  return 'connected';
+})();`;
+const SAFARI_CHATGPT_SLASH_PROBE = `(() => {
+  if (typeof window.__attuneSafariChatGptToCodexCleanup === 'function') {
+    window.__attuneSafariChatGptToCodexInsert?.();
+    return 'connected';
+  }
+  const selector = '#prompt-textarea, form[data-type="unified-composer"] textarea, form[data-type="unified-composer"] [contenteditable="true"], textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
+  const active = document.activeElement?.matches?.(selector) ? document.activeElement : document.activeElement?.closest?.(selector);
+  const input = active || [...document.querySelectorAll(selector)].find((node) => node.getBoundingClientRect().width > 0);
+  const value = input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement ? input.value : input?.innerText || input?.textContent || '';
+  const source = String(value).trimEnd();
+  const previous = source.charCodeAt(source.length - 2);
+  const slashPending = source.endsWith('/') && (source.length === 1 || previous === 32 || previous === 9 || previous === 10 || previous === 13);
+  return slashPending ? 'slash' : 'idle';
+})()`;
 const CODEX_LINEAR_TODOS_MANIFEST = `{
   "name": "Codex: Linear To-dos",
   "description": "Open your visible Linear to-dos in a focused modal from Codex.",
@@ -947,6 +1092,11 @@ const ATTUNEMENT_RUNTIME_CLEANUP_CSS = `/* @attune-script
 let mainWindow: BrowserWindow | null = null;
 let autoWrapTimer: NodeJS.Timeout | null = null;
 let linearTodosBridgeTimer: NodeJS.Timeout | null = null;
+let chatGptClipboardTimer: NodeJS.Timeout | null = null;
+let browserSlashMonitorProcess: ReturnType<typeof spawn> | null = null;
+let browserSlashMonitorStopped = false;
+let safariSlashInjectionTimer: NodeJS.Timeout | null = null;
+let chromeSlashRefreshTimer: NodeJS.Timeout | null = null;
 let scaffoldRefreshTimer: NodeJS.Timeout | null = null;
 const scaffoldWatchers: FSWatcher[] = [];
 const wrappingAppIds = new Set<string>();
@@ -969,10 +1119,15 @@ app.on('second-instance', () => {
 app.whenReady().then(() => {
   registerIpc();
   createWindow();
+  installApplicationMenu();
   startAutoWrapMonitor();
   startLinearTodosBridge();
+  startChatGptClipboardBridge();
+  startBrowserSlashMonitor();
+  reconnectSafariChatGptTabsOnStartup();
   startScaffoldMonitor();
   void reapplyEnabledStylesheets();
+  void refreshChatGptToCodexRuntimeSessions();
   void syncActiveThemeWallpaper();
 
   app.on('activate', () => {
@@ -985,6 +1140,11 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  browserSlashMonitorStopped = true;
+  browserSlashMonitorProcess?.kill();
+  if (safariSlashInjectionTimer) clearTimeout(safariSlashInjectionTimer);
+  if (chromeSlashRefreshTimer) clearTimeout(chromeSlashRefreshTimer);
+  if (chatGptClipboardTimer) clearInterval(chatGptClipboardTimer);
   if (scaffoldRefreshTimer) clearTimeout(scaffoldRefreshTimer);
   for (const watcher of scaffoldWatchers.splice(0)) watcher.close();
 });
@@ -998,6 +1158,303 @@ function configureUserDataPath(): void {
 function startLinearTodosBridge(): void {
   linearTodosBridgeTimer ??= setInterval(() => void refreshLinearTodosBridge(), 2000);
   void refreshLinearTodosBridge();
+}
+
+function installApplicationMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    {
+      label: 'Attune',
+      submenu: [
+        {
+          label: 'Connect current Safari ChatGPT tab',
+          click: () => void connectSafariChatGptTab().then(
+            (count) => void dialog.showMessageBox({ type: 'info', message: `Connected to ${count} Safari ChatGPT tab${count === 1 ? '' : 's'}.`, detail: 'Type / in ChatGPT to show Send to Codex. The connection lasts only for the current page and does not run in the background.' }),
+            (error) => void dialog.showMessageBox({ type: 'warning', message: 'Could not connect to Safari ChatGPT.', detail: error instanceof Error ? error.message : String(error) }),
+          ),
+        },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    },
+  ]));
+}
+
+async function connectSafariChatGptTab(): Promise<number> {
+  const script = quoteAppleScriptString(SAFARI_CHATGPT_TO_CODEX_LISTENER);
+  const appleScript = `set connectedCount to 0
+set lastError to ""
+if application "Safari" is running then
+  tell application "Safari"
+    repeat with safariWindow in windows
+      repeat with tabItem in tabs of safariWindow
+        set tabUrl to URL of tabItem
+        if tabUrl starts with "https://chatgpt.com/" or tabUrl starts with "https://chat.openai.com/" then
+          try
+            do JavaScript ${script} in tabItem
+            set connectedCount to connectedCount + 1
+          on error errorMessage
+            set lastError to errorMessage
+          end try
+        end if
+      end repeat
+    end repeat
+  end tell
+end if
+return (connectedCount as text) & "|" & lastError`;
+  const output = await exec('/usr/bin/osascript', ['-e', appleScript], { cwd: process.cwd(), timeout: 6_000 });
+  const [countValue, lastError] = output.trim().split('|', 2);
+  const count = Number.parseInt(countValue, 10) || 0;
+  if (count === 0) throw new Error(lastError || 'Open a ChatGPT conversation in Safari first. If it is already open, enable Safari Develop → Allow JavaScript from Apple Events, then choose this command again.');
+  return count;
+}
+
+function reconnectSafariChatGptTabsOnStartup(): void {
+  const profile = readProfile();
+  if (!profile.workspaceEnabled || !profile.enabledWorkspaceIds.includes(CHATGPT_TO_CODEX_ATTUNEMENT_ID)) return;
+  void syncSafariChatGptAttunement(true, 'startup');
+}
+
+async function disconnectSafariChatGptTabs(): Promise<number> {
+  const cleanup = quoteAppleScriptString('window.__attuneSafariChatGptToCodexCleanup?.(); "disconnected"');
+  const appleScript = `set disconnectedCount to 0
+if application "Safari" is running then
+  tell application "Safari"
+    repeat with safariWindow in windows
+      repeat with tabItem in tabs of safariWindow
+        set tabUrl to URL of tabItem
+        if tabUrl starts with "https://chatgpt.com/" or tabUrl starts with "https://chat.openai.com/" then
+          try
+            do JavaScript ${cleanup} in tabItem
+            set disconnectedCount to disconnectedCount + 1
+          end try
+        end if
+      end repeat
+    end repeat
+  end tell
+end if
+return disconnectedCount as text`;
+  const output = await exec('/usr/bin/osascript', ['-e', appleScript], { cwd: process.cwd(), timeout: 6_000 });
+  return Number.parseInt(output.trim(), 10) || 0;
+}
+
+async function syncSafariChatGptAttunement(enabled: boolean, reason: 'startup' | 'toggle'): Promise<void> {
+  try {
+    const count = enabled
+      ? await connectSafariChatGptTab()
+      : await disconnectSafariChatGptTabs();
+    console.log(
+      `[attune] ${enabled ? 'connected' : 'disconnected'} ${count} Safari ChatGPT tab${count === 1 ? '' : 's'} (${reason})`,
+    );
+  } catch (error) {
+    console.warn(
+      `[attune] Safari ChatGPT ${reason} ${enabled ? 'connect' : 'disconnect'} unavailable:`,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+function quoteAppleScriptString(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ')}"`;
+}
+
+function startBrowserSlashMonitor(): void {
+  if (process.platform !== 'darwin' || browserSlashMonitorProcess) return;
+  browserSlashMonitorStopped = false;
+  const bundledPath = join(__dirname, 'assets', 'safari-slash-monitor');
+  const helperPath = app.isPackaged
+    ? bundledPath.replace(`${join('app.asar', '')}`, `${join('app.asar.unpacked', '')}`)
+    : bundledPath;
+  if (!existsSync(helperPath)) {
+    console.warn(`[attune] browser slash monitor is missing: ${helperPath}`);
+    return;
+  }
+
+  const monitor = spawn(helperPath, [], { stdio: ['ignore', 'pipe', 'pipe'] });
+  browserSlashMonitorProcess = monitor;
+  let stdout = '';
+  monitor.stdout?.setEncoding('utf8');
+  monitor.stdout?.on('data', (chunk: string) => {
+    stdout += chunk;
+    const lines = stdout.split(/\r?\n/);
+    stdout = lines.pop() || '';
+    for (const line of lines) handleBrowserSlashSignal(line.trim());
+  });
+  monitor.stderr?.setEncoding('utf8');
+  monitor.stderr?.on('data', (chunk: string) => {
+    const message = chunk.trim();
+    if (message) console.warn('[attune] browser slash monitor:', message);
+  });
+  monitor.on('error', (error) => console.warn('[attune] browser slash monitor failed:', error));
+  monitor.on('exit', () => {
+    if (browserSlashMonitorProcess === monitor) browserSlashMonitorProcess = null;
+    if (!browserSlashMonitorStopped) setTimeout(() => startBrowserSlashMonitor(), 3_000).unref();
+  });
+}
+
+function handleBrowserSlashSignal(browser: string): void {
+  if (browser.startsWith('status:')) {
+    console.log(`[attune] browser slash monitor ${browser}`);
+    return;
+  }
+  console.log(`[attune] browser slash signal ${browser}`);
+  if (browser === 'safari') {
+    if (safariSlashInjectionTimer) clearTimeout(safariSlashInjectionTimer);
+    safariSlashInjectionTimer = setTimeout(() => {
+      safariSlashInjectionTimer = null;
+      void injectActiveSafariSlashCommand();
+    }, 90);
+    safariSlashInjectionTimer.unref();
+    return;
+  }
+  if (browser === 'chrome') {
+    if (chromeSlashRefreshTimer) clearTimeout(chromeSlashRefreshTimer);
+    chromeSlashRefreshTimer = setTimeout(() => {
+      chromeSlashRefreshTimer = null;
+      void reapplyEnabledStylesheets();
+    }, 25);
+    chromeSlashRefreshTimer.unref();
+  }
+}
+
+async function injectActiveSafariSlashCommand(): Promise<void> {
+  const probe = quoteAppleScriptString(SAFARI_CHATGPT_SLASH_PROBE);
+  const listener = quoteAppleScriptString(SAFARI_CHATGPT_TO_CODEX_LISTENER);
+  const appleScript = `if application "Safari" is not running then return "stopped"
+tell application "Safari"
+  if (count of windows) is 0 then return "no-window"
+  set tabItem to current tab of front window
+  set tabUrl to URL of tabItem
+  if tabUrl does not start with "https://chatgpt.com/" and tabUrl does not start with "https://chat.openai.com/" then return "other-site"
+  try
+    set pageState to do JavaScript ${probe} in tabItem
+    if pageState is "slash" then
+      do JavaScript ${listener} in tabItem
+      return "injected"
+    end if
+    return pageState
+  on error
+    return "unavailable"
+  end try
+end tell`;
+  try {
+    const result = await exec('/usr/bin/osascript', ['-e', appleScript], {
+      cwd: process.cwd(),
+      timeout: 3_000,
+    });
+    console.log(`[attune] one-shot Safari slash injection ${result.trim() || 'empty'}`);
+  } catch (error) {
+    console.warn('[attune] one-shot Safari slash injection failed:', error);
+  }
+}
+
+function startChatGptClipboardBridge(): void {
+  if (chatGptClipboardTimer) return;
+  let previousClipboard = readClipboardSnapshot();
+  let previousSignature = clipboardSnapshotSignature(previousClipboard);
+  const processing = new Set<string>();
+
+  chatGptClipboardTimer = setInterval(() => {
+    const text = clipboard.readText();
+    if (text.startsWith(CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL)) {
+      const handoffId = text.slice(CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL.length).trim();
+      if (!/^[a-z0-9]+$/i.test(handoffId) || processing.has(handoffId)) return;
+      processing.add(handoffId);
+      restoreClipboardSnapshot(previousClipboard);
+      void importSafariChatGptTransfer(handoffId).catch((error) => {
+        dialog.showErrorBox(
+          'Could not send to Codex',
+          error instanceof Error ? error.message : String(error),
+        );
+      }).finally(() => {
+        setTimeout(() => processing.delete(handoffId), 5_000);
+      });
+      return;
+    }
+
+    const snapshot = readClipboardSnapshot();
+    const signature = clipboardSnapshotSignature(snapshot);
+    if (signature === previousSignature) return;
+    previousClipboard = snapshot;
+    previousSignature = signature;
+  }, 100);
+  chatGptClipboardTimer.unref();
+}
+
+function readClipboardSnapshot(): ClipboardSnapshot {
+  const image = clipboard.readImage();
+  return {
+    text: clipboard.readText(),
+    html: clipboard.readHTML(),
+    rtf: clipboard.readRTF(),
+    image: image.isEmpty() ? null : image,
+  };
+}
+
+function clipboardSnapshotSignature(snapshot: ClipboardSnapshot): string {
+  const imageSize = snapshot.image?.getSize();
+  return [
+    snapshot.text,
+    snapshot.html,
+    snapshot.rtf,
+    imageSize ? `${imageSize.width}x${imageSize.height}` : '',
+  ].join('\u0000');
+}
+
+function restoreClipboardSnapshot(snapshot: ClipboardSnapshot): void {
+  if (!snapshot.text && !snapshot.html && !snapshot.rtf && !snapshot.image) {
+    clipboard.clear();
+    return;
+  }
+  clipboard.write({
+    text: snapshot.text || undefined,
+    html: snapshot.html || undefined,
+    rtf: snapshot.rtf || undefined,
+    image: snapshot.image || undefined,
+  });
+}
+
+async function importSafariChatGptTransfer(handoffId: string): Promise<void> {
+  const transfer = await takeSafariChatGptTransfer(handoffId);
+  const bundledAttuneRoot = app.isPackaged
+    ? join(process.resourcesPath, 'attune')
+    : join(resolve(__dirname, '..'), '..', 'attune');
+  const attuneRoot = resolve(process.env.ATTUNE_ROOT || bundledAttuneRoot);
+  const modulePath = join(attuneRoot, 'dist', 'codex-chatgpt.js');
+  if (!existsSync(modulePath)) throw new Error(`Missing Attune runtime module: ${modulePath}`);
+  const codexModule = await import(pathToFileURL(modulePath).href) as ChatGptCodexModule;
+  const task = codexModule.createCodexTaskFromChatGpt(transfer);
+  await shell.openExternal(`codex://threads/${encodeURIComponent(task.threadId)}`);
+}
+
+async function takeSafariChatGptTransfer(handoffId: string): Promise<unknown> {
+  const expression = `window.__attuneTakeCodexTransfer?.(${JSON.stringify(handoffId)}) || ''`;
+  const appleScript = `if application "Safari" is running then
+  tell application "Safari"
+    repeat with safariWindow in windows
+      repeat with tabItem in tabs of safariWindow
+        set tabUrl to URL of tabItem
+        if tabUrl starts with "https://chatgpt.com/" or tabUrl starts with "https://chat.openai.com/" then
+          try
+            set transferJson to do JavaScript ${quoteAppleScriptString(expression)} in tabItem
+            if transferJson is not missing value and transferJson is not "" then return transferJson as text
+          end try
+        end if
+      end repeat
+    end repeat
+  end tell
+end if
+return ""`;
+
+  await delay(150);
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const output = (await exec('/usr/bin/osascript', ['-e', appleScript], {
+      cwd: process.cwd(),
+      timeout: 3_000,
+    })).trim();
+    if (output) return JSON.parse(output);
+    await delay(100);
+  }
+  throw new Error('Attune could not read the prepared conversation from Safari.');
 }
 
 function startScaffoldMonitor(): void {
@@ -1376,6 +1833,7 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
   seedCodexGitActionsAttunement(workspacesRoot);
   seedBlueMessagesAttunement(workspacesRoot);
   seedCodexYouTubeAttunement(workspacesRoot);
+  seedChatGptToCodexAttunement(workspacesRoot);
   seedCodexLinearTodosAttunement(workspacesRoot);
   seedCursorLinearTodosAttunement(workspacesRoot);
   seedLinearCompletedSlackDmAttunement(workspacesRoot);
@@ -1464,6 +1922,34 @@ function seedCodexYouTubeAttunement(workspacesRoot: string): void {
   const codexPatch = join(appsRoot, 'codex-youtube-player.css');
   if (!existsSync(codexPatch) || readFileSync(codexPatch, 'utf8').includes('/* Attune managed: codex-youtube-player */')) {
     writeFileSync(codexPatch, CODEX_YOUTUBE_PLAYER_CSS);
+  }
+}
+
+function seedChatGptToCodexAttunement(workspacesRoot: string): void {
+  const attunementRoot = join(workspacesRoot, CHATGPT_TO_CODEX_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  mkdirSync(appsRoot, { recursive: true });
+
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  if (!existsSync(manifestPath)
+    || !readFileSync(manifestPath, 'utf8').includes('"name": "ChatGPT Web → Codex"')
+    || !readFileSync(manifestPath, 'utf8').includes('"preview": "preview.png"')
+    || !readFileSync(manifestPath, 'utf8').includes('"Google Chrome"')
+    || readFileSync(manifestPath, 'utf8').includes('"Safari"')) {
+    writeFileSync(manifestPath, CHATGPT_TO_CODEX_MANIFEST);
+  }
+  const previewPath = join(attunementRoot, 'preview.png');
+  const bundledPreviewPath = join(__dirname, 'assets', 'chatgpt-to-codex-preview.png');
+  if (!existsSync(previewPath) && existsSync(bundledPreviewPath)) {
+    copyFileSync(bundledPreviewPath, previewPath);
+  }
+  const stylesheetPath = join(appsRoot, 'codex-chatgpt-import.css');
+  if (!existsSync(stylesheetPath) || readFileSync(stylesheetPath, 'utf8').includes('/* Attune managed: chatgpt-to-codex */')) {
+    writeFileSync(stylesheetPath, CHATGPT_TO_CODEX_CSS);
+  }
+  const chromeStylesheetPath = join(appsRoot, 'chrome-chatgpt-to-codex.css');
+  if (!existsSync(chromeStylesheetPath) || !readFileSync(chromeStylesheetPath, 'utf8').includes('/* Attune managed: chatgpt-to-codex browser source v20 */')) {
+    writeFileSync(chromeStylesheetPath, CHATGPT_TO_CODEX_BROWSER_CSS);
   }
 }
 
@@ -1890,11 +2376,20 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
   for (const target of discoveredApps.filter((candidate) => changedAppIds.has(candidate.appId))) {
     applyCompositeStylesheet(target.appId, target.appInfo.name, configModule, themes, workspaces, newProfile);
     if (enabled && newProfile.enabledWorkspaceAppIds.includes(target.appId)) {
-      await attachRunningSessionIfAvailable(target.appInfo, target.appId, environment, scanModule);
+      await attachRunningSessionIfAvailable(
+        target.appInfo,
+        target.appId,
+        environment,
+        scanModule,
+        workspaceId === CHATGPT_TO_CODEX_ATTUNEMENT_ID,
+      );
     }
   }
 
   writeProfile(newProfile);
+  if (workspaceId === CHATGPT_TO_CODEX_ATTUNEMENT_ID) {
+    await syncSafariChatGptAttunement(enabled, 'toggle');
+  }
   void runAutoWrapPass();
 
   if (!enabled) return `${workspace.name} attunement disabled.`;
@@ -1951,9 +2446,12 @@ async function attachRunningSessionIfAvailable(
   appId: string,
   environment: EnvironmentInfo,
   scanModule: ScanModule,
+  restartExisting = false,
 ): Promise<void> {
   const sessionModule = await loadAttuneModule<SessionModule>('session.js');
-  if (sessionModule.getSession(appId)) return;
+  const existingSession = sessionModule.getSession(appId);
+  if (existingSession && !restartExisting) return;
+  if (existingSession) sessionModule.stopSession(appId);
 
   const executablePath = scanModule.getAppExecutablePath(appInfo);
   const port = await findRemoteDebuggingPort(executablePath);
@@ -1964,6 +2462,28 @@ async function attachRunningSessionIfAvailable(
     timeout: 5000,
     env: runtimeNodeEnvironment(environment),
   });
+}
+
+async function refreshChatGptToCodexRuntimeSessions(): Promise<void> {
+  try {
+    const profile = readProfile();
+    if (!profile.workspaceEnabled || !profile.enabledWorkspaceIds.includes(CHATGPT_TO_CODEX_ATTUNEMENT_ID)) return;
+    const environment = getEnvironment();
+    if (!environment.runtimeBuilt) return;
+    const scanModule = await loadAttuneModule<ScanModule>('scan.js');
+    const targets = scanModule.scanForSupportedApps()
+      .map(appInfo => ({ appInfo, appId: scanModule.getAppId(appInfo) }))
+      .filter(target => profile.enabledWorkspaceAppIds.includes(target.appId))
+      .filter(target => namesMatch(target.appInfo.name, 'Google Chrome') || namesMatch(target.appInfo.name, 'Codex'));
+    for (const target of targets) {
+      await attachRunningSessionIfAvailable(target.appInfo, target.appId, environment, scanModule, true);
+    }
+  } catch (error) {
+    console.warn(
+      '[attune] could not refresh the ChatGPT to Codex runtime sessions:',
+      error instanceof Error ? error.message : String(error),
+    );
+  }
 }
 
 async function findRemoteDebuggingPort(executablePath: string): Promise<number | null> {
