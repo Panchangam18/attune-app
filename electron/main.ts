@@ -194,8 +194,8 @@ const CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL = '__ATTUNE_CHATGPT_TO_CODEX_V1__:';
 const CODEX_LINEAR_TODOS_ATTUNEMENT_ID = 'codex-linear-todos';
 const CURSOR_LINEAR_TODOS_ATTUNEMENT_ID = 'cursor-linear-todos';
 const LINEAR_COMPLETED_SLACK_DM_ATTUNEMENT_ID = 'linear-completed-to-slack';
-const CODEX_LINEAR_TODOS_PREVIEW_SOURCE_PATH = '/var/folders/tf/20fh8jh132d4b9chynvh911w0000gn/T/codex-clipboard-6465b8ad-a637-4d01-a25e-d583800c7ec6.png';
-const CURSOR_LINEAR_TODOS_PREVIEW_SOURCE_PATH = '/var/folders/tf/20fh8jh132d4b9chynvh911w0000gn/T/codex-clipboard-a627900d-463d-4cf7-bd7a-7e7e951cd437.png';
+const CODEX_LINEAR_TODOS_PREVIEW_ASSET = 'codex-linear-todos-preview.png';
+const CURSOR_LINEAR_TODOS_PREVIEW_ASSET = 'cursor-linear-todos-preview.png';
 const LINEAR_DARK_LOGO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PHBhdGggZmlsbD0iIzIyMjMyNiIgZD0iTTEuMjI1NDEgNjEuNTIyOGMtLjIyMjUtLjk0ODUuOTA3NDgtMS41NDU5IDEuNTk2MzgtLjg1N0wzOS4zMzQyIDk3LjE3ODJjLjY4ODkuNjg4OS4wOTE1IDEuODE4OS0uODU3IDEuNTk2NEMyMC4wNTE1IDk0LjQ1MjIgNS41NDc3OSA3OS45NDg1IDEuMjI1NDEgNjEuNTIyOFpNLjAwMTg5MTM1IDQ2Ljg4OTFjLS4wMTc2NDM3NS4yODMzLjA4ODg3MjE1LjU1OTkuMjg5NTcxNjUuNzYwNkw1Mi4zNTAzIDk5LjcwODVjLjIwMDcuMjAwNy40NzczLjMwNzUuNzYwNi4yODk2IDIuMzY5Mi0uMTQ3NiA0LjY5MzgtLjQ2IDYuOTYyNC0uOTI1OS43NjQ1LS4xNTcgMS4wMzAxLTEuMDk2My40NzgyLTEuNjQ4MUwyLjU3NTk1IDM5LjQ0ODVjLS41NTE4Ni0uNTUxOS0xLjQ5MTE3LS4yODYzLTEuNjQ4MTc0LjQ3ODItLjQ2NTkxNSAyLjI2ODYtLjc3ODMyIDQuNTkzMi0uOTI1ODg0NjUgNi45NjI0Wk00LjIxMDkzIDI5LjcwNTRjLS4xNjY0OS4zNzM4LS4wODE2OS44MTA2LjIwNzY1IDEuMWw2NC43NzYwMiA2NC43NzZjLjI4OTQuMjg5NC43MjYyLjM3NDIgMS4xLjIwNzcgMS43ODYxLS43OTU2IDMuNTE3MS0xLjY5MjcgNS4xODU1LTIuNjg0LjU1MjEtLjMyOC42MzczLTEuMDg2Ny4xODMyLTEuNTQwN0w4LjQzNTY2IDI0LjMzNjdjLS40NTQwOS0uNDU0MS0xLjIxMjcxLS4zNjg5LTEuNTQwNzQuMTgzMi0uOTkxMzIgMS42Njg0LTEuODg4NDMgMy4zOTk0LTIuNjgzOTkgNS4xODU1Wk0xMi42NTg3IDE4LjA3NGMtLjM3MDEtLjM3MDEtLjM5My0uOTYzNy0uMDQ0My0xLjM1NDFDMjEuNzc5NSA2LjQ1OTMxIDM1LjExMTQgMCA0OS45NTE5IDAgNzcuNTkyNyAwIDEwMCAyMi40MDczIDEwMCA1MC4wNDgxYzAgMTQuODQwNS02LjQ1OTMgMjguMTcyNC0xNi43MTk5IDM3LjMzNzUtLjM5MDMuMzQ4Ny0uOTg0LjMyNTgtMS4zNTQyLS4wNDQzTDEyLjY1ODcgMTguMDc0WiIvPjwvc3ZnPg==';
 const SEEDED_WORKSPACE_MANIFEST = `{
   "name": "Focus Flow",
@@ -1989,8 +1989,9 @@ function seedCodexLinearTodosAttunement(workspacesRoot: string): void {
     writeFileSync(manifestPath, CODEX_LINEAR_TODOS_MANIFEST);
   }
   const previewPath = join(attunementRoot, 'preview.png');
-  if (existsSync(CODEX_LINEAR_TODOS_PREVIEW_SOURCE_PATH)) {
-    copyFileSync(CODEX_LINEAR_TODOS_PREVIEW_SOURCE_PATH, previewPath);
+  const bundledPreviewPath = join(__dirname, 'assets', CODEX_LINEAR_TODOS_PREVIEW_ASSET);
+  if (existsSync(bundledPreviewPath)) {
+    copyFileSync(bundledPreviewPath, previewPath);
   }
   writeSeedFile(join(attunementRoot, 'preview.svg'), CODEX_LINEAR_TODOS_PREVIEW_SVG);
 
@@ -2014,8 +2015,9 @@ function seedCursorLinearTodosAttunement(workspacesRoot: string): void {
     writeFileSync(manifestPath, CURSOR_LINEAR_TODOS_MANIFEST);
   }
   const previewPath = join(attunementRoot, 'preview.png');
-  if (existsSync(CURSOR_LINEAR_TODOS_PREVIEW_SOURCE_PATH)) {
-    copyFileSync(CURSOR_LINEAR_TODOS_PREVIEW_SOURCE_PATH, previewPath);
+  const bundledPreviewPath = join(__dirname, 'assets', CURSOR_LINEAR_TODOS_PREVIEW_ASSET);
+  if (existsSync(bundledPreviewPath)) {
+    copyFileSync(bundledPreviewPath, previewPath);
   }
   writeSeedFile(join(attunementRoot, 'preview.svg'), CODEX_LINEAR_TODOS_PREVIEW_SVG);
 
@@ -2925,10 +2927,14 @@ function readWorkspacePreviewDataUrl(
   workspaceDirectory: string,
   previewPathValue: string | undefined,
 ): string | null {
-  const candidates = previewPathValue
-    ? [resolveThemePath(pathBase, workspaceDirectory, previewPathValue)]
-    : ['preview.png', 'preview.jpg', 'preview.jpeg', 'preview.webp', 'preview.svg']
-      .map((fileName) => join(workspaceDirectory, fileName));
+  const conventionalCandidates = ['preview.png', 'preview.jpg', 'preview.jpeg', 'preview.webp', 'preview.svg']
+    .map((fileName) => join(workspaceDirectory, fileName));
+  const explicitCandidate = previewPathValue
+    ? resolveThemePath(pathBase, workspaceDirectory, previewPathValue)
+    : null;
+  const candidates = explicitCandidate
+    ? [explicitCandidate, ...conventionalCandidates.filter((candidate) => candidate !== explicitCandidate)]
+    : conventionalCandidates;
 
   const previewPath = candidates.find((candidate) => existsSync(candidate));
   if (!previewPath) return null;
