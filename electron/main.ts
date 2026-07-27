@@ -185,6 +185,7 @@ Manifest patch paths are relative to the attunement folder:
 Refresh Attune App after adding or editing an attunement.
 `;
 const SEEDED_WORKSPACE_ID = 'focus-flow';
+const CODEX_MULTI_CHAT_ATTUNEMENT_ID = 'codex-multi-chat';
 const CODEX_GIT_ACTIONS_ATTUNEMENT_ID = 'codex-git-actions';
 const BLUE_MESSAGES_ATTUNEMENT_ID = 'blue-messages';
 const CODEX_YOUTUBE_ATTUNEMENT_ID = 'codex-youtube-player';
@@ -1830,6 +1831,7 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
     writeFileSync(readmePath, USER_WORKSPACES_README);
   }
 
+  seedCodexMultiChatAttunement(workspacesRoot);
   seedCodexGitActionsAttunement(workspacesRoot);
   seedBlueMessagesAttunement(workspacesRoot);
   seedCodexYouTubeAttunement(workspacesRoot);
@@ -1838,6 +1840,28 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
   seedCursorLinearTodosAttunement(workspacesRoot);
   seedLinearCompletedSlackDmAttunement(workspacesRoot);
   return workspacesRoot;
+}
+
+function seedCodexMultiChatAttunement(workspacesRoot: string): void {
+  const bundledRoot = join(__dirname, 'assets', CODEX_MULTI_CHAT_ATTUNEMENT_ID);
+  if (!existsSync(bundledRoot)) return;
+
+  const attunementRoot = join(workspacesRoot, CODEX_MULTI_CHAT_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  const managed = !existsSync(manifestPath)
+    || readFileSync(manifestPath, 'utf8').includes('"name": "Codex: Chat Canvas"');
+  if (!managed) return;
+
+  mkdirSync(appsRoot, { recursive: true });
+  for (const relativePath of [
+    'manifest.json',
+    'preview.png',
+    'codex-renderer-contract.json',
+    join('apps', 'codex-chat-canvas.css'),
+  ]) {
+    copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
+  }
 }
 
 function seedLinearCompletedSlackDmAttunement(workspacesRoot: string): void {
