@@ -17,6 +17,7 @@ import type {
   WorkspaceInfo,
   WorkspacePatchInfo,
 } from './types.js';
+import { processListHasExecutable } from './process-detection.js';
 
 interface DiscoveredApp {
   name: string;
@@ -86,6 +87,7 @@ const CURSOR_ICON_FONT_GUARD = `/* Cursor's agent UI uses its own icon font. */
 `;
 const AUTO_WRAP_INTERVAL_MS = 2000;
 const AUTO_WRAP_COOLDOWN_MS = 15000;
+const CLAUDE_CODEX_PROXY_ENV = 'ATTUNE_CLAUDE_CODEX_PROXY_ENABLED';
 const LINEAR_TODOS_BRIDGE_KEY = 'linear-todos';
 const LINEAR_TODOS_COMPLETION_BRIDGE_KEY = 'linear-todos-completion';
 const LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY = 'linear-completed-slack-dm';
@@ -186,6 +188,7 @@ Refresh Attune App after adding or editing an attunement.
 `;
 const SEEDED_WORKSPACE_ID = 'focus-flow';
 const CODEX_MULTI_CHAT_ATTUNEMENT_ID = 'codex-multi-chat';
+const CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID = 'chatgpt-claude-models';
 const CODEX_GIT_ACTIONS_ATTUNEMENT_ID = 'codex-git-actions';
 const BLUE_MESSAGES_ATTUNEMENT_ID = 'blue-messages';
 const CODEX_YOUTUBE_ATTUNEMENT_ID = 'codex-youtube-player';
@@ -1832,6 +1835,7 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
   }
 
   seedCodexMultiChatAttunement(workspacesRoot);
+  seedChatGptClaudeModelsAttunement(workspacesRoot);
   seedCodexGitActionsAttunement(workspacesRoot);
   seedBlueMessagesAttunement(workspacesRoot);
   seedCodexYouTubeAttunement(workspacesRoot);
@@ -1840,6 +1844,27 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
   seedCursorLinearTodosAttunement(workspacesRoot);
   seedLinearCompletedSlackDmAttunement(workspacesRoot);
   return workspacesRoot;
+}
+
+function seedChatGptClaudeModelsAttunement(workspacesRoot: string): void {
+  const bundledRoot = join(__dirname, 'assets', CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID);
+  if (!existsSync(bundledRoot)) return;
+
+  const attunementRoot = join(workspacesRoot, CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  const managed = !existsSync(manifestPath)
+    || readFileSync(manifestPath, 'utf8').includes('"name": "ChatGPT: Claude Models"');
+  if (!managed) return;
+
+  mkdirSync(appsRoot, { recursive: true });
+  for (const relativePath of [
+    'manifest.json',
+    'preview.svg',
+    join('apps', 'chatgpt-claude-models.css'),
+  ]) {
+    copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
+  }
 }
 
 function seedCodexMultiChatAttunement(workspacesRoot: string): void {
@@ -2398,9 +2423,23 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
     enabledWorkspaceIds: [...enabledWorkspaceIds],
     enabledWorkspaceAppIds: targetApps.map((target) => target.appId),
   };
+  const isClaudeModelsToggle = workspaceId === CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID;
 
   for (const target of discoveredApps.filter((candidate) => changedAppIds.has(candidate.appId))) {
     applyCompositeStylesheet(target.appId, target.appInfo.name, configModule, themes, workspaces, newProfile);
+  }
+
+  writeProfile(newProfile);
+  let restartedChatGpt = false;
+  for (const target of discoveredApps.filter((candidate) => changedAppIds.has(candidate.appId))) {
+    if (isClaudeModelsToggle && isChatGptDesktop(target.appInfo)) {
+      restartedChatGpt = await restartRunningAppThroughAttune(
+        target.appInfo,
+        target.appId,
+        scanModule,
+      ) || restartedChatGpt;
+      continue;
+    }
     if (enabled && newProfile.enabledWorkspaceAppIds.includes(target.appId)) {
       await attachRunningSessionIfAvailable(
         target.appInfo,
@@ -2411,19 +2450,27 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
       );
     }
   }
-
-  writeProfile(newProfile);
   if (workspaceId === CHATGPT_TO_CODEX_ATTUNEMENT_ID) {
     await syncSafariChatGptAttunement(enabled, 'toggle');
   }
   void runAutoWrapPass();
 
-  if (!enabled) return `${workspace.name} attunement disabled.`;
+  if (!enabled) {
+    if (!isClaudeModelsToggle) return `${workspace.name} attunement disabled.`;
+    return restartedChatGpt
+      ? `${workspace.name} attunement disabled and ChatGPT restarted.`
+      : `${workspace.name} attunement disabled. It will be off the next time ChatGPT launches.`;
+  }
   if (targetApps.length === 0) {
     return `${workspace.name} attunement enabled, but no matching apps were found.`;
   }
   const appNames = targetApps.map((target) => target.appInfo.name).join(', ');
-  return `${workspace.name} attunement enabled for ${appNames}. Launch or reopen those apps to see it.`;
+  if (!isClaudeModelsToggle) {
+    return `${workspace.name} attunement enabled for ${appNames}. Launch or reopen those apps to see it.`;
+  }
+  return restartedChatGpt
+    ? `${workspace.name} attunement enabled for ${appNames}; ChatGPT restarted with Claude models.`
+    : `${workspace.name} attunement enabled for ${appNames}. It will apply the next time ChatGPT launches.`;
 }
 
 async function setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<string> {
@@ -2459,12 +2506,23 @@ async function setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<
   };
   applyCompositeStylesheet(appId, appInfo.name, configModule, themes, workspaces, newProfile);
   writeProfile(newProfile);
-  if (enabled) {
+  const isClaudeModelsChatGpt = profile.activeWorkspaceId === CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID
+    && isChatGptDesktop(appInfo);
+  const restartedChatGpt = isClaudeModelsChatGpt
+    ? await restartRunningAppThroughAttune(appInfo, appId, scanModule)
+    : false;
+  if (enabled && !isClaudeModelsChatGpt) {
     await attachRunningSessionIfAvailable(appInfo, appId, environment, scanModule);
     void runAutoWrapPass();
   }
 
-  return enabled ? `${workspace.name} attunement enabled for ${appInfo.name}.` : `${workspace.name} attunement disabled for ${appInfo.name}.`;
+  if (restartedChatGpt) {
+    return `${workspace.name} attunement ${enabled ? 'enabled' : 'disabled'} for ${appInfo.name}; ChatGPT restarted.`;
+  }
+  if (isClaudeModelsChatGpt) {
+    return `${workspace.name} attunement ${enabled ? 'enabled' : 'disabled'} for ${appInfo.name}. It will apply the next time ChatGPT launches.`;
+  }
+  return `${workspace.name} attunement ${enabled ? 'enabled' : 'disabled'} for ${appInfo.name}.`;
 }
 
 async function attachRunningSessionIfAvailable(
@@ -2710,11 +2768,31 @@ async function launchApp(appId: string): Promise<string> {
   const scanModule = await loadAttuneModule<ScanModule>('scan.js');
   const appInfo = findDiscoveredApp(scanModule, appId);
   await ensureConfiguredForLaunch(appInfo, appId);
+  const profile = readProfile();
+  const launchEnvironment = {
+    ...runtimeNodeEnvironment(environment),
+    [CLAUDE_CODEX_PROXY_ENV]: isClaudeCodexProxyEnabled(profile, appId, appInfo) ? '1' : '0',
+  };
   const output = await exec(environment.nodePath, [environment.cliPath, 'launch', appInfo.name], {
     cwd: environment.attuneRoot,
-    env: runtimeNodeEnvironment(environment),
+    env: launchEnvironment,
   });
   return output.trim() || `${appInfo.name} launched with Attune.`;
+}
+
+function isClaudeCodexProxyEnabled(
+  profile: ThemeProfile,
+  appId: string,
+  appInfo: DiscoveredApp,
+): boolean {
+  return isChatGptDesktop(appInfo)
+    && profile.workspaceEnabled
+    && profile.enabledWorkspaceIds.includes(CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID)
+    && profile.enabledWorkspaceAppIds.includes(appId);
+}
+
+function isChatGptDesktop(appInfo: DiscoveredApp): boolean {
+  return appInfo.bundleId === 'com.openai.codex';
 }
 
 async function ensureConfiguredForLaunch(appInfo: DiscoveredApp, appId: string): Promise<void> {
@@ -2804,6 +2882,30 @@ async function wrapNormalLaunch(appInfo: DiscoveredApp, appId: string, executabl
   }
 }
 
+async function restartRunningAppThroughAttune(
+  appInfo: DiscoveredApp,
+  appId: string,
+  scanModule: ScanModule,
+): Promise<boolean> {
+  const executablePath = scanModule.getAppExecutablePath(appInfo);
+  if (!await isProcessRunning(executablePath)) return false;
+
+  wrappingAppIds.add(appId);
+  lastWrapAtByAppId.set(appId, Date.now());
+  try {
+    await quitApp(appInfo);
+    await waitForProcessExit(executablePath, 10000);
+    await launchApp(appId);
+    mainWindow?.webContents.send('attune:auto-wrap-event', {
+      appId,
+      appName: appInfo.name,
+    });
+    return true;
+  } finally {
+    wrappingAppIds.delete(appId);
+  }
+}
+
 async function quitApp(appInfo: DiscoveredApp): Promise<void> {
   if (appInfo.bundleId) {
     await exec('osascript', ['-e', `tell application id "${escapeAppleScript(appInfo.bundleId)}" to quit`], {
@@ -2830,8 +2932,11 @@ async function waitForProcessExit(executablePath: string, timeoutMs: number): Pr
 
 async function isProcessRunning(executablePath: string): Promise<boolean> {
   try {
-    await exec('pgrep', ['-f', executablePath], { cwd: process.cwd(), timeout: 1500 });
-    return true;
+    const processList = await exec('/bin/ps', ['-ax', '-o', 'command='], {
+      cwd: process.cwd(),
+      timeout: 3000,
+    });
+    return processListHasExecutable(processList, executablePath);
   } catch {
     return false;
   }
