@@ -1,11 +1,11 @@
 {
-  "name": "ChatGPT: Claude Models",
-  "description": "Add Claude Fable 5 and Opus 5 to the ChatGPT desktop Codex model picker, with live replies and tool activity from the local Claude Code CLI.",
+  "name": "ChatGPT: External CLI Models",
+  "description": "Add Claude Fable 5, Claude Opus 5, Grok 4.5, Cursor, and Copilot to the ChatGPT desktop Codex model picker using their authenticated local CLIs.",
   "preview": "preview.svg",
   "patches": {
     "ChatGPT": {
       "source": "apps/chatgpt-claude-models.css",
-      "intent": "Add local Claude Code models to the native Codex model picker, translate streaming replies and tools into native Codex activity, and relaunch a running ChatGPT when the attunement changes."
+      "intent": "Add authenticated local Claude Code, Grok, Cursor, and Copilot CLI agents to the native Codex model picker, translate streaming replies into native Codex activity, and relaunch a running ChatGPT when the attunement changes."
     }
   }
 }

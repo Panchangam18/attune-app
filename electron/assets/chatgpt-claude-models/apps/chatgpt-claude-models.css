@@ -1,7 +1,1016 @@
 /*
- * ChatGPT Codex: Claude Models
+ * ChatGPT Codex: External CLI Models
  *
- * Claude Fable 5 and Opus 5 are registered through Attune's app-server proxy.
- * Keeping this patch script-free prevents model-menu DOM churn and lets
- * ChatGPT render the Codex picker and turns with its own components.
+ * Claude Fable 5, Claude Opus 5, Grok 4.5, Cursor, and Copilot
+ * are registered through Attune's provider-neutral app-server proxy.
+ * ChatGPT renders the model rows and turns with its own components. The
+ * scoped script below only supplies provider submenus that Codex does not
+ * natively understand.
  */
+
+.attune-provider-model-row {
+  position: relative;
+}
+
+.attune-provider-model-row > :first-child {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.attune-provider-model-row[aria-expanded="true"] {
+  background: var(--color-token-list-hover-background);
+}
+
+.attune-provider-model-row::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 11px;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  border-block-start: 1.5px solid var(--color-token-text-tertiary);
+  border-inline-end: 1.5px solid var(--color-token-text-tertiary);
+  transform: translateY(-50%) rotate(45deg);
+  pointer-events: none;
+}
+
+.attune-provider-model-menu {
+  position: fixed;
+  z-index: 2147483646;
+  width: min(280px, calc(100vw - 24px));
+  max-height: min(520px, calc(100vh - 24px));
+  overflow-y: auto;
+  padding: 4px;
+  border: 0.5px solid var(--color-token-border-default);
+  border-radius: 12px;
+  background: var(--color-token-dropdown-background);
+  color: var(--color-token-text-primary);
+  opacity: 0;
+  transform: translateX(-5px) scale(0.985);
+  transform-origin: left top;
+  transition:
+    opacity 120ms ease,
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.attune-provider-model-menu[data-open="true"] {
+  opacity: 1;
+  transform: translateX(0) scale(1);
+}
+
+.attune-provider-model-menu-header {
+  padding: 7px 10px 5px;
+  color: var(--color-token-text-tertiary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.attune-provider-model-option {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--color-token-text-primary);
+  font: inherit;
+  font-size: 0.75em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attune-provider-model-option:hover,
+.attune-provider-model-option:focus-visible {
+  background: var(--color-token-list-hover-background);
+  outline: none;
+}
+
+.attune-provider-model-option:disabled,
+.attune-provider-model-option[aria-disabled="true"] {
+  background: transparent;
+  color: var(--color-token-text-tertiary);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.attune-provider-model-option[data-busy="true"] {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.attune-provider-model-selection {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-inline-start: 0.45em;
+  color: var(--color-token-text-tertiary);
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attune-provider-model-option-check,
+.attune-provider-model-parent-check {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  margin-inline-end: 20px;
+  color: var(--color-token-text-secondary);
+  font-size: 0.9em;
+}
+
+.attune-stale-native-model-check {
+  display: none !important;
+}
+
+/* @attune-script
+(() => {
+  window.__attuneExternalModelMenuCleanup?.();
+  if (!window.electronBridge?.sendMessageFromView) return;
+
+  const providers = new Map([
+    ['Cursor Agent', 'cursor-agent'],
+    ['GitHub Copilot', 'copilot-agent'],
+    ['Cursor', 'cursor-agent'],
+    ['Copilot', 'copilot-agent'],
+  ]);
+  const providerDisplayNames = new Map([
+    ['cursor-agent', 'Cursor'],
+    ['copilot-agent', 'Copilot'],
+  ]);
+  const pending = new Map();
+  const rowHandlers = new Map();
+  let sequence = 0;
+  let catalog = null;
+  let supportsPendingNewThreadSelection = false;
+  let activeMenu = null;
+  let activeProviderRow = null;
+  let closeTimer = 0;
+  let shiftedPalette = null;
+  let shiftedPaletteTranslate = '';
+  let disposed = false;
+  let scheduled = 0;
+  let nativeTriggerSnapshot = null;
+  let authoritativeSelection = {
+    scope: '',
+    model: null,
+    providerId: null,
+    displayName: null,
+    effort: null,
+    loaded: false,
+  };
+  let authorityRequestSequence = 0;
+  let lastObservedScope = '';
+
+  // Older builds persisted a second, browser-owned active model. It could
+  // disagree with the proxy after navigation or a failed selection. Remove
+  // that state permanently: the proxy is now the only model authority.
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (
+        key.startsWith('attune-active-external-provider:')
+        || key.startsWith('attune-external-model-selection:')
+      ) localStorage.removeItem(key);
+    }
+  } catch {}
+
+  const request = (method, params, timeoutMs = 20000) => {
+    const id = `attune-external-models-${Date.now()}-${++sequence}`;
+    return new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`${method} timed out.`));
+      }, timeoutMs);
+      pending.set(id, {
+        resolve: (value) => {
+          window.clearTimeout(timeout);
+          resolve(value);
+        },
+        reject: (error) => {
+          window.clearTimeout(timeout);
+          reject(error);
+        },
+      });
+      Promise.resolve(window.electronBridge.sendMessageFromView({
+        type: 'mcp-request',
+        hostId: 'local',
+        request: { id, method, params },
+      })).catch((error) => {
+        window.clearTimeout(timeout);
+        pending.delete(id);
+        reject(error);
+      });
+    });
+  };
+
+  const onMessage = (event) => {
+    const message = event.data;
+    if (message?.hostId !== 'local' || message.type !== 'mcp-response') return;
+    const waiter = pending.get(message.message?.id);
+    if (!waiter) return;
+    pending.delete(message.message.id);
+    if (message.message.error) {
+      waiter.reject(new Error(message.message.error.message || 'Codex request failed.'));
+    } else {
+      waiter.resolve(message.message.result);
+    }
+  };
+
+  const currentThreadId = () => {
+    // ChatGPT can leave the active sidebar row at a client-new-thread
+    // placeholder long after the conversation has a real task UUID. The
+    // composer owns the canonical conversation id for the visible task.
+    const conversationCandidates = [...document.querySelectorAll(
+      '[data-above-composer-conversation-id]',
+    )];
+    const conversationId = String(
+      conversationCandidates.find((candidate) => candidate.getClientRects().length > 0)
+        ?.getAttribute('data-above-composer-conversation-id')
+      || conversationCandidates.at(-1)
+        ?.getAttribute('data-above-composer-conversation-id')
+      || '',
+    ).replace(/^local:/, '');
+    if (
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        .test(conversationId)
+    ) return conversationId;
+
+    const activeRows = [...document.querySelectorAll(
+      '[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active="true"]',
+    )];
+    const row = activeRows.find((candidate) => candidate.getClientRects().length > 0)
+      || activeRows.at(-1);
+    const candidate = String(
+      row?.dataset.appActionSidebarThreadId || '',
+    ).replace(/^local:/, '');
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+      .test(candidate)
+      ? candidate
+      : '';
+  };
+
+  const selectionScope = () => currentThreadId() || '__new_task__';
+  const activeProvider = () => (
+    authoritativeSelection.loaded
+    && authoritativeSelection.scope === selectionScope()
+      ? authoritativeSelection.providerId
+      : null
+  );
+
+  const selectedOption = (providerId) => (
+    activeProvider() === providerId
+      ? {
+          model: authoritativeSelection.model,
+          displayName: authoritativeSelection.displayName,
+          effort: authoritativeSelection.effort,
+        }
+      : null
+  );
+
+  const optionEffort = (option) => option.defaultReasoningEffort
+    || option.supportedReasoningEfforts?.[0]?.reasoningEffort
+    || 'medium';
+
+  const renderProviderSelection = (row, providerId) => {
+    const selected = activeProvider() === providerId ? selectedOption(providerId) : null;
+    const host = row.firstElementChild || row;
+    const displayProviderName = providerDisplayNames.get(providerId);
+    // ChatGPT uses more than one row shape. A newly selected hidden model can
+    // arrive as either a direct text node or a nested span ("Cursor Opus").
+    // Always recover the first native text leaf and reserve the generated,
+    // lighter label for the selected submodel.
+    const nativeTextWalker = document.createTreeWalker(host, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => node.parentElement?.closest(
+        '.attune-provider-model-selection, .attune-provider-model-parent-check',
+      )
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+    });
+    let baseText = nativeTextWalker.nextNode();
+    while (baseText && !baseText.data.trim()) baseText = nativeTextWalker.nextNode();
+    if (baseText && displayProviderName && baseText.data.trim() !== displayProviderName) {
+      baseText.data = displayProviderName;
+    }
+    let name = host.querySelector?.('.attune-provider-model-selection');
+    let check = host.querySelector?.('.attune-provider-model-parent-check');
+    if (!selected?.displayName) {
+      name?.remove();
+      check?.remove();
+      return;
+    }
+    if (!name) {
+      name = document.createElement('span');
+      name.className = 'attune-provider-model-selection';
+      host.append(name);
+    }
+    if (!check) {
+      check = document.createElement('span');
+      check.className = 'attune-provider-model-parent-check';
+      check.textContent = '✓';
+      host.append(check);
+    }
+    if (name.textContent !== selected.displayName) name.textContent = selected.displayName;
+  };
+
+  const syncNativeModelChecks = () => {
+    document.querySelectorAll('.attune-stale-native-model-check').forEach((check) => {
+      check.classList.remove('attune-stale-native-model-check');
+    });
+    if (!activeProvider()) return;
+    document.querySelectorAll('[role="menu"]').forEach((palette) => {
+      if (!palette.querySelector('[data-attune-provider-model-row="true"]')) return;
+      palette.querySelectorAll('[role="menuitem"]').forEach((row) => {
+        const nativeCheck = row.querySelector(
+          ':scope > div > svg[width="17"][height="17"]',
+        );
+        nativeCheck?.classList.add('attune-stale-native-model-check');
+      });
+    });
+  };
+
+  const displayEffort = (effort) => {
+    if (effort === 'xhigh') return 'Extra High';
+    return effort
+      ? effort.charAt(0).toUpperCase() + effort.slice(1)
+      : 'Medium';
+  };
+
+  const triggerTextHosts = (trigger) => {
+    const modelLabels = [...trigger.querySelectorAll(
+      '[class*="_ModelPickerTriggerModelText_"]',
+    )];
+    const effortLabels = [...trigger.querySelectorAll(
+      '[class*="_ModelPickerTriggerEffortLabel_"]',
+    )];
+    return {
+      model: modelLabels.at(-1) || null,
+      effort: effortLabels.at(-1) || null,
+    };
+  };
+
+  const rememberNativeTrigger = (trigger) => {
+    const scope = selectionScope();
+    if (
+      !trigger
+      || nativeTriggerSnapshot?.scope === scope
+    ) return;
+    const hosts = triggerTextHosts(trigger);
+    if (hosts.model) {
+      nativeTriggerSnapshot = {
+        scope,
+        model: hosts.model.textContent?.trim() || '',
+        effort: hosts.effort?.textContent?.trim() || '',
+      };
+      return;
+    }
+    const full = trigger.innerText?.replace(/\s+/g, ' ').trim() || '';
+    const match = full.match(/^(.*) (Light|Low|Medium|High|Extra High|Max|Ultra)$/i);
+    nativeTriggerSnapshot = {
+      scope,
+      model: match?.[1] || full,
+      effort: match?.[2] || '',
+    };
+  };
+
+  const restoreNativeTriggers = (modelName = '', effortName = '') => {
+    const snapshot = nativeTriggerSnapshot?.scope === selectionScope()
+      ? nativeTriggerSnapshot
+      : null;
+    document.querySelectorAll(
+      'button[data-codex-intelligence-trigger="true"]',
+    ).forEach((trigger) => {
+      if (
+        !trigger.dataset.attuneActiveProviderLabel
+        && !snapshot
+        && !modelName
+      ) return;
+      const hosts = triggerTextHosts(trigger);
+      const model = modelName || snapshot?.model || '';
+      const effort = effortName || snapshot?.effort || '';
+      if (hosts.model) {
+        if (model) hosts.model.textContent = model;
+        if (hosts.effort && effort) hosts.effort.textContent = effort;
+      } else {
+        const walker = document.createTreeWalker(trigger, NodeFilter.SHOW_TEXT);
+        let textNode = walker.nextNode();
+        while (textNode && !textNode.data.trim()) textNode = walker.nextNode();
+        if (textNode && model) {
+          textNode.data = effort ? `${model} ${effort}` : model;
+        }
+      }
+      trigger.removeAttribute('data-attune-active-provider-label');
+      trigger.removeAttribute('data-attune-active-provider-combined');
+    });
+  };
+
+  const applyAuthoritativeSelection = (scope, state) => {
+    if (scope !== selectionScope()) return;
+    const hadDecoratedTrigger = Boolean(document.querySelector(
+      'button[data-attune-active-provider-label]',
+    ));
+    authoritativeSelection = {
+      scope,
+      model: state?.model || null,
+      providerId: state?.providerId || null,
+      displayName: state?.displayName || null,
+      effort: state?.effort || null,
+      loaded: true,
+    };
+    if (!authoritativeSelection.providerId && hadDecoratedTrigger) {
+      restoreNativeTriggers(
+        authoritativeSelection.displayName || '',
+        authoritativeSelection.effort
+          ? displayEffort(authoritativeSelection.effort)
+          : '',
+      );
+      nativeTriggerSnapshot = null;
+    }
+    document.querySelectorAll('[data-attune-provider-model-row="true"]').forEach((row) => {
+      renderProviderSelection(row, row.dataset.attuneProviderId);
+    });
+    syncNativeModelChecks();
+    syncActiveModelLabel();
+  };
+
+  const syncAuthoritativeSelection = async (force = false) => {
+    const scope = selectionScope();
+    if (
+      !force
+      && authoritativeSelection.loaded
+      && authoritativeSelection.scope === scope
+    ) return authoritativeSelection;
+    const requestSequence = ++authorityRequestSequence;
+    const threadId = currentThreadId();
+    const state = await request('attune/external-model/state', {
+      threadId: threadId || null,
+    });
+    if (
+      requestSequence === authorityRequestSequence
+      && scope === selectionScope()
+    ) applyAuthoritativeSelection(scope, state);
+    return state;
+  };
+
+  const syncMarkedModelTriggers = () => {
+    const currentProviderId = activeProvider();
+    const modelTriggers = [...document.querySelectorAll(
+      'button[data-codex-intelligence-trigger="true"]',
+    )];
+    const currentTrigger = modelTriggers.find((trigger) => (
+      trigger.dataset.state === 'open' && trigger.getClientRects().length > 0
+    )) || modelTriggers.find((trigger) => trigger.getClientRects().length > 0);
+    if (currentTrigger && currentProviderId) {
+      rememberNativeTrigger(currentTrigger);
+      currentTrigger.dataset.attuneActiveProviderLabel = currentProviderId;
+      currentTrigger.dataset.attuneActiveProviderCombined = 'true';
+    }
+    document.querySelectorAll(
+      'button[data-codex-intelligence-trigger="true"][data-attune-active-provider-label]',
+    ).forEach((trigger) => {
+      const providerId = trigger.dataset.attuneActiveProviderLabel;
+      if (activeProvider() !== providerId) {
+        trigger.removeAttribute('data-attune-active-provider-label');
+        trigger.removeAttribute('data-attune-active-provider-combined');
+        return;
+      }
+      const selected = selectedOption(providerId);
+      const providerName = providerDisplayNames.get(providerId);
+      if (!selected?.displayName || !providerName) return;
+      const modelLabels = [...trigger.querySelectorAll(
+        '[class*="_ModelPickerTriggerModelText_"]',
+      )];
+      const effortLabels = [...trigger.querySelectorAll(
+        '[class*="_ModelPickerTriggerEffortLabel_"]',
+      )];
+      const visibleModelLabel = modelLabels.at(-1);
+      const visibleEffortLabel = effortLabels.at(-1);
+      if (visibleModelLabel) {
+        visibleModelLabel.textContent = `${providerName} ${selected.displayName}`;
+      } else {
+        const walker = document.createTreeWalker(trigger, NodeFilter.SHOW_TEXT);
+        let textNode = walker.nextNode();
+        while (textNode && !textNode.data.trim()) textNode = walker.nextNode();
+        if (textNode) {
+          textNode.data = `${providerName} ${selected.displayName} ${
+            displayEffort(selected.effort)
+          }`;
+        }
+      }
+      if (visibleEffortLabel) {
+        visibleEffortLabel.textContent = displayEffort(selected.effort);
+      }
+    });
+  };
+
+  const syncActiveModelLabel = () => {
+    syncMarkedModelTriggers();
+    const selections = [
+      ['cursor-agent', ['Cursor Agent', 'Cursor'], 'Cursor'],
+      ['copilot-agent', ['GitHub Copilot', 'Copilot'], 'Copilot'],
+    ];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+    for (const [providerId, sourceNames, displayProviderName] of selections) {
+      if (activeProvider() !== providerId) continue;
+      const selected = selectedOption(providerId);
+      if (!selected?.displayName) continue;
+      for (const node of nodes) {
+        const parent = node.parentElement;
+        if (
+          parent?.closest(
+            '[data-attune-provider-model-row="true"], .attune-provider-model-menu, '
+            + 'button[data-codex-intelligence-trigger="true"]'
+            + '[data-attune-active-provider-label]',
+          )
+        ) continue;
+        const text = node.data.trim();
+        const sourcePattern = sourceNames
+          .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+          .join('|');
+        const effortMatch = text.match(new RegExp(
+          `^(?:${sourcePattern})(?: ${selected.displayName.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            '\\$&',
+          )})? (Low|Medium|High|Extra High|Max)$`,
+          'i',
+        ));
+        // The same outer trigger survives a direct Cursor ↔ Copilot switch.
+        // Treat any Attune-owned label as transferable to the active provider.
+        const decoratedOwner = parent?.closest?.(
+          '[data-attune-active-provider-label]',
+        );
+        const previouslyDecorated = Boolean(decoratedOwner);
+        const nativeProviderLabel = sourceNames.some((name) => (
+          text === name || text === `${name} ${selected.displayName}`
+        ));
+        const customFallback = text === 'Custom' && Boolean(
+          parent?.closest('button, [role="button"], [role="menuitem"]'),
+        );
+        if (
+          !nativeProviderLabel
+          && !customFallback
+          && !effortMatch
+          && !previouslyDecorated
+        ) continue;
+        const effort = effortMatch?.[1]
+          || (selected.effort
+            ? selected.effort.charAt(0).toUpperCase() + selected.effort.slice(1)
+            : 'Medium');
+        const combined = Boolean(
+          effortMatch
+          || customFallback
+          || parent?.dataset.attuneActiveProviderCombined === 'true',
+        );
+        const nextText = combined
+          ? `${displayProviderName} ${selected.displayName} ${effort}`
+          : `${displayProviderName} ${selected.displayName}`;
+        if (node.data !== nextText) node.data = nextText;
+        if (parent) {
+          parent.dataset.attuneActiveProviderLabel = providerId;
+          parent.dataset.attuneActiveProviderCombined = String(combined);
+        }
+      }
+    }
+  };
+
+  const onNativeModelSelected = (event) => {
+    const row = event.target.closest?.('[role="menuitem"]');
+    if (
+      !row
+      || row.dataset.attuneProviderModelRow === 'true'
+      || row.closest('.attune-provider-model-menu')
+    ) return;
+    const palette = row.closest('[role="menu"]');
+    if (!palette?.querySelector('[data-attune-provider-model-row="true"]')) {
+      const setting = row.textContent?.replace(/\s+/g, ' ').trim() || '';
+      if (
+        activeProvider()
+        && /^(Light|Low|Medium|High|Extra High|Max|Ultra)$/i.test(setting)
+      ) {
+        window.setTimeout(() => {
+          void syncAuthoritativeSelection(true).catch(() => {});
+        }, 100);
+        window.setTimeout(() => {
+          void syncAuthoritativeSelection(true).catch(() => {});
+        }, 500);
+      }
+      return;
+    }
+    const nativeModelName = row.textContent?.replace(/\s+/g, ' ').trim() || '';
+    const scope = selectionScope();
+    const hadExternalDecoration = Boolean(
+      activeProvider()
+      || document.querySelector('button[data-attune-active-provider-label]'),
+    );
+    authoritativeSelection = {
+      scope,
+      model: null,
+      providerId: null,
+      displayName: null,
+      effort: null,
+      loaded: true,
+    };
+    document.querySelectorAll('[data-attune-provider-model-row="true"]').forEach((providerRow) => {
+      renderProviderSelection(providerRow, providerRow.dataset.attuneProviderId);
+    });
+    syncNativeModelChecks();
+    if (hadExternalDecoration) {
+      restoreNativeTriggers(nativeModelName);
+      window.setTimeout(() => {
+        restoreNativeTriggers(nativeModelName);
+        nativeTriggerSnapshot = null;
+      }, 0);
+    }
+    window.setTimeout(() => {
+      void syncAuthoritativeSelection(true).catch(() => {});
+    }, 100);
+    window.setTimeout(() => {
+      void syncAuthoritativeSelection(true).catch(() => {});
+    }, 500);
+  };
+
+  const closeMenu = () => {
+    window.clearTimeout(closeTimer);
+    closeTimer = 0;
+    activeMenu?.remove();
+    activeMenu = null;
+    activeProviderRow?.setAttribute('aria-expanded', 'false');
+    activeProviderRow = null;
+    if (shiftedPalette) {
+      shiftedPalette.style.translate = shiftedPaletteTranslate;
+      shiftedPalette = null;
+      shiftedPaletteTranslate = '';
+    }
+  };
+
+  const cancelClose = () => {
+    window.clearTimeout(closeTimer);
+    closeTimer = 0;
+  };
+
+  const scheduleClose = () => {
+    cancelClose();
+    closeTimer = window.setTimeout(closeMenu, 140);
+  };
+
+  const placeMenu = (menu, row) => {
+    const width = Math.min(280, window.innerWidth - 24);
+    const gap = 6;
+    let rect = row.getBoundingClientRect();
+    const overflow = rect.right + gap + width - (window.innerWidth - 8);
+    if (overflow > 0 && !shiftedPalette) {
+      const palette = row.closest('[data-radix-popper-content-wrapper]');
+      const shift = Math.min(overflow, Math.max(0, rect.left - 8));
+      if (palette && shift > 0) {
+        shiftedPalette = palette;
+        shiftedPaletteTranslate = palette.style.translate;
+        palette.style.translate = `${-shift}px 0`;
+        rect = row.getBoundingClientRect();
+      }
+    }
+    menu.style.left = `${Math.min(rect.right + gap, window.innerWidth - width - 8)}px`;
+    menu.style.top = `${Math.max(
+      8,
+      Math.min(rect.top, window.innerHeight - menu.offsetHeight - 8),
+    )}px`;
+  };
+
+  const nestedModels = async (providerId) => {
+    if (!catalog) {
+      const response = await request('model/list', {
+        cursor: null,
+        includeHidden: false,
+        limit: 100,
+      });
+      catalog = Array.isArray(response?.data) ? response.data : [];
+    }
+    const provider = catalog.find((model) => model?.model === providerId);
+    supportsPendingNewThreadSelection = (
+      provider?.attuneSupportsPendingNewThreadSelection === true
+    );
+    return Array.isArray(provider?.attuneNestedModels)
+      ? provider.attuneNestedModels
+      : [];
+  };
+
+  const setMenuStatus = (menu, text) => {
+    let status = menu.querySelector('.attune-provider-model-menu-header');
+    if (!status) {
+      status = document.createElement('div');
+      status.className = 'attune-provider-model-menu-header';
+      menu.prepend(status);
+    }
+    status.textContent = text;
+  };
+
+  const selectProviderRowNatively = (providerId, preferredRow = activeProviderRow) => {
+    const row = (
+      preferredRow?.isConnected
+      && preferredRow.dataset.attuneProviderId === providerId
+        ? preferredRow
+        : [...document.querySelectorAll(
+            `[data-attune-provider-id="${providerId}"]`,
+          )].find((candidate) => candidate.getClientRects().length > 0)
+    );
+    if (!row) return false;
+    const handlers = rowHandlers.get(row);
+    if (handlers) row.removeEventListener('click', handlers.click, true);
+    try {
+      row.click();
+    } finally {
+      if (handlers && row.isConnected) {
+        row.addEventListener('click', handlers.click, true);
+      }
+    }
+    return true;
+  };
+
+  const markOpenModelTrigger = (providerId) => {
+    const trigger = document.querySelector(
+      'button[data-codex-intelligence-trigger="true"][data-state="open"]',
+    ) || [...document.querySelectorAll('button[data-state="open"]')]
+      .find((button) => (
+        !button.closest('.attune-provider-model-menu')
+        && button.classList.contains('min-w-0')
+        && button.textContent?.trim()
+      ));
+    if (!trigger) return;
+    rememberNativeTrigger(trigger);
+    trigger.dataset.attuneActiveProviderLabel = providerId;
+    trigger.dataset.attuneActiveProviderCombined = 'true';
+  };
+
+  const selectModel = async (option, button, menu, providerId) => {
+    const threadId = currentThreadId();
+    if (!threadId && !supportsPendingNewThreadSelection) {
+      setMenuStatus(menu, 'Fully quit and reopen ChatGPT to load the updated model bridge.');
+      return;
+    }
+    button.dataset.busy = 'true';
+    const effort = optionEffort(option);
+    try {
+      if (!threadId) {
+        await request('thread/settings/update', {
+          threadId: '00000000-0000-4000-8000-000000000001',
+          model: option.model,
+          effort,
+          serviceTier: 'default',
+          attuneExternalSelection: true,
+        });
+        await syncAuthoritativeSelection(true);
+        markOpenModelTrigger(providerId);
+        syncActiveModelLabel();
+        selectProviderRowNatively(providerId, activeProviderRow);
+        syncActiveModelLabel();
+        closeMenu();
+        document.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Escape',
+          code: 'Escape',
+          bubbles: true,
+        }));
+        return;
+      }
+      // The proxy is the only source of truth. A failed write must not create
+      // a checkmark or change the collapsed model preview.
+      await request('thread/settings/update', {
+        threadId,
+        model: option.model,
+        effort,
+        serviceTier: 'default',
+        attuneExternalSelection: true,
+      });
+      await syncAuthoritativeSelection(true);
+      markOpenModelTrigger(providerId);
+      syncActiveModelLabel();
+      // Keep ChatGPT's native parent-model selection aligned after the proxy
+      // has committed the complete provider/submodel selection.
+      selectProviderRowNatively(providerId, activeProviderRow);
+      window.setTimeout(() => {
+        void syncAuthoritativeSelection(true).catch(() => {});
+      }, 250);
+      closeMenu();
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        code: 'Escape',
+        bubbles: true,
+      }));
+    } catch (error) {
+      await syncAuthoritativeSelection(true).catch(() => {});
+      button.dataset.busy = 'false';
+      setMenuStatus(menu, error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const openProviderMenu = async (row, providerId, label) => {
+    if (activeProviderRow === row) {
+      cancelClose();
+      if (activeMenu) placeMenu(activeMenu, row);
+      return;
+    }
+    closeMenu();
+    const menu = document.createElement('div');
+    menu.className = 'attune-provider-model-menu';
+    menu.setAttribute('role', 'menu');
+    const header = document.createElement('div');
+    header.className = 'attune-provider-model-menu-header';
+    header.textContent = 'Loading…';
+    menu.append(header);
+    menu.addEventListener('pointerenter', cancelClose);
+    menu.addEventListener('pointerleave', scheduleClose);
+    document.body.append(menu);
+    activeMenu = menu;
+    activeProviderRow = row;
+    row.setAttribute('aria-expanded', 'true');
+    placeMenu(menu, row);
+    window.requestAnimationFrame(() => {
+      if (activeMenu === menu) menu.dataset.open = 'true';
+    });
+    try {
+      const models = await nestedModels(providerId);
+      if (activeMenu !== menu) return;
+      header.remove();
+      for (const option of models) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'attune-provider-model-option';
+        button.setAttribute('role', 'menuitem');
+        const selectable = option.attuneSelectable !== false;
+        if (!selectable) {
+          button.disabled = true;
+          button.setAttribute('aria-disabled', 'true');
+          if (option.attuneUnavailableReason) {
+            button.title = option.attuneUnavailableReason;
+          }
+        }
+        const name = document.createElement('span');
+        name.textContent = option.displayName || option.model;
+        button.append(name);
+        if (
+          activeProvider() === providerId
+          && selectedOption(providerId)?.model === option.model
+        ) {
+          const check = document.createElement('span');
+          check.className = 'attune-provider-model-option-check';
+          check.textContent = '✓';
+          button.append(check);
+        }
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!selectable) return;
+          void selectModel(option, button, menu, providerId);
+        });
+        menu.append(button);
+      }
+      if (!models.length) setMenuStatus(menu, 'No models found.');
+      placeMenu(menu, row);
+    } catch (error) {
+      setMenuStatus(menu, error instanceof Error ? error.message : String(error));
+      placeMenu(menu, row);
+    }
+  };
+
+  const decorateRows = () => {
+    scheduled = 0;
+    if (disposed) return;
+    const scope = selectionScope();
+    if (scope !== lastObservedScope) {
+      lastObservedScope = scope;
+      authoritativeSelection = {
+        scope,
+        model: null,
+        providerId: null,
+        displayName: null,
+        effort: null,
+        loaded: false,
+      };
+      void syncAuthoritativeSelection(true).catch(() => {});
+      window.setTimeout(() => {
+        void syncAuthoritativeSelection(true).catch(() => {});
+      }, 200);
+      window.setTimeout(() => {
+        void syncAuthoritativeSelection(true).catch(() => {});
+      }, 700);
+    }
+    syncActiveModelLabel();
+    const rows = [...document.querySelectorAll('[role="menuitem"]')];
+    for (const row of rows) {
+      // Nested model buttons are menuitems too. A legitimate model such as
+      // "Cursor Small" must never be reinterpreted as another provider row.
+      if (row.closest('.attune-provider-model-menu')) continue;
+      const existingProviderId = row.dataset.attuneProviderId;
+      const rowText = row.textContent?.replace(/\s+/g, ' ').trim() || '';
+      const activeId = activeProvider();
+      const recoveredEntry = [...providers.entries()].find(([name, id]) => {
+        if (rowText === name || rowText.startsWith(`${name} `)) return true;
+        if (activeId !== id) return false;
+        const selected = selectedOption(id);
+        const selectedName = selected?.displayName?.trim();
+        if (!selectedName) return false;
+        return rowText === selectedName
+          || rowText.startsWith(`${selectedName} `)
+          || rowText.startsWith(
+            `${id === 'cursor-agent' ? 'Cursor' : 'Copilot'} ${selectedName}`,
+          );
+      });
+      const label = existingProviderId
+        ? [...providers.entries()].find(([, id]) => id === existingProviderId)?.[0]
+        : recoveredEntry?.[0];
+      if (!label) continue;
+      const providerId = existingProviderId || providers.get(label);
+      if (row.dataset.attuneProviderModelRow !== 'true') {
+        row.dataset.attuneProviderModelRow = 'true';
+        row.dataset.attuneProviderId = providerId;
+        row.classList.add('attune-provider-model-row');
+        row.setAttribute('aria-haspopup', 'menu');
+        row.setAttribute('aria-expanded', 'false');
+      }
+      renderProviderSelection(row, providerId);
+      if (row.dataset.attuneProviderListeners !== 'true') {
+        row.dataset.attuneProviderListeners = 'true';
+        const handlers = {
+          enter: () => {
+            cancelClose();
+            void openProviderMenu(row, providerId, label);
+          },
+          leave: scheduleClose,
+          click: (event) => {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            void openProviderMenu(row, providerId, label);
+          },
+        };
+        rowHandlers.set(row, handlers);
+        row.addEventListener('pointerenter', handlers.enter);
+        row.addEventListener('pointerleave', handlers.leave);
+        row.addEventListener('click', handlers.click, true);
+      }
+    }
+    syncNativeModelChecks();
+  };
+
+  const scheduleDecorate = () => {
+    if (!scheduled) scheduled = window.requestAnimationFrame(decorateRows);
+  };
+  const observer = new MutationObserver(scheduleDecorate);
+  observer.observe(document.body, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
+  const onDocumentPointerDown = (event) => {
+    if (
+      activeMenu
+      && !activeMenu.contains(event.target)
+      && !event.target.closest?.('[data-attune-provider-model-row="true"]')
+    ) closeMenu();
+  };
+  document.addEventListener('pointerdown', onDocumentPointerDown, true);
+  document.addEventListener('click', onNativeModelSelected, true);
+  window.addEventListener('message', onMessage);
+  scheduleDecorate();
+
+  const cleanup = () => {
+    disposed = true;
+    observer.disconnect();
+    if (scheduled) window.cancelAnimationFrame(scheduled);
+    closeMenu();
+    document.removeEventListener('pointerdown', onDocumentPointerDown, true);
+    document.removeEventListener('click', onNativeModelSelected, true);
+    window.removeEventListener('message', onMessage);
+    restoreNativeTriggers();
+    nativeTriggerSnapshot = null;
+    for (const waiter of pending.values()) waiter.reject(new Error('Attunement disabled.'));
+    pending.clear();
+    document.querySelectorAll('[data-attune-provider-model-row="true"]').forEach((row) => {
+      const handlers = rowHandlers.get(row);
+      if (handlers) {
+        row.removeEventListener('pointerenter', handlers.enter);
+        row.removeEventListener('pointerleave', handlers.leave);
+        row.removeEventListener('click', handlers.click, true);
+        rowHandlers.delete(row);
+      }
+      row.querySelector('.attune-provider-model-selection')?.remove();
+      row.querySelector('.attune-provider-model-parent-check')?.remove();
+      row.removeAttribute('data-attune-provider-model-row');
+      row.removeAttribute('data-attune-provider-id');
+      row.removeAttribute('data-attune-provider-listeners');
+      row.removeAttribute('aria-haspopup');
+      row.removeAttribute('aria-expanded');
+      row.classList.remove('attune-provider-model-row');
+    });
+    document.querySelectorAll('.attune-stale-native-model-check').forEach((check) => {
+      check.classList.remove('attune-stale-native-model-check');
+    });
+  };
+  window.__attuneExternalModelMenuCleanup = cleanup;
+  window.__attuneRegisterCleanup?.(cleanup);
+})();
+@end-attune-script */

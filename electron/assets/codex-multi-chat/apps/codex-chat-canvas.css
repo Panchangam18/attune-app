@@ -419,6 +419,7 @@ body.attune-card-resizing * {
 }
 
 .attune-model-palette[data-view="models"],
+.attune-model-palette[data-view="provider-models"],
 .attune-model-palette[data-view="efforts"],
 .attune-model-palette[data-view="speeds"] {
   width: 280px !important;
@@ -4804,7 +4805,26 @@ body.attune-card-resizing * {
         `${Math.max(0, Math.min(preferred, composerRect.width - width - 2))}px`,
       );
     };
-    const selectedModel = () => models.find((model) => model.model === card.model) || models[0];
+    const nestedModelsFor = (model) => (
+      Array.isArray(model?.attuneNestedModels) ? model.attuneNestedModels : []
+    );
+    const selectableModels = () => models.flatMap((model) => [
+      model,
+      ...nestedModelsFor(model),
+    ]);
+    const selectedModel = () => (
+      selectableModels().find((model) => model.model === card.model) || models[0]
+    );
+    const selectModel = (model) => {
+      card.model = model.model;
+      card.modelDisplayName = modelLabel(model);
+      card.supportedReasoningEfforts = model.supportedReasoningEfforts || [];
+      if (!card.supportedReasoningEfforts.some((entry) => entry.reasoningEffort === card.reasoningEffort)) {
+        card.reasoningEffort = model.defaultReasoningEffort || card.supportedReasoningEfforts[0]?.reasoningEffort || '';
+      }
+      updateModelControl(card);
+      close();
+    };
     const close = () => {
       overlay.remove();
       card.popover = null;
@@ -4894,35 +4914,51 @@ body.attune-card-resizing * {
       power.title = efforts.map((effort) => titleCase(effort.reasoningEffort)).join(' · ');
       overlay.append(power, divider, advanced);
     };
-    const renderSubmenu = (titleText, view, rows) => {
+    const renderSubmenu = (titleText, view, rows, back = null) => {
       overlay.dataset.view = view;
       setAnchor(280);
       overlay.replaceChildren();
-      const header = document.createElement('div');
-      header.className = 'attune-model-settings-header text-token-description-foreground';
-      header.textContent = titleText;
+      const header = back
+        ? modelSettingsRow(titleText, '', back, { back: true })
+        : document.createElement('div');
+      header.classList.add('attune-model-settings-header', 'text-token-description-foreground');
+      if (!back) header.textContent = titleText;
       const list = document.createElement('div');
       list.className = 'attune-model-settings-list vertical-scroll-fade-mask';
       for (const row of rows) list.append(row);
       overlay.append(header, list);
     };
-    const renderModels = () => renderSubmenu('Model', 'models', models.map((model) => (
-      modelSettingsRow(
+    const renderProviderModels = (provider) => {
+      const children = nestedModelsFor(provider);
+      renderSubmenu(
+        modelLabel(provider),
+        'provider-models',
+        children.map((model) => modelSettingsRow(
+          shortModelLabel(modelLabel(model)),
+          '',
+          () => selectModel(model),
+          { selected: model.model === card.model, chevron: false },
+        )),
+        renderModels,
+      );
+    };
+    const renderModels = () => renderSubmenu('Model', 'models', models.map((model) => {
+      const children = nestedModelsFor(model);
+      if (children.length > 0) {
+        const activeChild = children.find((child) => child.model === card.model);
+        return modelSettingsRow(
+          shortModelLabel(modelLabel(model)),
+          activeChild ? shortModelLabel(modelLabel(activeChild)) : '',
+          () => renderProviderModels(model),
+        );
+      }
+      return modelSettingsRow(
         shortModelLabel(modelLabel(model)),
         '',
-        () => {
-          card.model = model.model;
-          card.modelDisplayName = modelLabel(model);
-          card.supportedReasoningEfforts = model.supportedReasoningEfforts || [];
-          if (!card.supportedReasoningEfforts.some((entry) => entry.reasoningEffort === card.reasoningEffort)) {
-            card.reasoningEffort = model.defaultReasoningEffort || card.supportedReasoningEfforts[0]?.reasoningEffort || '';
-          }
-          updateModelControl(card);
-          close();
-        },
+        () => selectModel(model),
         { selected: model.model === card.model, chevron: false },
-      )
-    )));
+      );
+    }));
     const renderEfforts = () => renderSubmenu(
       'Effort',
       'efforts',

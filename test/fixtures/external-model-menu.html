@@ -1,0 +1,51 @@
+<!doctype html>
+<style>
+  :root {
+    --color-token-text-primary: rgb(240, 240, 240);
+    --color-token-text-secondary: rgb(190, 190, 190);
+    --color-token-text-tertiary: rgb(145, 145, 145);
+    --color-token-border-default: rgb(80, 80, 80);
+    --color-token-dropdown-background: rgb(35, 35, 35);
+    --color-token-list-hover-background: rgb(55, 55, 55);
+  }
+  #palette {
+    position: fixed;
+    left: 100px;
+    top: 40px;
+    width: 260px;
+  }
+  [role="menuitem"] > div {
+    display: flex;
+  }
+</style>
+<div
+  style="display: none"
+  data-app-action-sidebar-thread-row
+  data-app-action-sidebar-thread-active="true"
+  data-app-action-sidebar-thread-id="cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+></div>
+<div
+  data-app-action-sidebar-thread-row
+  data-app-action-sidebar-thread-active="true"
+  data-app-action-sidebar-thread-id="client-new-thread:dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+></div>
+<div
+  id="conversation-marker"
+  data-above-composer-conversation-id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+></div>
+<button
+  id="active-label"
+  data-codex-intelligence-trigger="true"
+  data-state="open"
+>Codex 5.6 Medium</button>
+<div id="palette" role="menu">
+  <div id="codex" role="menuitem"><div>Codex 5.6</div></div>
+  <div id="stale-fable" role="menuitem">
+    <div>
+      <span>Claude Fable 5</span>
+      <svg id="stale-native-check" width="17" height="17"></svg>
+    </div>
+  </div>
+  <div id="cursor" role="menuitem"><div><span>Cursor Agent</span></div></div>
+  <div id="copilot" role="menuitem"><div><span>GitHub Copilot</span></div></div>
+</div>

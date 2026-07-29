@@ -1854,7 +1854,8 @@ function seedChatGptClaudeModelsAttunement(workspacesRoot: string): void {
   const appsRoot = join(attunementRoot, 'apps');
   const manifestPath = join(attunementRoot, 'manifest.json');
   const managed = !existsSync(manifestPath)
-    || readFileSync(manifestPath, 'utf8').includes('"name": "ChatGPT: Claude Models"');
+    || readFileSync(manifestPath, 'utf8').includes('"name": "ChatGPT: Claude Models"')
+    || readFileSync(manifestPath, 'utf8').includes('"name": "ChatGPT: External CLI Models"');
   if (!managed) return;
 
   mkdirSync(appsRoot, { recursive: true });
@@ -2469,7 +2470,7 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
     return `${workspace.name} attunement enabled for ${appNames}. Launch or reopen those apps to see it.`;
   }
   return restartedChatGpt
-    ? `${workspace.name} attunement enabled for ${appNames}; ChatGPT restarted with Claude models.`
+    ? `${workspace.name} attunement enabled for ${appNames}; ChatGPT restarted with external CLI models.`
     : `${workspace.name} attunement enabled for ${appNames}. It will apply the next time ChatGPT launches.`;
 }
 
