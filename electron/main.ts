@@ -15,6 +15,7 @@ import type {
   ThemeProfile,
   ThemeTargetStatus,
   WorkspaceInfo,
+  WorkspaceBindingInfo,
   WorkspacePatchInfo,
 } from './types.js';
 import { processListHasExecutable } from './process-detection.js';
@@ -188,6 +189,7 @@ Refresh Attune App after adding or editing an attunement.
 `;
 const SEEDED_WORKSPACE_ID = 'focus-flow';
 const CODEX_MULTI_CHAT_ATTUNEMENT_ID = 'codex-multi-chat';
+const CODEX_KANBAN_ATTUNEMENT_ID = 'codex-kanban';
 const CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID = 'chatgpt-claude-models';
 const CODEX_GIT_ACTIONS_ATTUNEMENT_ID = 'codex-git-actions';
 const BLUE_MESSAGES_ATTUNEMENT_ID = 'blue-messages';
@@ -1835,6 +1837,7 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
   }
 
   seedCodexMultiChatAttunement(workspacesRoot);
+  seedCodexKanbanAttunement(workspacesRoot);
   seedChatGptClaudeModelsAttunement(workspacesRoot);
   seedCodexGitActionsAttunement(workspacesRoot);
   seedBlueMessagesAttunement(workspacesRoot);
@@ -1885,6 +1888,28 @@ function seedCodexMultiChatAttunement(workspacesRoot: string): void {
     'preview.png',
     'codex-renderer-contract.json',
     join('apps', 'codex-chat-canvas.css'),
+  ]) {
+    copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
+  }
+}
+
+function seedCodexKanbanAttunement(workspacesRoot: string): void {
+  const bundledRoot = join(__dirname, 'assets', CODEX_KANBAN_ATTUNEMENT_ID);
+  if (!existsSync(bundledRoot)) return;
+
+  const attunementRoot = join(workspacesRoot, CODEX_KANBAN_ATTUNEMENT_ID);
+  const appsRoot = join(attunementRoot, 'apps');
+  const manifestPath = join(attunementRoot, 'manifest.json');
+  const managed = !existsSync(manifestPath)
+    || readFileSync(manifestPath, 'utf8').includes('"name": "Codex: Chat Kanban"');
+  if (!managed) return;
+
+  mkdirSync(appsRoot, { recursive: true });
+  for (const relativePath of [
+    'manifest.json',
+    'preview.svg',
+    join('apps', 'codex-kanban.css'),
+    join('apps', 'codex-kanban.js'),
   ]) {
     copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
   }
@@ -2997,24 +3022,57 @@ function readWorkspaceManifest(pathBase: string, workspaceDirectory: string, wor
   const manifestPath = join(workspaceDirectory, 'manifest.json');
   if (!existsSync(manifestPath)) return null;
 
+  type WorkspaceManifestTarget = {
+    source?: string;
+    styles?: string[];
+    script?: string;
+    intent?: string;
+    bindings?: Record<string, string | { role?: string; required?: boolean }>;
+  };
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+    manifestVersion?: number;
     name?: string;
     description?: string;
     preview?: string;
-    patches?: Record<string, {
-      source?: string;
-      intent?: string;
-    }>;
+    patches?: Record<string, WorkspaceManifestTarget>;
+    targets?: Record<string, WorkspaceManifestTarget>;
   };
 
-  const patches = Object.entries(manifest.patches ?? {}).map(([appName, patch]) => {
-    const sourcePath = patch.source ? resolveThemePath(pathBase, workspaceDirectory, patch.source) : null;
+  const manifestVersion = Number.isInteger(manifest.manifestVersion) ? manifest.manifestVersion! : 1;
+  const targets: Record<string, WorkspaceManifestTarget> = manifest.targets ?? manifest.patches ?? {};
+  const patches = Object.entries(targets).map(([appName, patch]) => {
+    const styleSources = patch.styles?.length ? patch.styles : patch.source ? [patch.source] : [];
+    const stylePaths = styleSources
+      .map((source) => resolveThemePath(pathBase, workspaceDirectory, source))
+      .filter((sourcePath) => existsSync(sourcePath));
+    const sourcePath = styleSources[0]
+      ? resolveThemePath(pathBase, workspaceDirectory, styleSources[0])
+      : null;
+    const requestedScriptPath = patch.script
+      ? resolveThemePath(pathBase, workspaceDirectory, patch.script)
+      : null;
+    const scriptPath = requestedScriptPath && existsSync(requestedScriptPath)
+      ? requestedScriptPath
+      : null;
+    const bindings = Object.entries(patch.bindings ?? {}).flatMap(([name, binding]) => {
+      const role = typeof binding === 'string' ? binding : binding.role;
+      if (!role) return [];
+      return [{
+        name,
+        role,
+        required: typeof binding === 'string' ? true : binding.required !== false,
+      } satisfies WorkspaceBindingInfo];
+    });
     return {
       appName,
-      source: patch.source ?? '',
+      manifestVersion,
+      source: styleSources[0] ?? '',
       sourcePath,
+      stylePaths,
+      scriptPath,
+      bindings,
       intent: patch.intent ?? '',
-      available: Boolean(sourcePath && existsSync(sourcePath)),
+      available: stylePaths.length > 0 || Boolean(scriptPath),
       absolutePath: sourcePath && existsSync(sourcePath) ? sourcePath : null,
     } satisfies WorkspacePatchInfo;
   });
@@ -3171,8 +3229,26 @@ function compileCompositeStylesheet(
     const includedWorkspaceSources = new Set<string>();
     for (const workspace of activeWorkspaces) {
       const patch = findMatchingWorkspacePatch(workspace, appName);
-      if (!patch?.absolutePath) continue;
-      const source = readWorkspaceCssSource(patch.absolutePath);
+      if (!patch?.available) continue;
+      const styleSource = patch.stylePaths
+        .map((stylePath) => readWorkspaceCssSource(stylePath))
+        .join('\n\n');
+      const scriptSource = patch.scriptPath
+        ? `/* @attune-script\n${readFileSync(patch.scriptPath, 'utf8')}\n@end-attune-script */`
+        : '';
+      const bindingSource = patch.bindings.length
+        ? [
+          '/* @attune-bindings',
+          JSON.stringify({
+            schemaVersion: 1,
+            attunementId: workspace.id,
+            appName: patch.appName,
+            bindings: patch.bindings,
+          }),
+          '@end-attune-bindings */',
+        ].join('\n')
+        : '';
+      const source = [bindingSource, styleSource, scriptSource].filter(Boolean).join('\n\n');
       const sourceSignature = `${patch.appName}\u0000${source}`;
       if (includedWorkspaceSources.has(sourceSignature)) continue;
       includedWorkspaceSources.add(sourceSignature);
@@ -3180,7 +3256,8 @@ function compileCompositeStylesheet(
         `/* Attunement ${workspace.id}: ${patch.appName}. */`,
         source,
       ].join('\n'));
-      sourcePaths.push(patch.absolutePath);
+      sourcePaths.push(...patch.stylePaths);
+      if (patch.scriptPath) sourcePaths.push(patch.scriptPath);
     }
   }
 

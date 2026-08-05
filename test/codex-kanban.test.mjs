@@ -1,0 +1,160 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import test from 'node:test';
+
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const attunementRoot = join(root, 'electron', 'assets', 'codex-kanban');
+
+test('Chat Kanban declares semantic Codex bindings and separate assets', async () => {
+  const manifest = JSON.parse(await readFile(join(attunementRoot, 'manifest.json'), 'utf8'));
+  const target = manifest.targets.Codex;
+
+  assert.equal(manifest.manifestVersion, 2);
+  assert.deepEqual(target.styles, ['apps/codex-kanban.css']);
+  assert.equal(target.script, 'apps/codex-kanban.js');
+  assert.equal(target.bindings.main.role, 'codex.primaryChat');
+  assert.equal(target.bindings.main.required, true);
+  assert.equal(target.bindings.sidebar.role, 'codex.sidebar');
+  assert.equal(target.bindings.appShell.role, 'codex.appShell');
+  assert.equal(target.bindings.sidebarThreads.role, 'codex.sidebarThreads');
+});
+
+test('Chat Kanban derives the four stages from live task state', async () => {
+  const source = await readFile(join(attunementRoot, 'apps', 'codex-kanban.js'), 'utf8');
+
+  assert.match(source, /id: 'old',\s+label: 'Old'/);
+  assert.match(source, /id: 'in-progress',\s+label: 'In Progress'/);
+  assert.match(source, /id: 'waiting',\s+label: 'Waiting'/);
+  assert.match(source, /M17 12h\.01/);
+  assert.match(source, /id: 'done',\s+label: 'Done'/);
+  assert.match(source, /thread\.waiting === true/);
+  assert.match(source, /isWaitingStatus\(thread\.status\)/);
+  assert.match(source, /waitingonapproval/);
+  assert.match(source, /waitingonuserinput/);
+  assert.match(source, /isRunningStatus\(thread\.status\)/);
+  assert.match(source, /thread\.hasUnreadTurn === true/);
+  assert.match(source, /readOverrides\.has\(thread\.id\)/);
+  assert.match(source, /thread\.threadRuntimeStatus/);
+  assert.match(source, /unreadValue == null \? \{\}/);
+  assert.match(source, /thread-read-state-changed/);
+  assert.match(source, /vscode-textLink-foreground/);
+  assert.match(source, /request\('thread\/list'/);
+  assert.match(source, /case 'turn\/completed'/);
+  assert.match(source, /case 'turn\/diff\/updated'/);
+  assert.match(source, /request\('thread\/read', \{ threadId, includeTurns: true \}\)/);
+  assert.match(source, /item\?\.type === 'fileChange'/);
+  assert.match(source, /statsLoadActive < 4/);
+  assert.match(source, /new IntersectionObserver/);
+  assert.match(source, /approval\|permission/);
+  assert.match(source, /deferredThreadPatches\.set/);
+  assert.match(source, /const confirmed = \{ \.\.\.incomingThread, \.\.\.deferred \}/);
+  assert.doesNotMatch(source, /threads = \[\{ id, title: 'Untitled chat'/);
+  assert.match(source, /makeRunningSpinner/);
+  assert.match(source, /nativeSpinner\.cloneNode\(true\)/);
+  assert.match(source, /M18 12C18 8\.68629/);
+  assert.doesNotMatch(source, /dragstart/);
+  assert.doesNotMatch(source, /attune-codex-kanban-stages/);
+});
+
+test('Chat Kanban is native sidebar navigation into the main surface', async () => {
+  const source = await readFile(join(attunementRoot, 'apps', 'codex-kanban.js'), 'utf8');
+
+  assert.match(source, /findNewChatControl/);
+  assert.match(source, /findPullRequestsControl/);
+  assert.match(source, /const isControlVisible =/);
+  assert.match(source, /rect\.left < innerWidth && rect\.top < innerHeight/);
+  assert.match(source, /document\.querySelectorAll\('button, a, \[role="button"\]'\)/);
+  assert.match(source, /<rect x="3" y="3" width="18" height="18" rx="2">/);
+  assert.match(source, /M9 3v18/);
+  assert.match(source, /nativeNavPlacement/);
+  assert.match(source, /while \(parent && parent !== document\.body\)/);
+  assert.match(source, /classList\.contains\('gap-px'\)/);
+  assert.match(source, /placement\.stack\.insertBefore\(navSlot, placement\.slot\)/);
+  assert.match(source, /currentPullRequests\.insertAdjacentElement\('beforebegin', navButton\)/);
+  assert.match(source, /newChatToolbar\.insertAdjacentElement\('afterend', navButton\)/);
+  assert.doesNotMatch(source, /newChatRow\.cloneNode/);
+  assert.match(source, /main\.append\(board\)/);
+  assert.match(source, /navButton\.dataset\.selected/);
+  assert.match(source, /bg-token-list-hover-background/);
+  assert.match(source, /text-token-list-active-selection-foreground/);
+  assert.match(source, /text-token-list-active-selection-icon-foreground/);
+  assert.match(source, /const openThread =/);
+  assert.match(source, /window\.postMessage\(\{ type: 'navigate-to-route', path \}, '\*'\)/);
+  assert.match(source, /threadIdFromElement\(candidate\) === id/);
+  assert.match(source, /try \{ row\.click\(\); \} finally \{ syntheticThreadNavigation = false; \}/);
+  assert.match(source, /markThreadRead\(id\);\s*hideBoard\(\)/);
+  assert.doesNotMatch(source, /confirmNavigation/);
+  assert.doesNotMatch(source, /activePathThreadId\(\) !== id/);
+  assert.doesNotMatch(source, /new PopStateEvent\('popstate'/);
+  assert.match(source, /readOverrides\.add\(threadId\)/);
+  assert.match(source, /navigateToThread\(id\)/);
+  assert.match(source, /history\.pushState/);
+  assert.match(source, /case 'thread\/status\/changed'/);
+  assert.match(source, /case 'turn\/started'/);
+  assert.match(source, /case 'serverRequest\/resolved'/);
+  assert.match(source, /requestuserinput\|requestoptionpicker\|requestsetupcodex/);
+  assert.match(source, /columnScrollPositions\.get\(stage\.id\)/);
+  assert.match(source, /columnScrollPositions\.set\(stage\.id, body\.scrollTop\)/);
+  assert.match(source, /const syncTrafficLightInset =/);
+  assert.match(source, /left < 88/);
+  assert.match(source, /new ResizeObserver\(syncTrafficLightInset\)/);
+  assert.match(source, /const onKanbanShortcut =/);
+  assert.match(source, /event\.metaKey \|\| event\.ctrlKey/);
+  assert.match(source, /event\.shiftKey/);
+  assert.match(source, /Kanban \(⌘⇧K\)/);
+  assert.match(source, /addEventListener\('keydown', onKanbanShortcut, true\)/);
+  assert.doesNotMatch(source, /setInterval/);
+  assert.doesNotMatch(source, /scheduleLiveSync/);
+  assert.doesNotMatch(source, /attune-kanban-topbar/);
+  assert.doesNotMatch(source, /attune-kanban-search/);
+  assert.doesNotMatch(source, /data-refresh/);
+  assert.doesNotMatch(source, /\.animate\(/);
+});
+
+test('Chat Kanban keeps the native sidebar visible while covering only the main surface', async () => {
+  const source = await readFile(join(attunementRoot, 'apps', 'codex-kanban.css'), 'utf8');
+
+  assert.match(source, /#attune-codex-kanban\s*{\s*position: absolute;/);
+  assert.match(source, /data-attune-host-roles~="codex\.primaryChat"/);
+  assert.doesNotMatch(source, /#attune-codex-kanban-nav\[data-selected="true"\]/);
+  assert.match(source, /attune-codex-kanban-board-active/);
+  assert.doesNotMatch(source, /codex\.sidebar[^\n]*\{[^}]*display:\s*none/s);
+  assert.doesNotMatch(source, /transition\s*:/);
+  assert.doesNotMatch(source, /--column-color/);
+  assert.match(source, /\.attune-kanban-card-stats/);
+  assert.match(source, /\.attune-kanban-spinner/);
+  assert.match(source, /attune-kanban-spin 2000ms linear infinite/);
+  assert.match(source, /color-token-list-hover-background/);
+  assert.match(source, /\[data-thread-title-trigger\]/);
+  assert.match(source, /color:\s*var\(--color-token-foreground, CanvasText\) !important/);
+  assert.match(source, /font-weight:\s*400 !important/);
+  assert.match(source, /vscode-gitDecoration-addedResourceForeground/);
+  assert.match(source, /vscode-gitDecoration-deletedResourceForeground/);
+  assert.match(source, /min-height:\s*98px/);
+  assert.match(source, /\.attune-kanban-card-title\s*\{[^}]*font-size:\s*14px/s);
+  assert.match(source, /\.attune-kanban-card-title\s*\{[^}]*font-weight:\s*500/s);
+  assert.match(source, /\.attune-kanban-board-scroll\s*\{[^}]*overflow-y:\s*hidden/s);
+  assert.match(source, /\.attune-kanban-column-body\s*\{[^}]*overflow-y:\s*auto/s);
+  assert.match(source, /overscroll-behavior:\s*contain/);
+  assert.match(source, /container-type:\s*inline-size/);
+  assert.match(source, /grid-template-columns:\s*repeat\(4, minmax\(228px, 1fr\)\)/);
+  assert.match(source, /@container \(max-width:\s*980px\)/);
+  assert.match(source, /grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(source, /grid-template-rows:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(source, /@container \(max-width:\s*520px\)/);
+  assert.match(source, /grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(source, /data-traffic-light-inset="true"/);
+  assert.match(source, /padding-top:\s*52px/);
+  assert.doesNotMatch(source, /min-width:\s*1100px/);
+
+  const cardRule = source.match(/\.attune-kanban-card\s*\{([^}]+)\}/s)?.[1] || '';
+  assert.match(cardRule, /border:\s*none/);
+  assert.match(cardRule, /background:\s*color-mix\(in srgb, CanvasText 7%, Canvas\)/);
+  assert.doesNotMatch(cardRule, /box-shadow/);
+  assert.doesNotMatch(cardRule, /animation\s*:/);
+
+  const emptyRule = source.match(/\.attune-kanban-empty\s*\{([^}]+)\}/s)?.[1] || '';
+  assert.doesNotMatch(emptyRule, /border/);
+});

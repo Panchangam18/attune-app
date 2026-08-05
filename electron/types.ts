@@ -42,11 +42,21 @@ export interface ThemeInfo {
 
 export interface WorkspacePatchInfo {
   appName: string;
+  manifestVersion: number;
   source: string;
   sourcePath: string | null;
+  stylePaths: string[];
+  scriptPath: string | null;
+  bindings: WorkspaceBindingInfo[];
   intent: string;
   available: boolean;
   absolutePath: string | null;
+}
+
+export interface WorkspaceBindingInfo {
+  name: string;
+  role: string;
+  required: boolean;
 }
 
 export interface WorkspaceInfo {

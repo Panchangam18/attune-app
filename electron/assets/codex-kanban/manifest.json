@@ -1,0 +1,20 @@
+{
+  "manifestVersion": 2,
+  "name": "Codex: Chat Kanban",
+  "description": "Add a native Kanban destination to Codex with automatic Old, In Progress, Waiting, and Done stages.",
+  "preview": "preview.svg",
+  "targets": {
+    "Codex": {
+      "styles": ["apps/codex-kanban.css"],
+      "script": "apps/codex-kanban.js",
+      "intent": "Add Kanban below New chat and render a live status board in the native main content area without replacing the sidebar.",
+      "bindings": {
+        "main": { "role": "codex.primaryChat", "required": true },
+        "sidebar": { "role": "codex.sidebar", "required": false },
+        "header": { "role": "codex.chatHeader", "required": false },
+        "appShell": { "role": "codex.appShell", "required": true },
+        "sidebarThreads": { "role": "codex.sidebarThreads", "required": false }
+      }
+    }
+  }
+}
