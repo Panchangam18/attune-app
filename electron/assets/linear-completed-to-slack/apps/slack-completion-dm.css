@@ -2,6 +2,8 @@
 /* @attune-script
 (() => {
   window.__attuneLinearCompletionSlackDmCleanup?.();
+  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
+  const workspaceHost = () => host('slack.workspace') || document;
 
   const bridgeKey = 'linear-completed-slack-dm';
   const destination = {
@@ -34,12 +36,12 @@
 
   const openDestination = async () => {
     if (inDestination()) return true;
-    const link = [...document.querySelectorAll('a[href]')].find((node) => node.href.includes('/client/' + destination.workspaceId + '/' + destination.conversationId));
+    const link = [...workspaceHost().querySelectorAll('a[href]')].find((node) => node.href.includes('/client/' + destination.workspaceId + '/' + destination.conversationId));
     if (link) link.click();
     else location.assign('https://app.slack.com/client/' + destination.workspaceId + '/' + destination.conversationId);
     for (let attempt = 0; attempt < 30; attempt += 1) {
       await wait(500);
-      if (inDestination() && document.querySelector('[data-qa="texty_input"][contenteditable="true"]')) return true;
+      if (inDestination() && (host('slack.composer') || document.querySelector('[data-qa="texty_input"][contenteditable="true"]'))) return true;
     }
     return false;
   };
@@ -48,7 +50,7 @@
 
   const send = async (event) => {
     if (!await openDestination()) throw new Error('Could not open the Slack DM.');
-    const composer = document.querySelector('[data-qa="texty_input"][contenteditable="true"]');
+    const composer = host('slack.composer') || document.querySelector('[data-qa="texty_input"][contenteditable="true"]');
     if (!composer) throw new Error('Slack composer is unavailable.');
     if (composerText(composer)) throw new Error('Slack composer is in use; waiting to preserve the draft.');
 
@@ -60,7 +62,7 @@
     }
     await wait(250);
 
-    const button = document.querySelector('button[data-qa="texty_send_button"]');
+    const button = host('slack.sendButton') || document.querySelector('button[data-qa="texty_send_button"]');
     if (!button || button.disabled || button.getAttribute('aria-disabled') === 'true') {
       throw new Error('Slack Send button is unavailable.');
     }

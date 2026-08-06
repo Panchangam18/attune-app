@@ -185,6 +185,36 @@ Manifest patch paths are relative to the attunement folder:
 }
 \`\`\`
 
+For update-resilient attunements, use manifest version 2 and declare the
+semantic host roles the patch needs. Attune resolves these roles before the
+attunement script runs and continuously remaps them when the host app replaces
+its DOM:
+
+\`\`\`json
+{
+  "manifestVersion": 2,
+  "name": "Codex Canvas",
+  "patches": {
+    "Codex": {
+      "source": "apps/canvas.css",
+      "bindings": {
+        "main": { "role": "codex.primaryChat", "required": true },
+        "header": { "role": "codex.chatHeader", "required": false }
+      }
+    }
+  }
+}
+\`\`\`
+
+Mapped elements receive a stable role attribute for CSS:
+
+\`\`\`css
+[data-attune-host-roles~="codex.primaryChat"] { display: flex; }
+\`\`\`
+
+Version 2 also accepts a \`targets\` object, a \`styles\` array, and a
+separate \`script\` path. Existing version-1 manifests remain supported.
+
 Refresh Attune App after adding or editing an attunement.
 `;
 const SEEDED_WORKSPACE_ID = 'focus-flow';
@@ -376,13 +406,18 @@ ${LINEAR_BRIEF_SCRIPT}
 @end-attune-script */
 `;
 const CODEX_GIT_ACTIONS_MANIFEST = `{
+  "manifestVersion": 2,
   "name": "Codex: Commit + Push",
   "description": "Put native Commit and Push shortcuts beside Codex controls.",
   "preview": "preview.png",
   "patches": {
     "Codex": {
       "source": "apps/chatgpt-git-actions.css",
-      "intent": "Add native Commit and Push shortcuts beside the Codex summary and IDE controls."
+      "intent": "Add native Commit and Push shortcuts beside the Codex summary and IDE controls.",
+      "bindings": {
+        "main": { "role": "codex.primaryChat", "required": true },
+        "header": { "role": "codex.chatHeader", "required": false }
+      }
     }
   }
 }
@@ -497,19 +532,30 @@ const CODEX_GIT_ACTIONS_CSS = `/* Attune managed: codex-git-actions */
 @end-attune-script */
 `;
 const BLUE_MESSAGES_MANIFEST = `{
+  "manifestVersion": 2,
   "name": "Codex: Blue messages",
   "description": "Give your ChatGPT messages the familiar iPhone blue treatment.",
   "preview": "preview.png",
   "patches": {
     "ChatGPT": {
       "source": "apps/chatgpt-blue-messages.css",
-      "intent": "Make user messages iPhone blue (#007AFF) with white text."
+      "intent": "Make user messages iPhone blue (#007AFF) with white text.",
+      "bindings": {
+        "conversation": { "role": "chatgpt.conversation", "required": true }
+      }
     }
   }
 }
 `;
 const BLUE_MESSAGES_CSS = `/* Attune managed: blue-messages */
 /* Codex uses data-user-message-bubble; the remaining selectors support ChatGPT surfaces. */
+[data-attune-host-roles~="chatgpt.conversation"] :is(
+  [data-user-message-bubble],
+  [data-message-author-role="user"] > div > div,
+  [data-message-author-role="user"] > div > div > div,
+  article[data-turn="user"] > div > div,
+  article[data-turn="user"] > div > div > div
+),
 :is(
   [data-user-message-bubble],
   [data-message-author-role="user"] > div > div,
@@ -521,42 +567,62 @@ const BLUE_MESSAGES_CSS = `/* Attune managed: blue-messages */
   color: #fff !important;
 }
 
+[data-attune-host-roles~="chatgpt.conversation"] :is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(p, span, code, pre, li, strong, em, a),
 :is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(p, span, code, pre, li, strong, em, a) {
   color: #fff !important;
 }
 
+[data-attune-host-roles~="chatgpt.conversation"] :is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(svg, button),
 :is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(svg, button) {
   color: #fff;
 }
 `;
 const CODEX_YOUTUBE_MANIFEST = `{
+  "manifestVersion": 2,
   "name": "YouTube in Codex",
   "description": "Show the YouTube video playing in Google Chrome in a compact Codex player.",
   "preview": "preview.svg",
   "patches": {
     "Google Chrome": {
       "source": "apps/chrome-youtube-source.css",
-      "intent": "Publish the active YouTube video URL and playback position to the local Attune bridge."
+      "intent": "Publish the active YouTube video URL and playback position to the local Attune bridge.",
+      "bindings": {
+        "document": { "role": "document.body", "required": true },
+        "player": { "role": "youtube.player", "required": false }
+      }
     },
     "Codex": {
       "source": "apps/codex-youtube-player.css",
-      "intent": "Display the current YouTube video using YouTube's official embedded player."
+      "intent": "Display the current YouTube video using YouTube's official embedded player.",
+      "bindings": {
+        "main": { "role": "codex.primaryChat", "required": true },
+        "document": { "role": "document.body", "required": true }
+      }
     }
   }
 }
 `;
 const CHATGPT_TO_CODEX_MANIFEST = `{
+  "manifestVersion": 2,
   "name": "ChatGPT Web → Codex",
   "description": "Copy the current ChatGPT conversation into a new filesystem-backed Codex chat.",
   "preview": "preview.png",
   "patches": {
     "Google Chrome": {
       "source": "apps/chrome-chatgpt-to-codex.css",
-      "intent": "Add a Send to Codex slash command to ChatGPT and hand the visible conversation to Attune."
+      "intent": "Add a Send to Codex slash command to ChatGPT and hand the visible conversation to Attune.",
+      "bindings": {
+        "conversation": { "role": "chatgpt.conversation", "required": true },
+        "composer": { "role": "chatgpt.composer", "required": true },
+        "attachmentMenu": { "role": "chatgpt.attachmentMenu", "required": false }
+      }
     },
     "Codex": {
       "source": "apps/codex-chatgpt-import.css",
-      "intent": "Codex chats are created directly in the local Codex session store; no renderer polling is required."
+      "intent": "Codex chats are created directly in the local Codex session store; no renderer polling is required.",
+      "bindings": {
+        "document": { "role": "document.body", "required": true }
+      }
     }
   }
 }`;
@@ -575,6 +641,8 @@ const CHATGPT_TO_CODEX_BROWSER_CSS = `/* Attune managed: chatgpt-to-codex browse
   window.__attuneChatGptToCodexSlashCommandCleanup?.();
   document.getElementById('attune-chatgpt-to-codex')?.remove();
   const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
+  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
+  const conversationHost = () => host('chatgpt.conversation') || document;
   const composerSelector = '#prompt-textarea, form[data-type="unified-composer"] textarea, form[data-type="unified-composer"] [contenteditable="true"], textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
   const composer = (element) => element?.matches?.(composerSelector) ? element : element?.closest?.(composerSelector) || null;
   const valueOf = (element) => element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement ? element.value : element?.innerText || element?.textContent || '';
@@ -583,13 +651,13 @@ const CHATGPT_TO_CODEX_BROWSER_CSS = `/* Attune managed: chatgpt-to-codex browse
   const isoTime = (value) => { const source = String(value ?? '').trim(); const numeric = typeof value === 'number' || /^\\d+(?:\\.\\d+)?$/.test(source) ? Number(value) : NaN; const date = Number.isFinite(numeric) ? new Date(numeric < 1e12 ? numeric * 1000 : numeric) : new Date(source); return Number.isFinite(date.getTime()) ? date.toISOString() : null; };
   const visibleTime = (element) => { const label = element.closest('[data-turn-id-container]')?.querySelector('[role="separator"][aria-label]')?.getAttribute('aria-label'); if (!label) return null; const relative = label.match(/^(Today|Yesterday)\\s+(.+)$/i); if (!relative) return isoTime(label); const date = new Date(new Date().toDateString() + ' ' + relative[2]); if (/^Yesterday$/i.test(relative[1])) date.setDate(date.getDate() - 1); return isoTime(date.getTime()); };
   const exactTimes = async () => { const match = location.pathname.match(/\\/c\\/([^/?#]+)/); if (!match) return []; const response = await fetch('/backend-api/conversation/' + encodeURIComponent(match[1]), { credentials: 'include' }); if (!response.ok) return []; const conversation = await response.json(); const chain = []; const visited = new Set(); let nodeId = conversation.current_node; while (nodeId && conversation.mapping?.[nodeId] && !visited.has(nodeId)) { visited.add(nodeId); const node = conversation.mapping[nodeId]; chain.push(node); nodeId = node.parent; } return chain.reverse().map((node) => node.message).filter((message) => /^(user|assistant)$/i.test(message?.author?.role || '') && !message?.metadata?.is_visually_hidden_from_conversation).map((message) => ({ role: message.author.role.toLowerCase(), text: (message.content?.parts || []).filter((part) => typeof part === 'string').join('\\n').trim(), timestamp: isoTime(message.create_time) })).filter((message) => message.text); };
-  const conversation = async () => { const seen = new Set(); const messages = [...document.querySelectorAll('[data-message-author-role], article[data-turn]')].map((element) => { const role = element.getAttribute('data-message-author-role') || element.getAttribute('data-turn'); const text = String(element.innerText || element.textContent || '').trim(); const key = role + '\\u0000' + clean(text); if (!/^(user|assistant)$/i.test(role || '') || !text || seen.has(key)) return null; seen.add(key); return { role: role.toLowerCase(), text, timestamp: visibleTime(element) }; }).filter(Boolean); if (!messages.length) throw new Error('No conversation messages were found on this page.'); try { const exact = await exactTimes(); let cursor = 0; for (const message of messages) { let index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role && (!candidate.text || clean(candidate.text) === clean(message.text) || clean(candidate.text).includes(clean(message.text)) || clean(message.text).includes(clean(candidate.text)))); if (index < 0) index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role); if (index >= 0) { message.text = exact[index].text || message.text; message.timestamp = exact[index].timestamp || message.timestamp; cursor = index + 1; } } } catch (error) { console.warn('[attune] Exact ChatGPT content unavailable; using rendered text.', error); } return { messages, history: messages.map((message) => (message.role === 'user' ? 'User:\\n' : 'ChatGPT:\\n') + message.text).join('\\n\\n') }; };
+  const conversation = async () => { const seen = new Set(); const messages = [...conversationHost().querySelectorAll('[data-message-author-role], article[data-turn]')].map((element) => { const role = element.getAttribute('data-message-author-role') || element.getAttribute('data-turn'); const text = String(element.innerText || element.textContent || '').trim(); const key = role + '\\u0000' + clean(text); if (!/^(user|assistant)$/i.test(role || '') || !text || seen.has(key)) return null; seen.add(key); return { role: role.toLowerCase(), text, timestamp: visibleTime(element) }; }).filter(Boolean); if (!messages.length) throw new Error('No conversation messages were found on this page.'); try { const exact = await exactTimes(); let cursor = 0; for (const message of messages) { let index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role && (!candidate.text || clean(candidate.text) === clean(message.text) || clean(candidate.text).includes(clean(message.text)) || clean(message.text).includes(clean(candidate.text)))); if (index < 0) index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role); if (index >= 0) { message.text = exact[index].text || message.text; message.timestamp = exact[index].timestamp || message.timestamp; cursor = index + 1; } } } catch (error) { console.warn('[attune] Exact ChatGPT content unavailable; using rendered text.', error); } return { messages, history: messages.map((message) => (message.role === 'user' ? 'User:\\n' : 'ChatGPT:\\n') + message.text).join('\\n\\n') }; };
   const dismiss = () => document.getElementById(optionId)?.remove();
   const report = (message) => { document.getElementById(toastId)?.remove(); const toast = document.createElement('div'); toast.id = toastId; toast.setAttribute('role', 'status'); toast.textContent = message; document.body.append(toast); setTimeout(() => toast.remove(), 4200); };
   const sendToCodex = async (input, option) => { if (handoffInProgress || option.getAttribute('aria-disabled') === 'true') return; handoffInProgress = true; try { option.setAttribute('aria-disabled', 'true'); const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); const response = await fetch('http://127.0.0.1:47655/v1/chatgpt-to-codex', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...await conversation(), title: document.title, sourceUrl: location.href }) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'Attune could not create the Codex chat.'); setValue(input, ''); dismiss(); } catch (error) { handoffInProgress = false; option.removeAttribute('aria-disabled'); report(error instanceof Error ? error.message : 'Could not reach Attune.'); } };
-  const popover = () => [...document.querySelectorAll('div.popover')].find((node) => node.getBoundingClientRect().width > 0);
+  const popover = () => host('chatgpt.attachmentMenu') || [...document.querySelectorAll('div.popover')].find((node) => node.getBoundingClientRect().width > 0);
   const commandItem = (menu) => [...menu.querySelectorAll('.__menu-item')].find((node) => /^Add photos & files\\b/.test(clean(node.innerText)));
-  const visibleComposer = () => activeComposer || [...document.querySelectorAll(composerSelector)].find((node) => node.getBoundingClientRect().width > 0);
+  const visibleComposer = () => activeComposer || host('chatgpt.composer') || [...document.querySelectorAll(composerSelector)].find((node) => node.getBoundingClientRect().width > 0);
   const menuAction = (row) => row?.matches?.('.__menu-item') ? row : row?.querySelector?.('.__menu-item');
   const highlight = (menu, item) => { menu.querySelectorAll('.__menu-item[data-highlighted]').forEach((node) => node.removeAttribute('data-highlighted')); item.setAttribute('data-highlighted', ''); keyboardAction = item; };
   const activate = (event, input, option) => { event.preventDefault(); event.stopImmediatePropagation(); void sendToCodex(input, option); };
@@ -673,33 +741,55 @@ const SAFARI_CHATGPT_SLASH_PROBE = `(() => {
   return slashPending ? 'slash' : 'idle';
 })()`;
 const CODEX_LINEAR_TODOS_MANIFEST = `{
+  "manifestVersion": 2,
   "name": "Codex: Linear To-dos",
   "description": "Open your visible Linear to-dos in a focused modal from Codex.",
   "preview": "preview.png",
   "patches": {
     "Linear": {
       "source": "apps/linear-todos-source.css",
-      "intent": "Publish the visible to-do issues from Linear to the local Attune bridge."
+      "intent": "Publish the visible to-do issues from Linear to the local Attune bridge.",
+      "bindings": {
+        "workspace": { "role": "linear.workspace", "required": true },
+        "issueList": { "role": "linear.issueList", "required": true },
+        "issueDetail": { "role": "linear.issueDetail", "required": false }
+      }
     },
     "Codex": {
       "source": "apps/codex-linear-todos.css",
-      "intent": "Add a top-left To-dos button that opens a Linear tasks modal to the right of the Codex sidebar."
+      "intent": "Add a top-left To-dos button that opens a Linear tasks modal to the right of the Codex sidebar.",
+      "bindings": {
+        "main": { "role": "codex.primaryChat", "required": true },
+        "appShell": { "role": "codex.appShell", "required": true },
+        "document": { "role": "document.body", "required": true }
+      }
     }
   }
 }
 `;
 const CURSOR_LINEAR_TODOS_MANIFEST = `{
+  "manifestVersion": 2,
   "name": "Cursor: Linear To-dos",
   "description": "Open your visible Linear to-dos in a focused modal from Cursor.",
   "preview": "preview.png",
   "patches": {
     "Linear": {
       "source": "apps/linear-todos-source.css",
-      "intent": "Publish the visible to-do issues from Linear to the local Attune bridge."
+      "intent": "Publish the visible to-do issues from Linear to the local Attune bridge.",
+      "bindings": {
+        "workspace": { "role": "linear.workspace", "required": true },
+        "issueList": { "role": "linear.issueList", "required": true },
+        "issueDetail": { "role": "linear.issueDetail", "required": false }
+      }
     },
     "Cursor": {
       "source": "apps/cursor-linear-todos.css",
-      "intent": "Add a To-dos button that opens a Linear tasks modal in Cursor."
+      "intent": "Add a To-dos button that opens a Linear tasks modal in Cursor.",
+      "bindings": {
+        "workbench": { "role": "cursor.workbench", "required": true },
+        "titlebar": { "role": "cursor.titlebar", "required": false },
+        "document": { "role": "document.body", "required": true }
+      }
     }
   }
 }`;
@@ -724,12 +814,15 @@ const CODEX_LINEAR_TODOS_SOURCE_CSS = `/* Attune managed: codex-linear-todos sou
   const bridgeUrl = 'http://127.0.0.1:47655/v1/linear-todos';
   const actionUrl = 'http://127.0.0.1:47655/v1/linear-todos-action';
   const completionUrl = 'http://127.0.0.1:47655/v1/linear-todos-completion';
+  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
+  const issueListHost = () => host('linear.issueList') || host('linear.workspace') || document;
+  const issueDetailHost = () => host('linear.issueDetail') || host('linear.workspace') || document;
   let lastSignature = '';
   let lastActionId = '';
   const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
   const collect = () => {
     const seen = new Set();
-    const issues = [...document.querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')]
+    const issues = [...issueListHost().querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')]
       .map((node) => {
         const text = (node.innerText || node.textContent || node.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
         const href = node.href || '';
@@ -751,12 +844,12 @@ const CODEX_LINEAR_TODOS_SOURCE_CSS = `/* Attune managed: codex-linear-todos sou
   };
   const complete = async (action) => {
     const key = String(action?.key || '');
-    const links = [...document.querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')];
+    const links = [...issueListHost().querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')];
     const issueLink = links.find((link) => (link.innerText || link.textContent || '').includes(key));
     if (!issueLink) throw new Error('Could not find this issue in the current Linear view.');
     issueLink.click();
     await wait(700);
-    const button = [...document.querySelectorAll('button, [role="button"]')].find((element) => {
+    const button = [...issueDetailHost().querySelectorAll('button, [role="button"]')].find((element) => {
       const label = ((element.getAttribute('aria-label') || '') + ' ' + (element.innerText || element.textContent || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
       return !label.includes('incomplete') && (label.includes('mark as complete') || label === 'complete' || label === 'done');
     });
@@ -827,6 +920,8 @@ const CODEX_LINEAR_TODOS_CSS = `/* Attune managed: codex-linear-todos */
 
 /* @attune-script
 (() => {
+  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
+  const documentHost = () => host('document.body') || document.body;
   const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const readTodos = async () => {
     const state = window.__attuneWorkspaceBridge?.['linear-todos'] || null;
@@ -868,7 +963,7 @@ const CODEX_LINEAR_TODOS_CSS = `/* Attune managed: codex-linear-todos */
     modal.querySelector('[data-close]')?.addEventListener('click', closeIssue);
     modal.querySelector('[data-complete]')?.addEventListener('click', () => void complete(modal.querySelector('[data-complete]'), issue));
     modal.querySelector('[data-focus]')?.addEventListener('click', () => { document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), key: issue.key, type: 'focus' }); });
-    document.body.append(modal);
+    documentHost().append(modal);
     modal.querySelector('[data-complete]')?.focus();
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id, key: issue.key, href: issue.href, type: 'details' });
@@ -925,7 +1020,7 @@ const CODEX_LINEAR_TODOS_CSS = `/* Attune managed: codex-linear-todos */
     modal.dataset.expanded = 'false';
     modal.innerHTML = '<section role="document"><header><h2 id="attune-codex-linear-todos-title"><img id="attune-codex-linear-todos-logo" src="${LINEAR_DARK_LOGO_DATA_URI}" alt="" />Tasks</h2><button type="button" data-expand aria-label="Show tasks" aria-expanded="false">+</button></header><div id="attune-codex-linear-todos-list-wrap"><ol id="attune-codex-linear-todos-list"></ol><i id="attune-codex-linear-todos-list-scrollbar" aria-hidden="true"></i></div></section>';
     modal.querySelector('[data-expand]')?.addEventListener('click', (event) => { const expanded = modal.dataset.expanded !== 'true'; modal.dataset.expanded = String(expanded); event.currentTarget.textContent = expanded ? '−' : '+'; event.currentTarget.setAttribute('aria-expanded', String(expanded)); });
-    document.body.append(modal);
+    documentHost().append(modal);
     modal.querySelector('button')?.focus();
     await refresh();
   };
@@ -984,6 +1079,7 @@ const CODEX_YOUTUBE_SOURCE_CSS = `/* Attune managed: codex-youtube-player source
 /* @attune-script
 (() => {
   const bridgeUrl = 'http://127.0.0.1:47655/v1/youtube-now-playing';
+  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
   let lastSignature = '';
   let lastPublishedAt = 0;
 
@@ -1003,7 +1099,7 @@ const CODEX_YOUTUBE_SOURCE_CSS = `/* Attune managed: codex-youtube-player source
   const collect = () => {
     const videoId = videoIdFromUrl(location.href);
     if (!videoId) return;
-    const video = document.querySelector('video');
+    const video = host('youtube.player') || document.querySelector('video');
     const currentTime = Number.isFinite(video?.currentTime) ? video.currentTime : 0;
     const payload = {
       videoUrl: location.href,
@@ -1043,6 +1139,7 @@ const CODEX_YOUTUBE_PLAYER_CSS = `/* Attune managed: codex-youtube-player */
 /* @attune-script
 (() => {
   const validVideoId = (value) => /^[A-Za-z0-9_-]{6,}$/.test(value || '') ? value : null;
+  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
   let shownVideoId = null;
 
   const remove = () => document.getElementById('attune-codex-youtube-player')?.remove();
@@ -1060,7 +1157,7 @@ const CODEX_YOUTUBE_PLAYER_CSS = `/* Attune managed: codex-youtube-player */
       root.id = 'attune-codex-youtube-player';
       root.setAttribute('aria-label', 'YouTube player from Google Chrome');
       root.innerHTML = '<header><strong></strong><span class="attune-youtube-status"></span></header><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe><footer><button type="button">Sync to Chrome</button><a target="_blank" rel="noreferrer">Open in YouTube</a></footer>';
-      document.body.append(root);
+      (host('document.body') || document.body).append(root);
       shownVideoId = videoId;
     }
     root.querySelector('strong').textContent = payload.title || 'YouTube video';
@@ -1171,14 +1268,6 @@ function installApplicationMenu(): void {
     {
       label: 'Attune',
       submenu: [
-        {
-          label: 'Connect current Safari ChatGPT tab',
-          click: () => void connectSafariChatGptTab().then(
-            (count) => void dialog.showMessageBox({ type: 'info', message: `Connected to ${count} Safari ChatGPT tab${count === 1 ? '' : 's'}.`, detail: 'Type / in ChatGPT to show Send to Codex. The connection lasts only for the current page and does not run in the background.' }),
-            (error) => void dialog.showMessageBox({ type: 'warning', message: 'Could not connect to Safari ChatGPT.', detail: error instanceof Error ? error.message : String(error) }),
-          ),
-        },
-        { type: 'separator' },
         { role: 'quit' },
       ],
     },
@@ -1864,7 +1953,7 @@ function seedChatGptClaudeModelsAttunement(workspacesRoot: string): void {
   mkdirSync(appsRoot, { recursive: true });
   for (const relativePath of [
     'manifest.json',
-    'preview.svg',
+    'preview.png',
     join('apps', 'chatgpt-claude-models.css'),
   ]) {
     copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
@@ -1907,7 +1996,7 @@ function seedCodexKanbanAttunement(workspacesRoot: string): void {
   mkdirSync(appsRoot, { recursive: true });
   for (const relativePath of [
     'manifest.json',
-    'preview.svg',
+    'preview.png',
     join('apps', 'codex-kanban.css'),
     join('apps', 'codex-kanban.js'),
   ]) {

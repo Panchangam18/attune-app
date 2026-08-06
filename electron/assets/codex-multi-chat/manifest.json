@@ -1,4 +1,5 @@
 {
+  "manifestVersion": 2,
   "name": "Codex: Chat Canvas",
   "description": "Turn the right side of Codex into a canvas of up to four live, closable chat cards.",
   "preview": "preview.png",
@@ -6,7 +7,15 @@
   "patches": {
     "Codex": {
       "source": "apps/codex-chat-canvas.css",
-      "intent": "Keep the native chat as the first card and open sidebar threads as additional live cards through Codex's app-server bridge."
+      "intent": "Keep the native chat as the first card and open sidebar threads as additional live cards through Codex's app-server bridge.",
+      "bindings": {
+        "main": { "role": "codex.primaryChat", "required": true },
+        "composer": { "role": "codex.composer", "required": true },
+        "timeline": { "role": "codex.timeline", "required": true },
+        "header": { "role": "codex.chatHeader", "required": false },
+        "sidebar": { "role": "codex.sidebar", "required": false },
+        "chatActions": { "role": "codex.chatActions", "required": false }
+      }
     }
   }
 }

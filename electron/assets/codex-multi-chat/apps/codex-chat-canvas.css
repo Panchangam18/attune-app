@@ -1,5 +1,5 @@
 /* Attune managed: codex-chat-canvas */
-body.attune-codex-chat-canvas-active :has(> main.main-surface) {
+body.attune-codex-chat-canvas-active :has(> [data-attune-host-roles~="codex.primaryChat"]) {
   --attune-canvas-gap: 8px;
   --attune-card-line: color-mix(in srgb, CanvasText 10%, transparent);
   --attune-card-muted: color-mix(in srgb, CanvasText 58%, transparent);
@@ -19,16 +19,16 @@ body.attune-codex-chat-canvas-active :has(> main.main-surface) {
 }
 
 body.attune-codex-chat-canvas-active[data-attune-sidebar-open="false"]
-  :has(> main.main-surface) {
+  :has(> [data-attune-host-roles~="codex.primaryChat"]) {
   padding-inline-start: var(--attune-canvas-gap) !important;
 }
 
-body.attune-codex-chat-canvas-active :has(> main.main-surface)::-webkit-scrollbar {
+body.attune-codex-chat-canvas-active :has(> [data-attune-host-roles~="codex.primaryChat"])::-webkit-scrollbar {
   display: none;
 }
 
 body.attune-codex-chat-canvas-active
-  :has(> main.main-surface) > aside.app-shell-left-panel {
+  :has(> [data-attune-host-roles~="codex.primaryChat"]) > [data-attune-host-roles~="codex.sidebar"] {
   position: sticky;
   left: 0;
   z-index: 2147483644;
@@ -41,14 +41,14 @@ body.attune-codex-chat-canvas-active
 }
 
 body.attune-codex-chat-canvas-active[data-attune-sidebar-open="false"]
-  :has(> main.main-surface) > aside.app-shell-left-panel {
+  :has(> [data-attune-host-roles~="codex.primaryChat"]) > [data-attune-host-roles~="codex.sidebar"] {
   position: fixed !important;
   inset: 0 auto 13px 0 !important;
   z-index: 2147483644;
   margin: 0 !important;
 }
 
-body.attune-codex-chat-canvas-active main.main-surface,
+body.attune-codex-chat-canvas-active [data-attune-host-roles~="codex.primaryChat"],
 .attune-codex-chat-card {
   flex: 0 0 var(--attune-card-width, calc(100vw - 16px)) !important;
   width: var(--attune-card-width, calc(100vw - 16px)) !important;
@@ -67,22 +67,22 @@ body.attune-codex-chat-canvas-active main.main-surface,
   box-shadow: 0 1px 2px rgb(0 0 0 / 8%), 0 8px 24px rgb(0 0 0 / 7%);
 }
 
-body.attune-codex-chat-canvas-active main.main-surface {
+body.attune-codex-chat-canvas-active [data-attune-host-roles~="codex.primaryChat"] {
   position: relative !important;
   isolation: isolate;
 }
 
-body.attune-codex-chat-canvas-active main.main-surface[data-attune-card-hidden="true"] {
+body.attune-codex-chat-canvas-active [data-attune-host-roles~="codex.primaryChat"][data-attune-card-hidden="true"] {
   display: none !important;
 }
 
-body.attune-codex-chat-canvas-active main.main-surface .app-header-tint {
+body.attune-codex-chat-canvas-active [data-attune-host-roles~="codex.primaryChat"] [data-attune-host-roles~="codex.chatHeader"] {
   position: absolute !important;
   inset: 0 0 auto !important;
   width: auto !important;
 }
 
-body.attune-codex-chat-canvas-active main.main-surface .app-header-tint
+body.attune-codex-chat-canvas-active [data-attune-host-roles~="codex.primaryChat"] [data-attune-host-roles~="codex.chatHeader"]
   > [data-test-id="header-shell-slot"]:has([data-app-shell-sidebar-trigger]) {
   display: none !important;
 }
@@ -162,14 +162,14 @@ body.attune-codex-chat-canvas-active
   background: var(--color-token-scrollbar-slider-hover-background, rgb(255 255 255 / 15.6%));
 }
 
-body.attune-codex-chat-canvas-active main.main-surface .app-header-tint
+body.attune-codex-chat-canvas-active [data-attune-host-roles~="codex.primaryChat"] [data-attune-host-roles~="codex.chatHeader"]
   > [data-test-id="header-shell-slot"]:has(button[aria-label="Toggle side panel"]) {
   width: 104px !important;
   min-width: 104px !important;
   padding-inline-end: 42px !important;
 }
 
-body.attune-codex-chat-canvas-active main.main-surface
+body.attune-codex-chat-canvas-active [data-attune-host-roles~="codex.primaryChat"]
   .thread-scroll-container > [style*="--thread-wide-block-inline-shift"] {
   --thread-wide-block-inline-shift: 0px !important;
   width: 100% !important;
@@ -1321,9 +1321,30 @@ body.attune-card-resizing * {
   })();
   window.__attuneCodexChatCanvasCleanup?.();
 
-  let main = document.querySelector('main.main-surface');
+  const primaryChatSelector = '[data-attune-host-roles~="codex.primaryChat"]';
+  const chatHeaderSelector = '[data-attune-host-roles~="codex.chatHeader"]';
+  const sidebarSelector = '[data-attune-host-roles~="codex.sidebar"]';
+  const addHostRole = (element, role) => {
+    if (!element) return null;
+    const roles = new Set((element.getAttribute('data-attune-host-roles') || '').split(/\s+/).filter(Boolean));
+    roles.add(role);
+    element.setAttribute('data-attune-host-roles', [...roles].sort().join(' '));
+    return element;
+  };
+  // Version-2 runtimes resolve these roles before activation. The semantic
+  // fallbacks keep staged upgrades safe when a new managed attunement reaches
+  // a renderer before its resident Attune watcher has restarted.
+  let main = window.__attuneHost?.resolve?.('codex.primaryChat')
+    || document.querySelector('main[data-app-shell-main-surface], main.main-surface');
+  addHostRole(main, 'codex.primaryChat');
   let shell = main?.parentElement;
-  let aside = shell?.querySelector(':scope > aside.app-shell-left-panel') || null;
+  let aside = window.__attuneHost?.resolve?.('codex.sidebar')
+    || document.querySelector('aside.app-shell-left-panel');
+  addHostRole(aside, 'codex.sidebar');
+  const initialHeader = window.__attuneHost?.resolve?.('codex.chatHeader')
+    || main?.querySelector('button[aria-label="Chat actions"]')?.closest('header')
+    || main?.querySelector('.app-header-tint');
+  addHostRole(initialHeader, 'codex.chatHeader');
   if (!main || !shell || !window.electronBridge?.sendMessageFromView) return;
 
   const originalStyles = new Map();
@@ -1440,7 +1461,7 @@ body.attune-card-resizing * {
   );
 
   const nativeToolbarClone = () => {
-    const source = main.querySelector('.app-header-tint');
+    const source = main.querySelector(chatHeaderSelector);
     if (!source || !isUsableNativeToolbar(source)) return null;
     const clone = source.cloneNode(true);
     [...clone.children].forEach((child, index) => {
@@ -1708,7 +1729,7 @@ body.attune-card-resizing * {
       completedResponseCount: completedResponses.length,
       responseActionLabels: [...new Set(completedResponses.flatMap(labels))],
       composerControlLabels: [...new Set(labels(main.querySelector('[data-codex-composer-root]')))],
-      toolbarControlLabels: [...new Set(labels(main.querySelector('.app-header-tint')))],
+      toolbarControlLabels: [...new Set(labels(main.querySelector(chatHeaderSelector)))],
       activityCount: main.querySelectorAll('[data-local-conversation-item-target-ids]').length,
       userMessageCount: main.querySelectorAll('[data-local-conversation-user-anchor="true"]').length,
     };
@@ -1764,29 +1785,142 @@ body.attune-card-resizing * {
   void inspectRendererContract();
 
   let nativeReactRuntimePromise = null;
+  const bundledCommonJsLoader = (value) => {
+    if (typeof value !== 'function') return false;
+    try {
+      const source = Function.prototype.toString.call(value);
+      // Vite's generated CommonJS wrappers keep this shape even when their
+      // export identifiers are renamed by minification.
+      return source.length < 180
+        && source.includes('{exports:{}}')
+        && source.includes('.exports');
+    } catch {
+      return false;
+    }
+  };
+
+  const reactRuntimeCapabilities = (value) => ({
+    react: Boolean(
+      value
+      && typeof value.createElement === 'function'
+      && typeof value.Component === 'function'
+      && typeof value.createContext === 'function'
+    ),
+    reactDom: Boolean(value && typeof value.createRoot === 'function'),
+  });
+
   const nativeReactRuntime = () => {
     if (nativeReactRuntimePromise) return nativeReactRuntimePromise;
     nativeReactRuntimePromise = (async () => {
       for (const url of await rendererBundleUrls()) {
         try {
           const module = await import(url);
-          const React = module.Nvt?.();
-          const ReactDOM = module.ept?.();
+          let React = null;
+          let ReactDOM = null;
+          let reactExport = null;
+          let reactDomExport = null;
+          const inspect = (value, exportName) => {
+            const capabilities = reactRuntimeCapabilities(value);
+            if (!React && capabilities.react) {
+              React = value;
+              reactExport = exportName;
+            }
+            if (!ReactDOM && capabilities.reactDom) {
+              ReactDOM = value;
+              reactDomExport = exportName;
+            }
+          };
+          for (const [exportName, value] of Object.entries(module)) {
+            inspect(value, exportName);
+            if ((!React || !ReactDOM) && bundledCommonJsLoader(value)) {
+              try {
+                const loaded = value();
+                // Generated CJS loaders are synchronous. Do not await or
+                // execute arbitrary bundle functions while probing.
+                if (!loaded?.then) {
+                  inspect(loaded, `${exportName}()`);
+                  inspect(loaded?.default, `${exportName}().default`);
+                }
+              } catch {}
+            }
+            if (React && ReactDOM) break;
+          }
           if (React?.createElement && React?.Component && ReactDOM?.createRoot) {
+            parityState.nativeRenderer ||= { mounts: [], failures: [] };
+            parityState.nativeRenderer.runtime = {
+              status: 'resolved',
+              reactExport,
+              reactDomExport,
+              url,
+              resolvedAt: Date.now(),
+            };
             return { React, ReactDOM, module, url };
           }
-        } catch {}
+        } catch (error) {
+          parityState.nativeRenderer ||= { mounts: [], failures: [] };
+          parityState.nativeRenderer.runtime = {
+            status: 'error',
+            message: error instanceof Error ? error.message : String(error),
+            url,
+            resolvedAt: Date.now(),
+          };
+        }
       }
+      parityState.nativeRenderer ||= { mounts: [], failures: [] };
+      parityState.nativeRenderer.runtime ||= {
+        status: 'missing',
+        resolvedAt: Date.now(),
+      };
       return null;
     })();
     return nativeReactRuntimePromise;
+  };
+
+  const hasFiberProps = (fiber, names) => {
+    const props = fiber?.memoizedProps;
+    return Boolean(
+      props
+      && typeof props === 'object'
+      && names.every((name) => Object.prototype.hasOwnProperty.call(props, name))
+    );
+  };
+
+  const nativeTaskSurfaceScore = (fiber) => {
+    if (typeof fiber?.type !== 'function') return 0;
+    let score = 0;
+    if (hasFiberProps(fiber, ['conversationId'])) score += 4;
+    if (hasFiberProps(fiber, ['showComposer'])) score += 3;
+    if (hasFiberProps(fiber, ['header'])) score += 2;
+    if (hasFiberProps(fiber, ['floatingContent'])) score += 2;
+    for (const supportingProp of [
+      'contentX',
+      'hasConversation',
+      'hideThreadContent',
+      'isThreadHistoryLoading',
+    ]) {
+      if (hasFiberProps(fiber, [supportingProp])) score += 1;
+    }
+    return score;
   };
 
   const nativeTaskFiberSnapshot = () => {
     const sourceNode = main.querySelector('[data-codex-composer-root]');
     const fiberKey = Object.keys(sourceNode || {}).find((key) => key.startsWith('__reactFiber$'));
     let fiber = fiberKey ? sourceNode[fiberKey] : null;
-    while (fiber && fiber.type?.name !== 'EO') fiber = fiber.return;
+    let bestFiber = null;
+    let bestScore = 0;
+    while (fiber) {
+      const score = nativeTaskSurfaceScore(fiber);
+      if (score > bestScore) {
+        bestFiber = fiber;
+        bestScore = score;
+      }
+      fiber = fiber.return;
+    }
+    // A task surface must satisfy more than the generic conversation wrapper.
+    // The supporting signals allow one or two prop names to evolve without
+    // falling back, while avoiding an unrelated ancestor with conversationId.
+    fiber = bestScore >= 9 ? bestFiber : null;
     if (!fiber || typeof fiber.type !== 'function') return null;
     const contextValues = new Map();
     const stack = [fiber];
@@ -1826,7 +1960,13 @@ body.attune-card-resizing * {
     const sourceNode = main.querySelector('[data-codex-composer-root]');
     const fiberKey = Object.keys(sourceNode || {}).find((key) => key.startsWith('__reactFiber$'));
     let fiber = fiberKey ? sourceNode[fiberKey] : null;
-    while (fiber && fiber.type?.name !== '$u') fiber = fiber.return;
+    while (
+      fiber
+      && !(
+        typeof fiber.type === 'function'
+        && hasFiberProps(fiber, ['clientThreadId', 'conversationId'])
+      )
+    ) fiber = fiber.return;
     return fiber || null;
   };
 
@@ -2040,7 +2180,7 @@ body.attune-card-resizing * {
         && previous.conversationId === snapshot.sourceConversationId
         && main.querySelector('button[aria-label="Chat actions"]')
       ) return true;
-      const nativeHeader = main.querySelector('.app-header-tint');
+      const nativeHeader = main.querySelector(chatHeaderSelector);
       const hasCompleteNativeHeader = Boolean(
         nativeHeader?.querySelector('button[aria-label="Chat actions"]')
         && nativeHeader.querySelector(
@@ -2168,7 +2308,7 @@ body.attune-card-resizing * {
   };
 
   const visibleMainHeaderButton = (label) => (
-    [...main.querySelectorAll(`.app-header-tint button[aria-label="${label}"]`)]
+    [...main.querySelectorAll(`${chatHeaderSelector} button[aria-label="${label}"]`)]
       .find((button) => {
         const rect = button.getBoundingClientRect();
         return rect.width > 0
@@ -2456,7 +2596,15 @@ body.attune-card-resizing * {
     if (!card || cards.get(card.threadId) !== card || card.nativeReactRoot) return false;
     const runtime = await nativeReactRuntime();
     const snapshot = nativeTaskFiberSnapshot();
-    if (!runtime || !snapshot) return false;
+    if (!runtime || !snapshot) {
+      unmountNativeTaskCard(
+        card,
+        !runtime
+          ? 'Native React runtime capabilities were not found.'
+          : 'Native task surface contract was not found.',
+      );
+      return false;
+    }
     const { React, ReactDOM } = runtime;
     const scopedRegistry = nativeTaskScopeRegistry(snapshot.contextValues, card.threadId);
     const host = document.createElement('div');
@@ -3778,7 +3926,7 @@ body.attune-card-resizing * {
       ...(nativeHidden ? [] : [main]),
       ...[...cards.values()].map((card) => card.root),
     ];
-    const liveAside = shell.querySelector(':scope > aside.app-shell-left-panel');
+    const liveAside = document.querySelector(sidebarSelector);
     const sidebarWidth = Math.max(0, Math.round(liveAside?.getBoundingClientRect().width || 0));
     const sidebarToggleLabel = nativeSidebarToggle()?.getAttribute('aria-label') || '';
     const sidebarOpen = /hide sidebar/i.test(sidebarToggleLabel)
@@ -3904,7 +4052,7 @@ body.attune-card-resizing * {
 
   const onCanvasWheel = (event) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
-    const card = target?.closest?.('main.main-surface, .attune-codex-chat-card');
+    const card = target?.closest?.(`${primaryChatSelector}, .attune-codex-chat-card`);
     if (!card || card.parentElement !== canvas) return;
     const horizontalDelta = Math.abs(event.deltaX) > 0.5
       ? event.deltaX
@@ -5314,7 +5462,7 @@ body.attune-card-resizing * {
 
   const showNativeChatActions = async (card, anchor) => {
     closeCardPopover(card);
-    const nativeTrigger = main.querySelector('.app-header-tint button[aria-label="Chat actions"]');
+    const nativeTrigger = main.querySelector(`${chatHeaderSelector} button[aria-label="Chat actions"]`);
     const overlay = await captureNativePortalMenu(nativeTrigger);
     if (!overlay) {
       showCardPopover(card, anchor, [
@@ -5390,7 +5538,7 @@ body.attune-card-resizing * {
       const connection = await nativeHost();
       if (!connection?.services?.openIn) throw new Error('Codex Open in service is unavailable.');
       const preferredIcon = main
-        .querySelector('.app-header-tint button[aria-label="Open in"] img')
+        .querySelector(`${chatHeaderSelector} button[aria-label="Open in"] img`)
         ?.getAttribute('src') || '';
       const preferredTarget = preferredIcon.match(/\/apps\/([^/.]+)[.]png(?:\?|$)/)?.[1] || 'cursor';
       const result = await connection.services.openIn.open({
@@ -5928,10 +6076,10 @@ body.attune-card-resizing * {
         || element.hasAttribute('data-app-action-sidebar-thread-id')
         || (
           element.matches?.('a[href*="/local/"]')
-          && !element.closest('main.main-surface, .attune-codex-chat-card')
+          && !element.closest(`${primaryChatSelector}, .attune-codex-chat-card`)
         )
         || Boolean(element.closest(
-          'aside.app-shell-left-panel, [data-app-action-sidebar-scroll], [data-app-action-sidebar-section]',
+          `${sidebarSelector}, [data-app-action-sidebar-scroll], [data-app-action-sidebar-section]`,
         ));
     }) || null;
   };
@@ -5939,11 +6087,11 @@ body.attune-card-resizing * {
   const recordSidebarEvent = (event, row) => {
     const target = event.target instanceof Element ? event.target : event.target?.parentElement;
     const overSidebar = Boolean(
-      target?.closest?.('aside.app-shell-left-panel, [data-app-action-sidebar-scroll]')
+      target?.closest?.(`${sidebarSelector}, [data-app-action-sidebar-scroll]`)
       || (Number.isFinite(event.clientX) && Number.isFinite(event.clientY)
         && document.elementsFromPoint(event.clientX, event.clientY).some((element) => (
-          element.matches?.('aside.app-shell-left-panel, [data-app-action-sidebar-scroll]')
-          || element.closest?.('aside.app-shell-left-panel, [data-app-action-sidebar-scroll]')
+          element.matches?.(`${sidebarSelector}, [data-app-action-sidebar-scroll]`)
+          || element.closest?.(`${sidebarSelector}, [data-app-action-sidebar-scroll]`)
         )))
     );
     if (!overSidebar && !row) return;
@@ -6289,9 +6437,19 @@ body.attune-card-resizing * {
   observeSidebar(aside);
   const ensureCurrentShell = () => {
     if (disposed) return;
-    const nextMain = document.querySelector('main.main-surface');
+    const nextMain = window.__attuneHost?.resolve?.('codex.primaryChat')
+      || document.querySelector(`${primaryChatSelector}, main[data-app-shell-main-surface], main.main-surface`);
+    addHostRole(nextMain, 'codex.primaryChat');
     const nextShell = nextMain?.parentElement;
-    const nextAside = nextShell?.querySelector(':scope > aside.app-shell-left-panel') || null;
+    const nextAside = window.__attuneHost?.resolve?.('codex.sidebar')
+      || document.querySelector(`${sidebarSelector}, aside.app-shell-left-panel`);
+    addHostRole(nextAside, 'codex.sidebar');
+    addHostRole(
+      window.__attuneHost?.resolve?.('codex.chatHeader')
+        || nextMain?.querySelector('button[aria-label="Chat actions"]')?.closest('header')
+        || nextMain?.querySelector('.app-header-tint'),
+      'codex.chatHeader',
+    );
     if (!nextMain || !nextShell) return;
     if (nextShell !== shell || nextMain !== main || !canvas?.isConnected) {
       attachToShell(nextAside, nextMain, nextShell);
@@ -6317,7 +6475,7 @@ body.attune-card-resizing * {
   const shellObserver = new MutationObserver(scheduleShellCheck);
   shellObserver.observe(document.body, { childList: true, subtree: true });
   const onNativeComposerInput = (event) => {
-    const editor = event.target?.closest?.('main.main-surface [data-codex-composer="true"]');
+    const editor = event.target?.closest?.(`${primaryChatSelector} [data-codex-composer="true"]`);
     if (!editor) return;
     const threadId = normalizeConversationId(activeRow()?.dataset.appActionSidebarThreadId);
     if (!isPersistedThreadId(threadId)) return;

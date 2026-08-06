@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "name": "Codex: Chat Kanban",
   "description": "Add a native Kanban destination to Codex with automatic Old, In Progress, Waiting, and Done stages.",
-  "preview": "preview.svg",
+  "preview": "preview.png",
   "targets": {
     "Codex": {
       "styles": ["apps/codex-kanban.css"],

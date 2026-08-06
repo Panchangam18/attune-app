@@ -131,6 +131,9 @@
 
 /* @attune-script
 (() => {
+  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
+  const mainHost = () => host('codex.primaryChat') || document;
+  const sidebarHost = () => host('codex.sidebar') || document;
   window.__attuneExternalModelMenuCleanup?.();
   if (!window.electronBridge?.sendMessageFromView) return;
 
@@ -226,7 +229,7 @@
     // ChatGPT can leave the active sidebar row at a client-new-thread
     // placeholder long after the conversation has a real task UUID. The
     // composer owns the canonical conversation id for the visible task.
-    const conversationCandidates = [...document.querySelectorAll(
+    const conversationCandidates = [...mainHost().querySelectorAll(
       '[data-above-composer-conversation-id]',
     )];
     const conversationId = String(
@@ -241,7 +244,7 @@
         .test(conversationId)
     ) return conversationId;
 
-    const activeRows = [...document.querySelectorAll(
+    const activeRows = [...sidebarHost().querySelectorAll(
       '[data-app-action-sidebar-thread-row][data-app-action-sidebar-thread-active="true"]',
     )];
     const row = activeRows.find((candidate) => candidate.getClientRects().length > 0)
@@ -459,9 +462,11 @@
 
   const syncMarkedModelTriggers = () => {
     const currentProviderId = activeProvider();
-    const modelTriggers = [...document.querySelectorAll(
+    const mappedTrigger = host('codex.modelPicker');
+    const modelTriggers = [...mainHost().querySelectorAll(
       'button[data-codex-intelligence-trigger="true"]',
     )];
+    if (mappedTrigger && !modelTriggers.includes(mappedTrigger)) modelTriggers.unshift(mappedTrigger);
     const currentTrigger = modelTriggers.find((trigger) => (
       trigger.dataset.state === 'open' && trigger.getClientRects().length > 0
     )) || modelTriggers.find((trigger) => trigger.getClientRects().length > 0);
@@ -733,7 +738,7 @@
   };
 
   const markOpenModelTrigger = (providerId) => {
-    const trigger = document.querySelector(
+    const trigger = host('codex.modelPicker') || document.querySelector(
       'button[data-codex-intelligence-trigger="true"][data-state="open"]',
     ) || [...document.querySelectorAll('button[data-state="open"]')]
       .find((button) => (

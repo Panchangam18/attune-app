@@ -2,6 +2,9 @@
 /* @attune-script
 (() => {
   window.__attuneLinearCompletionSlackCleanup?.();
+  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
+  const workspaceHost = () => host('linear.workspace') || document;
+  const issueDetailHost = () => host('linear.issueDetail') || workspaceHost();
 
   const donePattern = /^(done|completed|complete)(?:\s+\d+)?$/i;
   const completeActionPattern = /\b(mark as complete|complete issue|move to done)\b/i;
@@ -31,14 +34,17 @@
   const currentIssue = () => {
     const pathKey = location.pathname.match(/\/issue\/([A-Z][A-Z0-9]+-\d+)(?:\/|$)/i)?.[1]?.toUpperCase() || '';
     if (!pathKey) return null;
-    const controls = [...document.querySelectorAll('button[data-detail-button="true"]')].map(controlLabel).filter(Boolean);
+    const detail = issueDetailHost();
+    const controls = [...detail.querySelectorAll('button[data-detail-button="true"]')].map(controlLabel).filter(Boolean);
+    const mappedStatus = controlLabel(host('linear.statusControl'));
+    if (mappedStatus && !controls.includes(mappedStatus)) controls.unshift(mappedStatus);
     const status = controls.find((value) => /^(todo|backlog|in progress|started|open|done|completed|canceled|duplicate)$/i.test(value)) || '';
     const priority = controls.find((value) => /^(no priority|urgent|high|medium|low)$/i.test(value)) || '';
-    const assigneeButton = [...document.querySelectorAll('button[data-detail-button="true"]')].find((node) => /assignee/i.test(node.getAttribute('aria-label') || ''));
+    const assigneeButton = [...detail.querySelectorAll('button[data-detail-button="true"]')].find((node) => /assignee/i.test(node.getAttribute('aria-label') || ''));
     const assignee = assigneeButton ? clean(assigneeButton.innerText || assigneeButton.textContent || assigneeButton.getAttribute('aria-label')).replace(/^assignee\s*/i, '') : '';
-    const description = clean(document.querySelector('[aria-label="Issue description"]')?.innerText || '').slice(0, 1800);
+    const description = clean(detail.querySelector('[aria-label="Issue description"]')?.innerText || '').slice(0, 1800);
     const titleFromDocument = clean(document.title).replace(/^.*?\b[A-Z][A-Z0-9]+-\d+\b\s*[-–—:]?\s*/, '').replace(/\s*[|·–—]\s*Linear.*$/i, '');
-    const titleNode = document.querySelector('textarea[aria-label*="title" i], input[aria-label*="title" i], [contenteditable="true"][data-placeholder*="title" i], h1');
+    const titleNode = detail.querySelector('textarea[aria-label*="title" i], input[aria-label*="title" i], [contenteditable="true"][data-placeholder*="title" i], h1');
     const title = clean(titleNode?.value || titleNode?.innerText || titleNode?.textContent || titleFromDocument).replace(dateSuffixPattern, '');
     return { key: pathKey, title, url: location.href, description, priority, assignee, status };
   };
