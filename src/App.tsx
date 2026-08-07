@@ -18,10 +18,6 @@ import chatgptIcon from './assets/apps/chatgpt.png';
 import slackIcon from './assets/apps/slack.png';
 import spotifyIcon from './assets/apps/spotify.png';
 import vscodeIcon from './assets/apps/vscode.png';
-import arrakisPreview from './assets/themes/arrakis.jpg';
-import cyberpunkPreview from './assets/themes/cyberpunk.jpg';
-import starryNightPreview from './assets/themes/starry-night.jpg';
-import tamaRiverPreview from './assets/themes/tama-river.jpg';
 import type { ActionResult, AttuneAppInfo, Snapshot, ThemeInfo, WorkspaceInfo } from './vite-env';
 
 type BusyAction =
@@ -376,31 +372,24 @@ function ThemeCard({
       disabled={disabled}
       onClick={onSelect}
     >
-      <ThemePreview themeId={theme.id} />
+      <ThemePreview theme={theme} />
       <span>{theme.name}</span>
       {selected && <Check className="theme-check" size={15} />}
     </button>
   );
 }
 
-function ThemePreview({ themeId }: { themeId: string }) {
-  const imagePreview = {
-    arrakis: arrakisPreview,
-    cyberpunk: cyberpunkPreview,
-    'starry-night': starryNightPreview,
-    'tama-river': tamaRiverPreview,
-  }[themeId];
-
-  if (imagePreview) {
+function ThemePreview({ theme }: { theme: ThemeInfo }) {
+  if (theme.previewDataUrl) {
     return (
-      <span className={`theme-preview theme-preview-${themeId}`} aria-hidden="true">
-        <img src={imagePreview} alt="" />
+      <span className={`theme-preview theme-preview-${theme.id}`} aria-hidden="true">
+        <img src={theme.previewDataUrl} alt="" />
       </span>
     );
   }
 
   return (
-    <span className={`theme-preview theme-preview-${themeId}`} aria-hidden="true">
+    <span className={`theme-preview theme-preview-${theme.id}`} aria-hidden="true">
       <i /><i /><i />
     </span>
   );
@@ -720,9 +709,9 @@ function buildAddWorkspacePrompt(
 
 Attunement request: [replace this with the app layout changes, hidden sections, resized panes, or embeds I want]
 Attunements folder: ${workspacePath}
-Editable example attunement: ${workspacePath}/focus-flow
+Installed examples: ${workspacePath}
 
-Read the editable Focus Flow attunement first. To adjust it, edit that folder directly. To create a new attunement, create a new sibling folder with manifest.json, a preview screenshot named preview.png or preview.jpg, and an apps/ folder containing CSS patches. The manifest should use a "patches" object keyed by app name, with relative source paths like "apps/spotify-quiet-home.css". You can also set "preview": "preview.png" in the manifest.
+Read a relevant installed attunement first. Catalog-managed packages contain an .attune-package.json marker; copy one to a new sibling folder before customizing it so catalog updates cannot overwrite your changes. Create each new attunement with manifest.json, a preview screenshot named preview.png or preview.jpg, and an apps/ folder containing CSS patches. Prefer manifest version 2 with a "targets" object keyed by app name, semantic bindings, and relative source paths such as "apps/spotify-quiet-home.css". You can also set "preview": "preview.png" in the manifest.
 
 For simple layout changes, write CSS only. For app embeds, put idempotent JavaScript inside a CSS comment block:
 

@@ -10,18 +10,15 @@ process.on('uncaughtException', fail);
 process.on('unhandledRejection', fail);
 
 const stylesheetPath = fileURLToPath(new URL(
-  '../../electron/assets/chatgpt-claude-models/apps/chatgpt-claude-models.css',
+  '../../../attunements/attunements/chatgpt-claude-models/apps/chatgpt-claude-models.css',
   import.meta.url,
 ));
 const stylesheet = readFileSync(stylesheetPath, 'utf8');
-const scriptMatch = stylesheet.match(
-  /\/\* @attune-script\n([\s\S]*?)\n@end-attune-script \*\//,
-);
-if (!scriptMatch) throw new Error('Attunement script block is missing.');
-const css = stylesheet.replace(
-  /\/\* @attune-script\n[\s\S]*?\n@end-attune-script \*\//,
-  '',
-);
+const scriptPath = fileURLToPath(new URL(
+  '../../../attunements/attunements/chatgpt-claude-models/apps/chatgpt-claude-models.js',
+  import.meta.url,
+));
+const script = readFileSync(scriptPath, 'utf8');
 const fixturePage = fileURLToPath(new URL(
   './external-model-menu.html',
   import.meta.url,
@@ -40,7 +37,7 @@ const window = new BrowserWindow({
 });
 
 await window.loadFile(fixturePage);
-await window.webContents.insertCSS(css);
+await window.webContents.insertCSS(stylesheet);
 
 const result = await window.webContents.executeJavaScript(`
   (async () => {
@@ -213,7 +210,7 @@ const result = await window.webContents.executeJavaScript(`
       }),
     );
 
-    ${scriptMatch[1]}
+    ${script}
     await wait(80);
 
     if (
