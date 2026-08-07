@@ -20,6 +20,7 @@ import type {
 } from './types.js';
 import { processListHasExecutable } from './process-detection.js';
 import { installCatalogAttunements, resolveCatalogRoot, seedEditableTheme } from './catalog.js';
+import { selectRendererDevServerUrl } from './renderer-source.js';
 
 interface DiscoveredApp {
   name: string;
@@ -71,7 +72,9 @@ interface ClipboardSnapshot {
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const devServerUrl = process.env.ATTUNE_APP_DEV_SERVER_URL;
+// Development environment variables can leak into apps launched from a shell.
+// A packaged release must always load its signed, bundled renderer.
+const devServerUrl = selectRendererDevServerUrl(app.isPackaged);
 const DEFAULT_THEME_ID = 'arrakis';
 const USER_DATA_FOLDER_NAME = 'Attune';
 const PROFILE_TARGET_APP_NAMES = ['ChatGPT', 'Visual Studio Code', 'Cursor', 'Spotify', 'Slack'];
