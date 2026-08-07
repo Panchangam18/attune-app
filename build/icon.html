@@ -10,23 +10,34 @@
         height: 1024px;
         margin: 0;
         overflow: hidden;
+        background: transparent;
       }
 
       body {
         display: grid;
         place-items: center;
+      }
+
+      .icon {
+        width: 1024px;
+        height: 1024px;
+        border-radius: 224px;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
         background: #101211;
-        color: #ebe9e4;
       }
 
       img {
-        width: 926px;
-        height: 926px;
+        width: 860px;
+        height: 860px;
         image-rendering: pixelated;
       }
     </style>
   </head>
   <body>
-    <img src="../public/favicon.svg" alt="Attune">
+    <div class="icon">
+      <img src="../public/favicon.svg" alt="Attune">
+    </div>
   </body>
 </html>

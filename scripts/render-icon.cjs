@@ -10,6 +10,8 @@ async function renderIcon() {
     height: 1024,
     show: false,
     frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
