@@ -7,7 +7,7 @@
 # Attune App
 
 Attune App is a desktop control panel for the sibling
-[`attune`](../attune) runtime. It scans supported Chromium desktop apps,
+[`attune`](https://github.com/Panchangam18/attune) runtime. It scans supported Chromium desktop apps,
 applies Attune theme adapters, and launches/stops live CSS sessions without
 requiring an LLM to run commands by hand.
 
