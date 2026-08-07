@@ -5,9 +5,9 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const assetsRoot = join(root, 'electron', 'assets');
+const assetsRoot = join(root, '..', 'attunements', 'attunements');
 
-const patchesOf = (manifest) => manifest.targets || manifest.patches || {};
+const patchesOf = (manifest) => manifest.targets || {};
 
 const assertV2Bindings = (manifest, sourceName) => {
   assert.equal(manifest.manifestVersion, 2, `${sourceName} must use manifest v2`);
@@ -38,42 +38,15 @@ test('every bundled attunement uses v2 semantic bindings', async () => {
   }
 });
 
-test('every generated built-in attunement manifest uses v2 semantic bindings', async () => {
-  const source = await readFile(join(root, 'electron', 'main.ts'), 'utf8');
-  const manifestConstants = [
-    'CODEX_GIT_ACTIONS_MANIFEST',
-    'BLUE_MESSAGES_MANIFEST',
-    'CODEX_YOUTUBE_MANIFEST',
-    'CHATGPT_TO_CODEX_MANIFEST',
-    'CODEX_LINEAR_TODOS_MANIFEST',
-    'CURSOR_LINEAR_TODOS_MANIFEST',
-  ];
-
-  for (const constantName of manifestConstants) {
-    const match = source.match(new RegExp('const ' + constantName + ' = `([\\s\\S]*?)`;'));
-    assert.ok(match, `Could not find ${constantName}`);
-    assertV2Bindings(JSON.parse(match[1]), constantName);
-  }
-});
-
 test('built-in attunement implementations consume shared semantic roles', async () => {
-  const mainSource = await readFile(join(root, 'electron', 'main.ts'), 'utf8');
-  for (const role of [
-    'chatgpt.conversation',
-    'chatgpt.composer',
-    'linear.issueList',
-    'document.body',
-    'youtube.player',
-  ]) {
-    assert.match(mainSource, new RegExp(role.replace('.', '\\.')));
-  }
-  assert.match(mainSource, /window\.__attuneHost\?\.resolve/);
-
   const bundledConsumers = [
-    join(assetsRoot, 'chatgpt-claude-models', 'apps', 'chatgpt-claude-models.css'),
+    join(assetsRoot, 'chatgpt-to-codex', 'apps', 'chrome-chatgpt-to-codex.js'),
+    join(assetsRoot, 'codex-linear-todos', 'apps', 'linear-todos-source.js'),
+    join(assetsRoot, 'codex-youtube-player', 'apps', 'chrome-youtube-source.js'),
+    join(assetsRoot, 'chatgpt-claude-models', 'apps', 'chatgpt-claude-models.js'),
     join(assetsRoot, 'codex-kanban', 'apps', 'codex-kanban.js'),
-    join(assetsRoot, 'linear-completed-to-slack', 'apps', 'linear-completion-source.css'),
-    join(assetsRoot, 'linear-completed-to-slack', 'apps', 'slack-completion-dm.css'),
+    join(assetsRoot, 'linear-completed-to-slack', 'apps', 'linear-completion-source.js'),
+    join(assetsRoot, 'linear-completed-to-slack', 'apps', 'slack-completion-dm.js'),
   ];
   for (const file of bundledConsumers) {
     assert.match(await readFile(file, 'utf8'), /window\.__attuneHost\?\.resolve/);

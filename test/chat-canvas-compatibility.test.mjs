@@ -5,11 +5,11 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const attunementRoot = join(root, 'electron', 'assets', 'codex-multi-chat');
+const attunementRoot = join(root, '..', 'attunements', 'attunements', 'codex-multi-chat');
 
 test('Chat Canvas declares semantic host bindings', async () => {
   const manifest = JSON.parse(await readFile(join(attunementRoot, 'manifest.json'), 'utf8'));
-  const patch = manifest.patches.Codex;
+  const patch = manifest.targets.Codex;
 
   assert.equal(manifest.manifestVersion, 2);
   assert.equal(patch.bindings.main.role, 'codex.primaryChat');
@@ -20,16 +20,19 @@ test('Chat Canvas declares semantic host bindings', async () => {
 });
 
 test('Chat Canvas targets Attune roles with a semantic staged-upgrade fallback', async () => {
-  const source = await readFile(join(attunementRoot, 'apps', 'codex-chat-canvas.css'), 'utf8');
+  const [styles, script] = await Promise.all([
+    readFile(join(attunementRoot, 'apps', 'codex-chat-canvas.css'), 'utf8'),
+    readFile(join(attunementRoot, 'apps', 'codex-chat-canvas.js'), 'utf8'),
+  ]);
 
-  assert.match(source, /data-attune-host-roles~="codex\.primaryChat"/);
-  assert.match(source, /data-attune-host-roles~="codex\.chatHeader"/);
-  assert.match(source, /main\[data-app-shell-main-surface\]/);
-  assert.doesNotMatch(source, /document\.querySelector\('main\.main-surface'\)/);
+  assert.match(styles, /data-attune-host-roles~="codex\.primaryChat"/);
+  assert.match(styles, /data-attune-host-roles~="codex\.chatHeader"/);
+  assert.match(script, /main\[data-app-shell-main-surface\]/);
+  assert.doesNotMatch(script, /document\.querySelector\('main\.main-surface'\)/);
 });
 
 test('Chat Canvas discovers native rendering by capabilities instead of minified names', async () => {
-  const source = await readFile(join(attunementRoot, 'apps', 'codex-chat-canvas.css'), 'utf8');
+  const source = await readFile(join(attunementRoot, 'apps', 'codex-chat-canvas.js'), 'utf8');
 
   assert.match(source, /reactRuntimeCapabilities/);
   assert.match(source, /bundledCommonJsLoader/);

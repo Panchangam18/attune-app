@@ -19,6 +19,7 @@ import type {
   WorkspacePatchInfo,
 } from './types.js';
 import { processListHasExecutable } from './process-detection.js';
+import { installCatalogAttunements, resolveCatalogRoot, seedEditableTheme } from './catalog.js';
 
 interface DiscoveredApp {
   name: string;
@@ -217,971 +218,10 @@ separate \`script\` path. Existing version-1 manifests remain supported.
 
 Refresh Attune App after adding or editing an attunement.
 `;
-const SEEDED_WORKSPACE_ID = 'focus-flow';
-const CODEX_MULTI_CHAT_ATTUNEMENT_ID = 'codex-multi-chat';
-const CODEX_KANBAN_ATTUNEMENT_ID = 'codex-kanban';
-const CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID = 'chatgpt-claude-models';
-const CODEX_GIT_ACTIONS_ATTUNEMENT_ID = 'codex-git-actions';
-const BLUE_MESSAGES_ATTUNEMENT_ID = 'blue-messages';
-const CODEX_YOUTUBE_ATTUNEMENT_ID = 'codex-youtube-player';
-const CHATGPT_TO_CODEX_ATTUNEMENT_ID = 'chatgpt-to-codex';
 const CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL = '__ATTUNE_CHATGPT_TO_CODEX_V1__:';
-const CODEX_LINEAR_TODOS_ATTUNEMENT_ID = 'codex-linear-todos';
-const CURSOR_LINEAR_TODOS_ATTUNEMENT_ID = 'cursor-linear-todos';
-const LINEAR_COMPLETED_SLACK_DM_ATTUNEMENT_ID = 'linear-completed-to-slack';
-const CODEX_LINEAR_TODOS_PREVIEW_ASSET = 'codex-linear-todos-preview.png';
-const CURSOR_LINEAR_TODOS_PREVIEW_ASSET = 'cursor-linear-todos-preview.png';
-const LINEAR_DARK_LOGO_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIGZpbGw9Im5vbmUiIHdpZHRoPSIyMDAiIGhlaWdodD0iMjAwIiB2aWV3Qm94PSIwIDAgMTAwIDEwMCI+PHBhdGggZmlsbD0iIzIyMjMyNiIgZD0iTTEuMjI1NDEgNjEuNTIyOGMtLjIyMjUtLjk0ODUuOTA3NDgtMS41NDU5IDEuNTk2MzgtLjg1N0wzOS4zMzQyIDk3LjE3ODJjLjY4ODkuNjg4OS4wOTE1IDEuODE4OS0uODU3IDEuNTk2NEMyMC4wNTE1IDk0LjQ1MjIgNS41NDc3OSA3OS45NDg1IDEuMjI1NDEgNjEuNTIyOFpNLjAwMTg5MTM1IDQ2Ljg4OTFjLS4wMTc2NDM3NS4yODMzLjA4ODg3MjE1LjU1OTkuMjg5NTcxNjUuNzYwNkw1Mi4zNTAzIDk5LjcwODVjLjIwMDcuMjAwNy40NzczLjMwNzUuNzYwNi4yODk2IDIuMzY5Mi0uMTQ3NiA0LjY5MzgtLjQ2IDYuOTYyNC0uOTI1OS43NjQ1LS4xNTcgMS4wMzAxLTEuMDk2My40NzgyLTEuNjQ4MUwyLjU3NTk1IDM5LjQ0ODVjLS41NTE4Ni0uNTUxOS0xLjQ5MTE3LS4yODYzLTEuNjQ4MTc0LjQ3ODItLjQ2NTkxNSAyLjI2ODYtLjc3ODMyIDQuNTkzMi0uOTI1ODg0NjUgNi45NjI0Wk00LjIxMDkzIDI5LjcwNTRjLS4xNjY0OS4zNzM4LS4wODE2OS44MTA2LjIwNzY1IDEuMWw2NC43NzYwMiA2NC43NzZjLjI4OTQuMjg5NC43MjYyLjM3NDIgMS4xLjIwNzcgMS43ODYxLS43OTU2IDMuNTE3MS0xLjY5MjcgNS4xODU1LTIuNjg0LjU1MjEtLjMyOC42MzczLTEuMDg2Ny4xODMyLTEuNTQwN0w4LjQzNTY2IDI0LjMzNjdjLS40NTQwOS0uNDU0MS0xLjIxMjcxLS4zNjg5LTEuNTQwNzQuMTgzMi0uOTkxMzIgMS42Njg0LTEuODg4NDMgMy4zOTk0LTIuNjgzOTkgNS4xODU1Wk0xMi42NTg3IDE4LjA3NGMtLjM3MDEtLjM3MDEtLjM5My0uOTYzNy0uMDQ0My0xLjM1NDFDMjEuNzc5NSA2LjQ1OTMxIDM1LjExMTQgMCA0OS45NTE5IDAgNzcuNTkyNyAwIDEwMCAyMi40MDczIDEwMCA1MC4wNDgxYzAgMTQuODQwNS02LjQ1OTMgMjguMTcyNC0xNi43MTk5IDM3LjMzNzUtLjM5MDMuMzQ4Ny0uOTg0LjMyNTgtMS4zNTQyLS4wNDQzTDEyLjY1ODcgMTguMDc0WiIvPjwvc3ZnPg==';
-const SEEDED_WORKSPACE_MANIFEST = `{
-  "name": "Focus Flow",
-  "description": "Quiet noisy app surfaces and bring Linear context into Codex.",
-  "preview": "preview.png",
-  "patches": {
-    "Spotify": {
-      "source": "apps/spotify-quiet-home.css",
-      "intent": "Hide bulky recommendations and keep the library, search, and player in view."
-    },
-    "Linear": {
-      "source": "apps/linear-source.css",
-      "intent": "Publish visible issue titles from Linear for workspace embeds."
-    },
-    "Codex": {
-      "source": "apps/codex-linear-brief.css",
-      "intent": "Render a compact Linear brief inside Codex."
-    }
-  }
-}
-`;
-const SEEDED_WORKSPACE_PREVIEW_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-label="Focus Flow attunement preview">
-  <rect width="960" height="600" fill="#121514"/>
-  <rect x="36" y="34" width="432" height="532" fill="#1a1e1b" stroke="#303730" stroke-width="2"/>
-  <rect x="492" y="34" width="432" height="532" fill="#17191f" stroke="#303746" stroke-width="2"/>
-  <rect x="36" y="34" width="432" height="42" fill="#222821"/>
-  <rect x="492" y="34" width="432" height="42" fill="#202633"/>
-  <circle cx="63" cy="55" r="8" fill="#70ad87"/>
-  <circle cx="516" cy="55" r="8" fill="#d8c88f"/>
-  <rect x="64" y="108" width="168" height="20" rx="2" fill="#d8c88f"/>
-  <rect x="64" y="148" width="342" height="74" fill="#252b25" stroke="#3d473f"/>
-  <rect x="64" y="238" width="118" height="118" fill="#2b342d" stroke="#425043"/>
-  <rect x="198" y="238" width="118" height="118" fill="#2b342d" stroke="#425043"/>
-  <rect x="332" y="238" width="74" height="118" fill="#202520" stroke="#303830" opacity=".42"/>
-  <path d="M66 416h336" stroke="#2f372f" stroke-width="18" stroke-linecap="square"/>
-  <path d="M66 466h240" stroke="#2f372f" stroke-width="18" stroke-linecap="square"/>
-  <rect x="526" y="108" width="244" height="22" rx="2" fill="#d8c88f"/>
-  <rect x="526" y="152" width="322" height="264" fill="#20242d" stroke="#343b49"/>
-  <rect x="560" y="190" width="254" height="15" fill="#6d788f"/>
-  <rect x="560" y="224" width="194" height="15" fill="#556071"/>
-  <rect x="560" y="258" width="230" height="15" fill="#556071"/>
-  <rect x="560" y="292" width="164" height="15" fill="#556071"/>
-  <rect x="618" y="362" width="256" height="168" fill="#111417" stroke="#d8c88f" stroke-width="2"/>
-  <rect x="638" y="382" width="98" height="15" fill="#d8c88f"/>
-  <rect x="638" y="422" width="200" height="12" fill="#69737f"/>
-  <rect x="638" y="454" width="172" height="12" fill="#69737f"/>
-  <rect x="638" y="486" width="214" height="12" fill="#69737f"/>
-</svg>
-`;
-const LINEAR_BRIEF_SCRIPT = `(() => {
-  const render = async () => {
-    let bridge = null;
-    try {
-      bridge = await fetch('http://127.0.0.1:47655/v1/linear-visible-issues', { cache: 'no-store' }).then((response) => response.json());
-    } catch {}
-    const issues = Array.isArray(bridge?.payload?.issues) ? bridge.payload.issues : [];
-    let root = document.getElementById('attune-linear-brief');
-    if (!root) {
-      root = document.createElement('aside');
-      root.id = 'attune-linear-brief';
-      document.body.append(root);
-    }
-    const rows = issues.length
-      ? issues.map((issue) => '<li><strong>' + escapeHtml(issue.key || 'Linear') + '</strong><span>' + escapeHtml(issue.title || '') + '</span></li>').join('')
-      : '<li><small>Open Linear with this attunement enabled to populate this brief.</small></li>';
-    const updated = bridge?.updatedAt ? new Date(bridge.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'waiting';
-    root.innerHTML = '<header><span>Linear Brief</span><small>' + updated + '</small></header><ol>' + rows + '</ol>';
-  };
-  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[char]);
-  clearInterval(window.__attuneLinearBrief);
-  window.__attuneLinearBrief = setInterval(render, 2500);
-  render();
-})();`;
-const LINEAR_BRIEF_CSS = `#attune-linear-brief {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 2147483647;
-  width: min(360px, calc(100vw - 36px));
-  max-height: min(430px, calc(100vh - 80px));
-  overflow: auto;
-  border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
-  border-radius: 6px;
-  background: color-mix(in srgb, Canvas 94%, CanvasText 6%);
-  color: CanvasText;
-  box-shadow: 0 18px 50px rgb(0 0 0 / 24%);
-  font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
+const CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID = 'chatgpt-claude-models';
+const CHATGPT_TO_CODEX_ATTUNEMENT_ID = 'chatgpt-to-codex';
 
-#attune-linear-brief header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 11px;
-  border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
-  font-weight: 700;
-}
-
-#attune-linear-brief ol {
-  display: grid;
-  gap: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-#attune-linear-brief li {
-  padding: 10px 11px;
-  border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
-}
-
-#attune-linear-brief li:last-child { border-bottom: 0; }
-#attune-linear-brief strong { display: block; margin-bottom: 4px; color: color-mix(in srgb, CanvasText 88%, #66d9ef); }
-#attune-linear-brief small { color: color-mix(in srgb, CanvasText 62%, transparent); }
-`;
-const SEEDED_SPOTIFY_WORKSPACE_CSS = `/* Focus Flow: Spotify quiet home */
-[data-testid="home-page"] section:has([href*="/playlist/"]),
-[data-testid="home-page"] section:has([href*="/genre/"]),
-[data-testid="home-page"] section:has([href*="/section/"]),
-main section[aria-label*="Recommended" i],
-main section[aria-label*="Jump back in" i],
-main section[aria-label*="Made For" i],
-main section[aria-label*="Episodes" i] {
-  display: none !important;
-}
-
-[data-testid="root"] main {
-  --attune-workspace-gap: 14px;
-}
-
-[data-testid="now-playing-widget"] {
-  min-width: min(430px, 42vw) !important;
-}
-`;
-const SEEDED_LINEAR_SOURCE_CSS = `/* Focus Flow: Linear source. This keeps Linear visually intact and publishes visible issues. */
-
-/* @attune-script
-(() => {
-  const collect = () => {
-    const rows = [...document.querySelectorAll('[data-testid*="issue"], a[href*="/issue/"], a[href*="/team/"]')]
-      .map((node) => {
-        const text = (node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
-        const key = text.match(/[A-Z][A-Z0-9]+-\\d+/)?.[0] || '';
-        const title = text.replace(key, '').trim();
-        return { key, title: title || text };
-      })
-      .filter((item) => item.title && item.title.length > 5)
-      .slice(0, 8);
-    fetch('http://127.0.0.1:47655/v1/linear-visible-issues', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ issues: rows }),
-    }).catch(() => {});
-  };
-  clearInterval(window.__attuneLinearCollector);
-  window.__attuneLinearCollector = setInterval(collect, 2500);
-  collect();
-})();
-@end-attune-script */
-`;
-const SEEDED_CODEX_LINEAR_CSS = `/* Focus Flow: Codex Linear brief */
-${LINEAR_BRIEF_CSS}
-
-/* @attune-script
-${LINEAR_BRIEF_SCRIPT}
-@end-attune-script */
-`;
-const CODEX_GIT_ACTIONS_MANIFEST = `{
-  "manifestVersion": 2,
-  "name": "Codex: Commit + Push",
-  "description": "Put native Commit and Push shortcuts beside Codex controls.",
-  "preview": "preview.png",
-  "patches": {
-    "Codex": {
-      "source": "apps/chatgpt-git-actions.css",
-      "intent": "Add native Commit and Push shortcuts beside the Codex summary and IDE controls.",
-      "bindings": {
-        "main": { "role": "codex.primaryChat", "required": true },
-        "header": { "role": "codex.chatHeader", "required": false }
-      }
-    }
-  }
-}
-`;
-const CODEX_GIT_ACTIONS_CSS = `/* Attune managed: codex-git-actions */
-#attune-codex-git-actions { display: inline-flex; align-items: center; margin-right: 4px; pointer-events: auto; }
-#attune-codex-git-actions button {
-  appearance: none; height: 28px; padding: 0 10px; border: 0; border-radius: 6px;
-  background: color-mix(in srgb, CanvasText 11%, transparent); color: CanvasText; cursor: pointer;
-  font: 600 12px/1 ui-sans-serif, system-ui, sans-serif;
-}
-#attune-codex-git-actions button:hover { background: color-mix(in srgb, CanvasText 18%, transparent); }
-#attune-codex-git-actions button:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
-#attune-codex-git-modal { position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center; background: rgb(0 0 0 / 42%); }
-#attune-codex-git-modal form { width: min(380px, calc(100vw - 32px)); padding: 18px; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 8px; background: Canvas; color: CanvasText; box-shadow: 0 20px 60px rgb(0 0 0 / 35%); }
-#attune-codex-git-modal h2 { margin: 0; font: 650 16px/1.2 ui-sans-serif, system-ui, sans-serif; }
-#attune-codex-git-modal textarea { box-sizing: border-box; width: 100%; min-height: 88px; margin-top: 14px; padding: 9px; border: 1px solid rgb(255 255 255 / 16%); border-radius: 6px; outline: none; background: color-mix(in srgb, Canvas 96%, CanvasText 4%); color: CanvasText; font: 13px/1.4 ui-sans-serif, system-ui, sans-serif; resize: vertical; }
-#attune-codex-git-modal textarea:focus { border-color: rgb(255 255 255 / 26%); outline: none; }
-#attune-codex-git-modal footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-#attune-codex-git-modal footer button { height: 30px; padding: 0 10px; border: 0; border-radius: 6px; cursor: pointer; font: 600 12px/1 ui-sans-serif, system-ui, sans-serif; }
-#attune-codex-git-cancel { background: color-mix(in srgb, CanvasText 11%, transparent); color: CanvasText; }
-#attune-codex-git-submit { background: #111; color: #fff; }
-
-/* @attune-script
-(() => {
-  const textOf = (element) => (element?.innerText || element?.textContent || '').replace(/\\s+/g, ' ').trim();
-  const buttons = () => [...document.querySelectorAll('button')];
-  const buttonByText = (label) => buttons().find((button) => textOf(button).toLowerCase() === label.toLowerCase());
-  const summaryButton = () => buttons().find((button) => button.getAttribute('aria-label') === 'Toggle summary');
-
-  const waitFor = async (find, attempts = 15) => {
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      const value = find();
-      if (value) return value;
-      await new Promise((resolve) => setTimeout(resolve, 80));
-    }
-    return null;
-  };
-
-  const commitAndPush = async (message) => {
-    const summary = summaryButton();
-    if (!summary) return;
-    if (summary.getAttribute('aria-expanded') !== 'true') summary.click();
-    const picker = await waitFor(() => buttonByText('Commit or push'));
-    if (!picker) return;
-    picker.click();
-    const input = await waitFor(() => document.querySelector('textarea[aria-label="Commit message"]'));
-    if (!input) return;
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-    setter?.call(input, message);
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
-    const nativeSubmit = await waitFor(() => document.querySelector(
-      '[role="dialog"] [role="option"][data-value="commit-and-push"]',
-    ));
-    nativeSubmit?.click();
-  };
-
-  const openModal = () => {
-    if (document.getElementById('attune-codex-git-modal')) return;
-    const modal = document.createElement('div');
-    modal.id = 'attune-codex-git-modal';
-    modal.setAttribute('role', 'dialog');
-    modal.setAttribute('aria-modal', 'true');
-    modal.setAttribute('aria-labelledby', 'attune-codex-git-title');
-    modal.innerHTML = '<form><h2 id="attune-codex-git-title">Commit and push</h2><textarea autofocus required placeholder="Commit message" aria-label="Commit message"></textarea><footer><button type="button" id="attune-codex-git-cancel">Cancel</button><button type="submit" id="attune-codex-git-submit">Commit and push</button></footer></form>';
-    const close = () => modal.remove();
-    modal.querySelector('#attune-codex-git-cancel')?.addEventListener('click', close);
-    modal.addEventListener('click', (event) => { if (event.target === modal) close(); });
-    modal.querySelector('form')?.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const message = modal.querySelector('textarea')?.value.trim();
-      if (!message) return;
-      close();
-      void commitAndPush(message);
-    });
-    document.body.append(modal);
-    modal.querySelector('textarea')?.focus();
-  };
-
-  const render = () => {
-    const summary = summaryButton();
-    if (!summary) return;
-    const existing = document.getElementById('attune-codex-git-actions');
-    if (existing?.dataset.attuneVersion === '5') return;
-    existing?.remove();
-    const root = document.createElement('span');
-    root.id = 'attune-codex-git-actions';
-    root.dataset.attuneVersion = '5';
-    root.setAttribute('role', 'group');
-    root.setAttribute('aria-label', 'Git actions');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.textContent = 'Commit and push';
-    button.title = 'Commit and push using Codex';
-    button.addEventListener('click', openModal);
-    root.append(button);
-    summary.parentElement?.parentElement?.parentElement?.prepend(root);
-  };
-
-  render();
-  clearInterval(window.__attuneCodexGitActions);
-  window.__attuneCodexGitActions = setInterval(render, 1000);
-  const cleanup = () => {
-    clearInterval(window.__attuneCodexGitActions);
-    document.getElementById('attune-codex-git-actions')?.remove();
-    document.getElementById('attune-codex-git-modal')?.remove();
-  };
-  window.__attuneCodexGitActionsCleanup = cleanup;
-  window.__attuneRegisterCleanup?.(cleanup);
-})();
-@end-attune-script */
-`;
-const BLUE_MESSAGES_MANIFEST = `{
-  "manifestVersion": 2,
-  "name": "Codex: Blue messages",
-  "description": "Give your ChatGPT messages the familiar iPhone blue treatment.",
-  "preview": "preview.png",
-  "patches": {
-    "ChatGPT": {
-      "source": "apps/chatgpt-blue-messages.css",
-      "intent": "Make user messages iPhone blue (#007AFF) with white text.",
-      "bindings": {
-        "conversation": { "role": "chatgpt.conversation", "required": true }
-      }
-    }
-  }
-}
-`;
-const BLUE_MESSAGES_CSS = `/* Attune managed: blue-messages */
-/* Codex uses data-user-message-bubble; the remaining selectors support ChatGPT surfaces. */
-[data-attune-host-roles~="chatgpt.conversation"] :is(
-  [data-user-message-bubble],
-  [data-message-author-role="user"] > div > div,
-  [data-message-author-role="user"] > div > div > div,
-  article[data-turn="user"] > div > div,
-  article[data-turn="user"] > div > div > div
-),
-:is(
-  [data-user-message-bubble],
-  [data-message-author-role="user"] > div > div,
-  [data-message-author-role="user"] > div > div > div,
-  article[data-turn="user"] > div > div,
-  article[data-turn="user"] > div > div > div
-) {
-  background: #007aff !important;
-  color: #fff !important;
-}
-
-[data-attune-host-roles~="chatgpt.conversation"] :is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(p, span, code, pre, li, strong, em, a),
-:is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(p, span, code, pre, li, strong, em, a) {
-  color: #fff !important;
-}
-
-[data-attune-host-roles~="chatgpt.conversation"] :is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(svg, button),
-:is([data-user-message-bubble], [data-message-author-role="user"], article[data-turn="user"]) :is(svg, button) {
-  color: #fff;
-}
-`;
-const CODEX_YOUTUBE_MANIFEST = `{
-  "manifestVersion": 2,
-  "name": "YouTube in Codex",
-  "description": "Show the YouTube video playing in Google Chrome in a compact Codex player.",
-  "preview": "preview.svg",
-  "patches": {
-    "Google Chrome": {
-      "source": "apps/chrome-youtube-source.css",
-      "intent": "Publish the active YouTube video URL and playback position to the local Attune bridge.",
-      "bindings": {
-        "document": { "role": "document.body", "required": true },
-        "player": { "role": "youtube.player", "required": false }
-      }
-    },
-    "Codex": {
-      "source": "apps/codex-youtube-player.css",
-      "intent": "Display the current YouTube video using YouTube's official embedded player.",
-      "bindings": {
-        "main": { "role": "codex.primaryChat", "required": true },
-        "document": { "role": "document.body", "required": true }
-      }
-    }
-  }
-}
-`;
-const CHATGPT_TO_CODEX_MANIFEST = `{
-  "manifestVersion": 2,
-  "name": "ChatGPT Web → Codex",
-  "description": "Copy the current ChatGPT conversation into a new filesystem-backed Codex chat.",
-  "preview": "preview.png",
-  "patches": {
-    "Google Chrome": {
-      "source": "apps/chrome-chatgpt-to-codex.css",
-      "intent": "Add a Send to Codex slash command to ChatGPT and hand the visible conversation to Attune.",
-      "bindings": {
-        "conversation": { "role": "chatgpt.conversation", "required": true },
-        "composer": { "role": "chatgpt.composer", "required": true },
-        "attachmentMenu": { "role": "chatgpt.attachmentMenu", "required": false }
-      }
-    },
-    "Codex": {
-      "source": "apps/codex-chatgpt-import.css",
-      "intent": "Codex chats are created directly in the local Codex session store; no renderer polling is required.",
-      "bindings": {
-        "document": { "role": "document.body", "required": true }
-      }
-    }
-  }
-}`;
-const CHATGPT_TO_CODEX_CSS = `/* Attune managed: chatgpt-to-codex */
-/* Codex chats are written directly to ~/.codex by Attune's local bridge. */
-`;
-const CHATGPT_TO_CODEX_BROWSER_CSS = `/* Attune managed: chatgpt-to-codex browser source v20 */
-#attune-chatgpt-to-codex { display: none !important; }
-#attune-codex-command-option { display: block; width: 100%; } #attune-codex-command-option .__menu-item { width: 100%; } #attune-codex-command-option .attune-command-icon { display: grid; width: 22px; height: 22px; flex: 0 0 22px; place-items: center; border-radius: 6px; background: color-mix(in srgb, CanvasText 11%, transparent); font-size: 12px; font-weight: 750; }
-#attune-codex-command-option .__menu-item:hover, #attune-codex-command-option .__menu-item[data-highlighted] { background: var(--token-main-surface-secondary, rgb(255 255 255 / 8%)); }
-#attune-codex-command-toast { position: fixed; right: 22px; bottom: 94px; z-index: 2147483647; max-width: min(340px, calc(100vw - 44px)); border-radius: 9px; padding: 9px 12px; background: CanvasText; color: Canvas; box-shadow: 0 10px 30px rgb(0 0 0 / 24%); font: 600 12px/1.3 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-/* @attune-script
-(() => {
-  const optionId = 'attune-codex-command-option'; const toastId = 'attune-codex-command-toast'; let activeComposer = null; let keyboardAction = null; let handoffInProgress = false;
-  window.__attuneChatGptToCodexChromeCleanup?.();
-  window.__attuneChatGptToCodexSlashCommandCleanup?.();
-  document.getElementById('attune-chatgpt-to-codex')?.remove();
-  const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
-  const conversationHost = () => host('chatgpt.conversation') || document;
-  const composerSelector = '#prompt-textarea, form[data-type="unified-composer"] textarea, form[data-type="unified-composer"] [contenteditable="true"], textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
-  const composer = (element) => element?.matches?.(composerSelector) ? element : element?.closest?.(composerSelector) || null;
-  const valueOf = (element) => element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement ? element.value : element?.innerText || element?.textContent || '';
-  const slashPending = (value) => { const source = String(value || '').trimEnd(); if (!source.endsWith('/')) return false; const previous = source.charCodeAt(source.length - 2); return source.length === 1 || previous === 32 || previous === 9 || previous === 10 || previous === 13; };
-  const setValue = (element, value) => { if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')?.set?.call(element, value); else { element.focus(); document.execCommand('selectAll', false); document.execCommand('insertText', false, value); } element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); };
-  const isoTime = (value) => { const source = String(value ?? '').trim(); const numeric = typeof value === 'number' || /^\\d+(?:\\.\\d+)?$/.test(source) ? Number(value) : NaN; const date = Number.isFinite(numeric) ? new Date(numeric < 1e12 ? numeric * 1000 : numeric) : new Date(source); return Number.isFinite(date.getTime()) ? date.toISOString() : null; };
-  const visibleTime = (element) => { const label = element.closest('[data-turn-id-container]')?.querySelector('[role="separator"][aria-label]')?.getAttribute('aria-label'); if (!label) return null; const relative = label.match(/^(Today|Yesterday)\\s+(.+)$/i); if (!relative) return isoTime(label); const date = new Date(new Date().toDateString() + ' ' + relative[2]); if (/^Yesterday$/i.test(relative[1])) date.setDate(date.getDate() - 1); return isoTime(date.getTime()); };
-  const exactTimes = async () => { const match = location.pathname.match(/\\/c\\/([^/?#]+)/); if (!match) return []; const response = await fetch('/backend-api/conversation/' + encodeURIComponent(match[1]), { credentials: 'include' }); if (!response.ok) return []; const conversation = await response.json(); const chain = []; const visited = new Set(); let nodeId = conversation.current_node; while (nodeId && conversation.mapping?.[nodeId] && !visited.has(nodeId)) { visited.add(nodeId); const node = conversation.mapping[nodeId]; chain.push(node); nodeId = node.parent; } return chain.reverse().map((node) => node.message).filter((message) => /^(user|assistant)$/i.test(message?.author?.role || '') && !message?.metadata?.is_visually_hidden_from_conversation).map((message) => ({ role: message.author.role.toLowerCase(), text: (message.content?.parts || []).filter((part) => typeof part === 'string').join('\\n').trim(), timestamp: isoTime(message.create_time) })).filter((message) => message.text); };
-  const conversation = async () => { const seen = new Set(); const messages = [...conversationHost().querySelectorAll('[data-message-author-role], article[data-turn]')].map((element) => { const role = element.getAttribute('data-message-author-role') || element.getAttribute('data-turn'); const text = String(element.innerText || element.textContent || '').trim(); const key = role + '\\u0000' + clean(text); if (!/^(user|assistant)$/i.test(role || '') || !text || seen.has(key)) return null; seen.add(key); return { role: role.toLowerCase(), text, timestamp: visibleTime(element) }; }).filter(Boolean); if (!messages.length) throw new Error('No conversation messages were found on this page.'); try { const exact = await exactTimes(); let cursor = 0; for (const message of messages) { let index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role && (!candidate.text || clean(candidate.text) === clean(message.text) || clean(candidate.text).includes(clean(message.text)) || clean(message.text).includes(clean(candidate.text)))); if (index < 0) index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role); if (index >= 0) { message.text = exact[index].text || message.text; message.timestamp = exact[index].timestamp || message.timestamp; cursor = index + 1; } } } catch (error) { console.warn('[attune] Exact ChatGPT content unavailable; using rendered text.', error); } return { messages, history: messages.map((message) => (message.role === 'user' ? 'User:\\n' : 'ChatGPT:\\n') + message.text).join('\\n\\n') }; };
-  const dismiss = () => document.getElementById(optionId)?.remove();
-  const report = (message) => { document.getElementById(toastId)?.remove(); const toast = document.createElement('div'); toast.id = toastId; toast.setAttribute('role', 'status'); toast.textContent = message; document.body.append(toast); setTimeout(() => toast.remove(), 4200); };
-  const sendToCodex = async (input, option) => { if (handoffInProgress || option.getAttribute('aria-disabled') === 'true') return; handoffInProgress = true; try { option.setAttribute('aria-disabled', 'true'); const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); const response = await fetch('http://127.0.0.1:47655/v1/chatgpt-to-codex', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...await conversation(), title: document.title, sourceUrl: location.href }) }); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || 'Attune could not create the Codex chat.'); setValue(input, ''); dismiss(); } catch (error) { handoffInProgress = false; option.removeAttribute('aria-disabled'); report(error instanceof Error ? error.message : 'Could not reach Attune.'); } };
-  const popover = () => host('chatgpt.attachmentMenu') || [...document.querySelectorAll('div.popover')].find((node) => node.getBoundingClientRect().width > 0);
-  const commandItem = (menu) => [...menu.querySelectorAll('.__menu-item')].find((node) => /^Add photos & files\\b/.test(clean(node.innerText)));
-  const visibleComposer = () => activeComposer || host('chatgpt.composer') || [...document.querySelectorAll(composerSelector)].find((node) => node.getBoundingClientRect().width > 0);
-  const menuAction = (row) => row?.matches?.('.__menu-item') ? row : row?.querySelector?.('.__menu-item');
-  const highlight = (menu, item) => { menu.querySelectorAll('.__menu-item[data-highlighted]').forEach((node) => node.removeAttribute('data-highlighted')); item.setAttribute('data-highlighted', ''); keyboardAction = item; };
-  const activate = (event, input, option) => { event.preventDefault(); event.stopImmediatePropagation(); void sendToCodex(input, option); };
-  const insert = () => { if (document.getElementById(optionId)) return true; const menu = popover(); const menuItem = menu && commandItem(menu); const template = menuItem?.parentElement; const input = visibleComposer(); const host = template?.parentElement; if (!menu || !menuItem || !template || !input || !host) return false; const option = template.cloneNode(true); const action = menuAction(option); option.id = optionId; option.removeAttribute('disabled'); option.removeAttribute('aria-disabled'); option.setAttribute('aria-label', 'Send to Codex'); action?.removeAttribute('data-highlighted'); action?.setAttribute('aria-label', 'Send to Codex'); action?.addEventListener('pointerenter', () => highlight(menu, action)); const icon = option.querySelector('svg'); if (icon) { icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('fill', 'currentColor'); icon.setAttribute('fill-rule', 'evenodd'); icon.innerHTML = '<title>Codex</title><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path>'; } const textLeaves = [...option.querySelectorAll('*')].filter((node) => node.children.length === 0 && clean(node.textContent)); const title = textLeaves.find((node) => /Add photos & files/.test(clean(node.textContent))); const description = textLeaves.find((node) => /Upload from computer/.test(clean(node.textContent))); if (title) title.textContent = 'Send to Codex'; if (description) description.textContent = 'Copy this conversation into a new Codex chat'; if (!title) option.textContent = 'Send to Codex'; option.addEventListener('click', (event) => activate(event, input, option), true); host.insertBefore(option, template.nextSibling); keyboardAction = menuItem; return true; };
-  const keyOf = (event) => event.keyCode === 40 || event.key === 'Down' ? 'ArrowDown' : event.keyCode === 38 || event.key === 'Up' ? 'ArrowUp' : event.keyCode === 13 ? 'Enter' : event.keyCode === 32 ? ' ' : event.key;
-  const bridgeMenuKey = (event) => { const key = keyOf(event); const option = document.getElementById(optionId); const menu = popover(); const ownAction = menuAction(option); if (!option || !menu || !ownAction) return false; const actions = [...menu.querySelectorAll('.__menu-item')].filter((node) => node.getBoundingClientRect().width > 0); const focused = document.activeElement?.closest?.('.__menu-item'); const highlighted = actions.find((node) => node.hasAttribute('data-highlighted')); const current = actions.includes(focused) ? focused : highlighted || (actions.includes(keyboardAction) ? keyboardAction : actions[0]); const ownSelected = current === ownAction || ownAction === document.activeElement || ownAction.contains(document.activeElement); if ((key === 'Enter' || key === ' ') && current) { if (ownSelected) activate(event, visibleComposer(), option); else { event.preventDefault(); event.stopImmediatePropagation(); current.click(); } return true; } if (key !== 'ArrowDown' && key !== 'ArrowUp') return false; const step = key === 'ArrowDown' ? 1 : -1; const currentIndex = Math.max(0, actions.indexOf(current)); const target = actions[Math.max(0, Math.min(actions.length - 1, currentIndex + step))]; if (!target) return false; event.preventDefault(); event.stopImmediatePropagation(); highlight(menu, target); return true; };
-  const onKeydown = (event) => { if (bridgeMenuKey(event)) return; if (keyOf(event) === '/' && !event.metaKey && !event.ctrlKey && !event.altKey) requestAnimationFrame(insert); };
-  const onMenuPointerUp = (event) => { const target = event.composedPath().find((node) => node instanceof Element && node.id === optionId); if (!target) return; activate(event, visibleComposer(), target); };
-  const onInput = (event) => { const input = composer(event.target); if (!input) return; activeComposer = input; if (!slashPending(valueOf(input))) dismiss(); else requestAnimationFrame(insert); };
-  window.addEventListener('keydown', onKeydown, true); window.addEventListener('pointerup', onMenuPointerUp, true); document.addEventListener('input', onInput, true); const observer = new MutationObserver(() => requestAnimationFrame(insert)); observer.observe(document.documentElement, { childList: true, subtree: true });
-  const slashPoll = setInterval(() => { const input = visibleComposer(); if (input && slashPending(valueOf(input))) { activeComposer = input; insert(); } }, 160);
-  insert();
-  const cleanup = () => { clearInterval(slashPoll); window.removeEventListener('keydown', onKeydown, true); window.removeEventListener('pointerup', onMenuPointerUp, true); document.removeEventListener('input', onInput, true); observer.disconnect(); dismiss(); document.getElementById(toastId)?.remove(); };
-  window.__attuneChatGptToCodexSlashCommandCleanup = cleanup; window.__attuneRegisterCleanup?.(cleanup);
-})();
-@end-attune-script */
-`;
-const SAFARI_CHATGPT_TO_CODEX_LISTENER = `(() => {
-  window.__attuneSafariChatGptToCodexCleanup?.();
-  const optionId = 'attune-safari-send-to-codex';
-  const toastId = 'attune-safari-send-to-codex-toast';
-  const hoverStyleId = 'attune-safari-send-to-codex-hover';
-  let activeComposer = null;
-  let keyboardAction = null;
-  let handoffInProgress = false;
-  let lastStatus = 'connected';
-  const hoverStyle = document.getElementById(hoverStyleId) || document.createElement('style');
-  hoverStyle.id = hoverStyleId;
-  hoverStyle.textContent = '#' + optionId + ' .__menu-item:hover, #' + optionId + ' .__menu-item[data-highlighted] { background: var(--token-main-surface-secondary, rgb(255 255 255 / 8%)); }';
-  if (!hoverStyle.isConnected) document.head.append(hoverStyle);
-  const status = (value) => { lastStatus = value; document.documentElement.dataset.attuneSafariCodexStatus = value; };
-  const clean = (value) => String(value || '').replace(/\\s+/g, ' ').trim();
-  const composerSelector = '#prompt-textarea, form[data-type="unified-composer"] textarea, form[data-type="unified-composer"] [contenteditable="true"], textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
-  const composer = (node) => node?.matches?.(composerSelector) ? node : node?.closest?.(composerSelector) || null;
-  const valueOf = (node) => node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement ? node.value : node?.innerText || node?.textContent || '';
-  const slashPending = (value) => { const source = String(value || '').trimEnd(); if (!source.endsWith('/')) return false; const previous = source.charCodeAt(source.length - 2); return source.length === 1 || previous === 32 || previous === 9 || previous === 10 || previous === 13; };
-  const setValue = (node, value) => { if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value')?.set?.call(node, value); else { node.focus(); document.execCommand('selectAll', false); document.execCommand('insertText', false, value); } node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); };
-  const isoTime = (value) => { const source = String(value ?? '').trim(); const numeric = typeof value === 'number' || /^\\d+(?:\\.\\d+)?$/.test(source) ? Number(value) : NaN; const date = Number.isFinite(numeric) ? new Date(numeric < 1e12 ? numeric * 1000 : numeric) : new Date(source); return Number.isFinite(date.getTime()) ? date.toISOString() : null; };
-  const visibleTime = (node) => { const label = node.closest('[data-turn-id-container]')?.querySelector('[role="separator"][aria-label]')?.getAttribute('aria-label'); if (!label) return null; const relative = label.match(/^(Today|Yesterday)\\s+(.+)$/i); if (!relative) return isoTime(label); const date = new Date(new Date().toDateString() + ' ' + relative[2]); if (/^Yesterday$/i.test(relative[1])) date.setDate(date.getDate() - 1); return isoTime(date.getTime()); };
-  const exactTimes = async () => { const match = location.pathname.match(/\\/c\\/([^/?#]+)/); if (!match) return []; const response = await fetch('/backend-api/conversation/' + encodeURIComponent(match[1]), { credentials: 'include' }); if (!response.ok) return []; const conversation = await response.json(); const chain = []; const visited = new Set(); let nodeId = conversation.current_node; while (nodeId && conversation.mapping?.[nodeId] && !visited.has(nodeId)) { visited.add(nodeId); const node = conversation.mapping[nodeId]; chain.push(node); nodeId = node.parent; } return chain.reverse().map((node) => node.message).filter((message) => /^(user|assistant)$/i.test(message?.author?.role || '') && !message?.metadata?.is_visually_hidden_from_conversation).map((message) => ({ role: message.author.role.toLowerCase(), text: (message.content?.parts || []).filter((part) => typeof part === 'string').join('\\n').trim(), timestamp: isoTime(message.create_time) })).filter((message) => message.text); };
-  const conversation = async () => { const seen = new Set(); const messages = [...document.querySelectorAll('[data-message-author-role], article[data-turn]')].map((node) => { const role = node.getAttribute('data-message-author-role') || node.getAttribute('data-turn'); const text = String(node.innerText || node.textContent || '').trim(); const key = role + '\\u0000' + clean(text); if (!/^(user|assistant)$/i.test(role || '') || !text || seen.has(key)) return null; seen.add(key); return { role: role.toLowerCase(), text, timestamp: visibleTime(node) }; }).filter(Boolean); if (!messages.length) throw new Error('No conversation messages were found on this page.'); try { const exact = await exactTimes(); let cursor = 0; for (const message of messages) { let index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role && (!candidate.text || clean(candidate.text) === clean(message.text) || clean(candidate.text).includes(clean(message.text)) || clean(message.text).includes(clean(candidate.text)))); if (index < 0) index = exact.findIndex((candidate, candidateIndex) => candidateIndex >= cursor && candidate.role === message.role); if (index >= 0) { message.text = exact[index].text || message.text; message.timestamp = exact[index].timestamp || message.timestamp; cursor = index + 1; } } } catch (error) { console.warn('[attune] Exact ChatGPT content unavailable; using rendered text.', error); } return { messages, history: messages.map((message) => (message.role === 'user' ? 'User:\\n' : 'ChatGPT:\\n') + message.text).join('\\n\\n') }; };
-  const visiblePopover = () => [...document.querySelectorAll('div.popover')].find((node) => node.getBoundingClientRect().width > 0);
-  const visibleComposer = () => activeComposer || [...document.querySelectorAll(composerSelector)].find((node) => node.getBoundingClientRect().width > 0);
-  const menuAction = (row) => row?.matches?.('.__menu-item') ? row : row?.querySelector?.('.__menu-item');
-  const report = (message, failed = false) => { document.getElementById(toastId)?.remove(); const toast = document.createElement('div'); toast.id = toastId; toast.setAttribute('role', failed ? 'alert' : 'status'); toast.textContent = message; Object.assign(toast.style, { position: 'fixed', right: '22px', bottom: '94px', zIndex: '2147483647', maxWidth: 'min(360px, calc(100vw - 44px))', borderRadius: '10px', padding: '10px 13px', background: failed ? '#9f2d2d' : '#202020', color: '#fff', boxShadow: '0 10px 30px rgb(0 0 0 / 24%)', font: '600 12px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }); document.body.append(toast); setTimeout(() => toast.remove(), 4800); };
-  const highlight = (menu, item) => { menu.querySelectorAll('.__menu-item[data-highlighted]').forEach((node) => node.removeAttribute('data-highlighted')); item.setAttribute('data-highlighted', ''); keyboardAction = item; };
-  const pendingTransfers = window.__attuneSafariCodexTransfers ||= {};
-  const copySignal = async (value, input) => { const signal = document.createElement('textarea'); signal.value = value; Object.assign(signal.style, { position: 'fixed', left: '-10000px', top: '-10000px', opacity: '0' }); document.body.append(signal); signal.select(); const copied = document.execCommand('copy'); signal.remove(); input?.focus?.(); if (!copied) { if (!navigator.clipboard?.writeText) throw new Error('Safari could not signal Attune.'); await navigator.clipboard.writeText(value); } };
-  const send = async (input, option) => { if (handoffInProgress || option.getAttribute('aria-disabled') === 'true') return; handoffInProgress = true; let id = ''; try { option.setAttribute('aria-disabled', 'true'); id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8); const transfer = await conversation(); pendingTransfers[id] = { id, ...transfer, title: document.title, sourceUrl: location.href }; await copySignal('${CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL}' + id, input); setValue(input, ''); document.getElementById(optionId)?.remove(); setTimeout(() => { if (!pendingTransfers[id]) return; delete pendingTransfers[id]; handoffInProgress = false; option.removeAttribute('aria-disabled'); report('Attune did not pick up this chat. Reconnect the Safari tab and try again.', true); }, 10000); } catch (error) { if (id) delete pendingTransfers[id]; handoffInProgress = false; option.removeAttribute('aria-disabled'); const message = error instanceof Error ? error.message : 'Could not send this conversation to Codex.'; report(message, true); console.warn('[attune] Send to Codex failed', error); } };
-  window.__attuneTakeCodexTransfer = (id) => { const transfer = pendingTransfers[id]; if (!transfer) return ''; delete pendingTransfers[id]; handoffInProgress = false; return JSON.stringify(transfer); };
-  const activate = (event, input, option) => { event.preventDefault(); event.stopImmediatePropagation(); void send(input, option); };
-  const insert = () => { if (document.getElementById(optionId)) { status('inserted'); return true; } const popover = visiblePopover(); if (!popover) { status('waiting-for-popover'); return false; } const menuItem = [...popover.querySelectorAll('.__menu-item')].find((node) => /^Add photos & files\\b/.test(clean(node.innerText))); if (!menuItem) { status('waiting-for-template'); return false; } const row = menuItem.parentElement; const group = row?.parentElement?.getAttribute('role') === 'group' ? row.parentElement : popover.querySelector('[role="group"]'); const input = visibleComposer(); if (!row || !group) { status('waiting-for-group'); return false; } if (!input) { status('waiting-for-composer'); return false; } const option = row.cloneNode(true); const action = menuAction(option); option.id = optionId; option.removeAttribute('disabled'); option.removeAttribute('aria-disabled'); option.setAttribute('aria-label', 'Send to Codex'); action?.removeAttribute('data-highlighted'); action?.setAttribute('aria-label', 'Send to Codex'); action?.addEventListener('pointerenter', () => highlight(popover, action)); const icon = option.querySelector('svg'); if (icon) { icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('fill', 'currentColor'); icon.setAttribute('fill-rule', 'evenodd'); icon.innerHTML = '<title>Codex</title><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path>'; } const leaves = [...option.querySelectorAll('*')].filter((node) => node.children.length === 0 && clean(node.textContent)); const title = leaves.find((node) => /Add photos & files/.test(clean(node.textContent))); const detail = leaves.find((node) => /Upload from computer/.test(clean(node.textContent))); if (title) title.textContent = 'Send to Codex'; if (detail) detail.textContent = 'Copy this conversation into a new Codex chat'; option.addEventListener('click', (event) => activate(event, input, option), true); group.insertBefore(option, row.nextSibling); keyboardAction = menuItem; status('inserted'); return true; };
-  const scheduleInsert = () => { let attempt = 0; const tryInsert = () => { if (insert() || attempt++ >= 40) return; setTimeout(tryInsert, 75); }; setTimeout(tryInsert, 0); };
-  const keyOf = (event) => event.keyCode === 40 || event.key === 'Down' ? 'ArrowDown' : event.keyCode === 38 || event.key === 'Up' ? 'ArrowUp' : event.keyCode === 13 ? 'Enter' : event.keyCode === 32 ? ' ' : event.key;
-  const bridgeMenuKey = (event) => { const key = keyOf(event); const option = document.getElementById(optionId); const menu = visiblePopover(); const ownAction = menuAction(option); if (!option || !menu || !ownAction) return false; const actions = [...menu.querySelectorAll('.__menu-item')].filter((node) => node.getBoundingClientRect().width > 0); const focused = document.activeElement?.closest?.('.__menu-item'); const highlighted = actions.find((node) => node.hasAttribute('data-highlighted')); const current = actions.includes(focused) ? focused : highlighted || (actions.includes(keyboardAction) ? keyboardAction : actions[0]); const ownSelected = current === ownAction || ownAction === document.activeElement || ownAction.contains(document.activeElement); if ((key === 'Enter' || key === ' ') && current) { if (ownSelected) activate(event, visibleComposer(), option); else { event.preventDefault(); event.stopImmediatePropagation(); current.click(); } return true; } if (key !== 'ArrowDown' && key !== 'ArrowUp') return false; const step = key === 'ArrowDown' ? 1 : -1; const currentIndex = Math.max(0, actions.indexOf(current)); const target = actions[Math.max(0, Math.min(actions.length - 1, currentIndex + step))]; if (!target) return false; event.preventDefault(); event.stopImmediatePropagation(); highlight(menu, target); status(target === ownAction ? 'keyboard-selected' : 'keyboard-native-selected'); return true; };
-  const onKeydown = (event) => { if (bridgeMenuKey(event)) return; if (keyOf(event) === '/' && !event.metaKey && !event.ctrlKey && !event.altKey && !insert()) scheduleInsert(); };
-  const onMenuPointerUp = (event) => { const target = event.composedPath().find((node) => node instanceof Element && node.id === optionId); if (!target) return; activate(event, visibleComposer(), target); };
-  const onInput = (event) => { const input = composer(event.target); if (!input) return; activeComposer = input; if (slashPending(valueOf(input))) scheduleInsert(); else document.getElementById(optionId)?.remove(); };
-  window.addEventListener('keydown', onKeydown, true);
-  window.addEventListener('pointerup', onMenuPointerUp, true);
-  document.addEventListener('input', onInput, true);
-  const slashPoll = setInterval(() => { const input = visibleComposer(); if (input && slashPending(valueOf(input))) { activeComposer = input; insert(); } }, 160);
-  window.__attuneSafariChatGptToCodexInsert = insert;
-  window.__attuneSafariChatGptToCodexStatus = () => lastStatus;
-  scheduleInsert();
-  window.__attuneSafariChatGptToCodexCleanup = () => { clearInterval(slashPoll); window.removeEventListener('keydown', onKeydown, true); window.removeEventListener('pointerup', onMenuPointerUp, true); document.removeEventListener('input', onInput, true); document.getElementById(optionId)?.remove(); document.getElementById(toastId)?.remove(); document.getElementById(hoverStyleId)?.remove(); delete window.__attuneSafariChatGptToCodexInsert; delete window.__attuneSafariChatGptToCodexStatus; delete window.__attuneTakeCodexTransfer; delete window.__attuneSafariChatGptToCodexCleanup; };
-  return 'connected';
-})();`;
-const SAFARI_CHATGPT_SLASH_PROBE = `(() => {
-  if (typeof window.__attuneSafariChatGptToCodexCleanup === 'function') {
-    window.__attuneSafariChatGptToCodexInsert?.();
-    return 'connected';
-  }
-  const selector = '#prompt-textarea, form[data-type="unified-composer"] textarea, form[data-type="unified-composer"] [contenteditable="true"], textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"][data-lexical-editor="true"]';
-  const active = document.activeElement?.matches?.(selector) ? document.activeElement : document.activeElement?.closest?.(selector);
-  const input = active || [...document.querySelectorAll(selector)].find((node) => node.getBoundingClientRect().width > 0);
-  const value = input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement ? input.value : input?.innerText || input?.textContent || '';
-  const source = String(value).trimEnd();
-  const previous = source.charCodeAt(source.length - 2);
-  const slashPending = source.endsWith('/') && (source.length === 1 || previous === 32 || previous === 9 || previous === 10 || previous === 13);
-  return slashPending ? 'slash' : 'idle';
-})()`;
-const CODEX_LINEAR_TODOS_MANIFEST = `{
-  "manifestVersion": 2,
-  "name": "Codex: Linear To-dos",
-  "description": "Open your visible Linear to-dos in a focused modal from Codex.",
-  "preview": "preview.png",
-  "patches": {
-    "Linear": {
-      "source": "apps/linear-todos-source.css",
-      "intent": "Publish the visible to-do issues from Linear to the local Attune bridge.",
-      "bindings": {
-        "workspace": { "role": "linear.workspace", "required": true },
-        "issueList": { "role": "linear.issueList", "required": true },
-        "issueDetail": { "role": "linear.issueDetail", "required": false }
-      }
-    },
-    "Codex": {
-      "source": "apps/codex-linear-todos.css",
-      "intent": "Add a top-left To-dos button that opens a Linear tasks modal to the right of the Codex sidebar.",
-      "bindings": {
-        "main": { "role": "codex.primaryChat", "required": true },
-        "appShell": { "role": "codex.appShell", "required": true },
-        "document": { "role": "document.body", "required": true }
-      }
-    }
-  }
-}
-`;
-const CURSOR_LINEAR_TODOS_MANIFEST = `{
-  "manifestVersion": 2,
-  "name": "Cursor: Linear To-dos",
-  "description": "Open your visible Linear to-dos in a focused modal from Cursor.",
-  "preview": "preview.png",
-  "patches": {
-    "Linear": {
-      "source": "apps/linear-todos-source.css",
-      "intent": "Publish the visible to-do issues from Linear to the local Attune bridge.",
-      "bindings": {
-        "workspace": { "role": "linear.workspace", "required": true },
-        "issueList": { "role": "linear.issueList", "required": true },
-        "issueDetail": { "role": "linear.issueDetail", "required": false }
-      }
-    },
-    "Cursor": {
-      "source": "apps/cursor-linear-todos.css",
-      "intent": "Add a To-dos button that opens a Linear tasks modal in Cursor.",
-      "bindings": {
-        "workbench": { "role": "cursor.workbench", "required": true },
-        "titlebar": { "role": "cursor.titlebar", "required": false },
-        "document": { "role": "document.body", "required": true }
-      }
-    }
-  }
-}`;
-const CODEX_LINEAR_TODOS_PREVIEW_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-label="Linear To-dos in Codex attunement preview">
-  <rect width="960" height="600" fill="#111315"/>
-  <rect x="34" y="30" width="892" height="540" rx="14" fill="#1b1e22" stroke="#353a40" stroke-width="2"/>
-  <rect x="34" y="30" width="892" height="48" rx="14" fill="#24282d"/>
-  <circle cx="64" cy="54" r="8" fill="#ff5f57"/><circle cx="88" cy="54" r="8" fill="#febc2e"/><circle cx="112" cy="54" r="8" fill="#28c840"/>
-  <rect x="56" y="96" width="184" height="450" rx="6" fill="#15181c" stroke="#30353c"/>
-  <rect x="76" y="124" width="112" height="15" rx="3" fill="#8993a0"/><rect x="76" y="162" width="132" height="15" rx="3" fill="#59636e"/><rect x="76" y="200" width="98" height="15" rx="3" fill="#59636e"/>
-  <rect x="265" y="98" width="112" height="31" rx="6" fill="#2d4159"/><rect x="285" y="108" width="70" height="11" rx="3" fill="#d9edff"/>
-  <rect x="438" y="144" width="350" height="306" rx="10" fill="#22272d" stroke="#4b5561" stroke-width="2"/>
-  <rect x="438" y="144" width="350" height="58" rx="10" fill="#2b3138"/><rect x="460" y="165" width="126" height="15" rx="3" fill="#eef2f6"/><circle cx="758" cy="173" r="10" fill="#64707b"/>
-  <circle cx="467" cy="234" r="8" fill="#7e9ad0"/><rect x="486" y="226" width="54" height="12" rx="3" fill="#91a4bd"/><rect x="486" y="248" width="238" height="13" rx="3" fill="#dce2e9"/>
-  <circle cx="467" cy="294" r="8" fill="#7e9ad0"/><rect x="486" y="286" width="54" height="12" rx="3" fill="#91a4bd"/><rect x="486" y="308" width="195" height="13" rx="3" fill="#dce2e9"/>
-  <circle cx="467" cy="354" r="8" fill="#7e9ad0"/><rect x="486" y="346" width="54" height="12" rx="3" fill="#91a4bd"/><rect x="486" y="368" width="222" height="13" rx="3" fill="#dce2e9"/>
-</svg>
-`;
-const CODEX_LINEAR_TODOS_SOURCE_CSS = `/* Attune managed: codex-linear-todos source */
-/* @attune-script
-(() => {
-  const bridgeUrl = 'http://127.0.0.1:47655/v1/linear-todos';
-  const actionUrl = 'http://127.0.0.1:47655/v1/linear-todos-action';
-  const completionUrl = 'http://127.0.0.1:47655/v1/linear-todos-completion';
-  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
-  const issueListHost = () => host('linear.issueList') || host('linear.workspace') || document;
-  const issueDetailHost = () => host('linear.issueDetail') || host('linear.workspace') || document;
-  let lastSignature = '';
-  let lastActionId = '';
-  const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-  const collect = () => {
-    const seen = new Set();
-    const issues = [...issueListHost().querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')]
-      .map((node) => {
-        const text = (node.innerText || node.textContent || node.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
-        const href = node.href || '';
-        const key = text.match(/\\b[A-Z][A-Z0-9]+-\\d+\\b/)?.[0] || href.match(/\\/issue\\/([A-Z][A-Z0-9]+-\\d+)/)?.[1] || '';
-        const title = text.includes(key)
-          ? text.slice(text.indexOf(key) + key.length).replace(/\\s+Created\\b.*$/i, '').trim()
-          : decodeURIComponent(href.split('/').filter(Boolean).at(-1) || '').replace(/-/g, ' ');
-        return { key, title, href };
-      })
-      .filter((issue) => issue.key && issue.title && issue.title.length > 2)
-      .filter((issue) => !seen.has(issue.key) && seen.add(issue.key))
-      .slice(0, 20);
-    const signature = JSON.stringify(issues);
-    if (signature === lastSignature) return;
-    lastSignature = signature;
-    fetch(bridgeUrl, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ issues }),
-    }).catch(() => {});
-  };
-  const complete = async (action) => {
-    const key = String(action?.key || '');
-    const links = [...issueListHost().querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')];
-    const issueLink = links.find((link) => (link.innerText || link.textContent || '').includes(key));
-    if (!issueLink) throw new Error('Could not find this issue in the current Linear view.');
-    issueLink.click();
-    await wait(700);
-    const button = [...issueDetailHost().querySelectorAll('button, [role="button"]')].find((element) => {
-      const label = ((element.getAttribute('aria-label') || '') + ' ' + (element.innerText || element.textContent || '')).replace(/\\s+/g, ' ').trim().toLowerCase();
-      return !label.includes('incomplete') && (label.includes('mark as complete') || label === 'complete' || label === 'done');
-    });
-    if (!button) throw new Error('Linear did not expose a Complete button for this issue.');
-    button.click();
-  };
-  const checkAction = async () => {
-    try {
-      const state = await fetch(actionUrl, { cache: 'no-store' }).then((response) => response.json());
-      const action = state?.payload;
-      if (!action?.id || action.id === lastActionId || action.type !== 'complete') return;
-      lastActionId = action.id;
-      try {
-        await complete(action);
-        await fetch(completionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: action.id, key: action.key, status: 'completed' }) });
-        setTimeout(collect, 900);
-      } catch (error) {
-        await fetch(completionUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: action.id, key: action.key, status: 'error', message: error instanceof Error ? error.message : 'Unable to complete this issue.' }) });
-      }
-    } catch {}
-  };
-  clearInterval(window.__attuneLinearTodosSource);
-  window.__attuneLinearTodosSource = setInterval(collect, 1500);
-  clearInterval(window.__attuneLinearTodosActions);
-  window.__attuneLinearTodosActions = setInterval(checkAction, 700);
-  collect();
-  checkAction();
-  const cleanup = () => { clearInterval(window.__attuneLinearTodosSource); clearInterval(window.__attuneLinearTodosActions); };
-  window.__attuneLinearTodosSourceCleanup = cleanup;
-  window.__attuneRegisterCleanup?.(cleanup);
-})();
-@end-attune-script */
-`;
-const CODEX_LINEAR_TODOS_CSS = `/* Attune managed: codex-linear-todos */
-#attune-codex-linear-todos-trigger { position: fixed; top: 12px; left: 282px; z-index: 2147483646; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 1px solid color-mix(in srgb, CanvasText 16%, transparent); border-radius: 7px; background: color-mix(in srgb, Canvas 88%, CanvasText 12%); color: CanvasText; box-shadow: 0 4px 16px rgb(0 0 0 / 18%); cursor: pointer; font: 600 12px/1 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-#attune-codex-linear-todos-trigger:hover, #attune-codex-linear-todos-trigger[aria-expanded="true"] { background: color-mix(in srgb, Canvas 76%, CanvasText 24%); }
-#attune-codex-linear-todos-trigger:focus-visible, #attune-codex-linear-todos-modal button:focus-visible, #attune-codex-linear-todos-modal a:focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
-#attune-codex-linear-todos-modal { position: fixed; top: 48px; left: 282px; z-index: 2147483647; display: block; padding: 0; background: transparent; }
-#attune-codex-linear-todos-modal [role="document"] { width: max-content; max-width: min(220px, calc(100vw - 32px)); overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 10px; background: Canvas; color: CanvasText; box-shadow: 0 24px 80px rgb(0 0 0 / 42%); font: 13px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-#attune-codex-linear-todos-modal header, #attune-codex-linear-todos-modal .attune-linear-issue-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 13px 14px; }
-#attune-codex-linear-todos-modal header { border-bottom: 1px solid color-mix(in srgb, CanvasText 13%, transparent); }
-#attune-codex-linear-todos-modal h2 { display: inline-flex; align-items: center; gap: 7px; margin: 0; font-size: 14px; line-height: 1.2; }
-#attune-codex-linear-todos-logo { width: 15px; height: 15px; flex: 0 0 15px; }
-#attune-codex-linear-todos-modal button, #attune-codex-linear-todos-modal a { border: 0; border-radius: 6px; padding: 7px 9px; background: color-mix(in srgb, CanvasText 11%, transparent); color: CanvasText; cursor: pointer; font: 600 12px/1 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-decoration: none; }
-#attune-codex-linear-todos-list-wrap { position: relative; display: none; }
-#attune-codex-linear-todos-modal[data-expanded="true"] #attune-codex-linear-todos-list-wrap { display: block; }
-#attune-codex-linear-todos-list { max-height: 156px; margin: 0; padding: 0; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; list-style: none; }
-#attune-codex-linear-todos-list::-webkit-scrollbar { display: none; }
-#attune-codex-linear-todos-list-scrollbar { position: absolute; top: 7px; right: 3px; bottom: 7px; display: none; width: 6px; border-radius: 999px; background: rgb(39 49 63 / 18%); pointer-events: none; }
-#attune-codex-linear-todos-list-scrollbar::after { position: absolute; top: 0; left: 0; width: 100%; height: var(--attune-linear-scroll-thumb-size, 28px); border-radius: inherit; background: rgb(92 115 255 / 78%); content: ''; transform: translateY(var(--attune-linear-scroll-thumb-offset, 0)); }
-#attune-codex-linear-todos-list-wrap[data-scrollable="true"] #attune-codex-linear-todos-list-scrollbar { display: block; }
-#attune-codex-linear-todos-list li { border-bottom: 1px solid color-mix(in srgb, CanvasText 9%, transparent); }
-#attune-codex-linear-todos-list li:last-child { border-bottom: 0; }
-#attune-codex-linear-todos-list button { width: 100%; border-radius: 0; padding: 12px 18px 12px 14px; background: transparent; text-align: left; }
-#attune-codex-linear-todos-list button:hover { background: color-mix(in srgb, CanvasText 8%, transparent); }
-#attune-codex-linear-todos-list strong { display: block; margin-bottom: 3px; color: color-mix(in srgb, CanvasText 76%, #7ca8ff); font-size: 11px; }
-#attune-codex-linear-todos-list .attune-linear-status { display: inline-block; margin-left: 6px; padding: 2px 5px; border-radius: 999px; background: color-mix(in srgb, CanvasText 12%, transparent); color: color-mix(in srgb, CanvasText 76%, #9aa8b8); font-size: 10px; font-style: normal; font-weight: 700; line-height: 1; text-transform: capitalize; }
-#attune-codex-linear-todos-list .attune-linear-status[data-status="backlog"] { background: rgb(132 145 158 / 22%); color: #b6c0ca; }
-#attune-codex-linear-todos-list .attune-linear-status[data-status="todo"] { background: rgb(206 213 223 / 18%); color: #d7dde5; }
-#attune-codex-linear-todos-list .attune-linear-status[data-status="in-progress"], #attune-codex-linear-todos-list .attune-linear-status[data-status="started"] { background: rgb(244 198 0 / 20%); color: #ffd94d; }
-#attune-codex-linear-todos-list .attune-linear-status[data-status="done"], #attune-codex-linear-todos-list .attune-linear-status[data-status="completed"] { background: rgb(92 115 255 / 23%); color: #9cabff; }
-#attune-codex-linear-todos-list .attune-linear-status[data-status="canceled"], #attune-codex-linear-todos-list .attune-linear-status[data-status="duplicate"] { background: rgb(174 184 196 / 16%); color: #9ca7b2; }
-#attune-codex-linear-todos-list span { display: block; }
-#attune-codex-linear-todos-empty { padding: 24px 14px; color: color-mix(in srgb, CanvasText 62%, transparent); text-align: center; }
-#attune-codex-linear-issue-modal { position: fixed; inset: 0; z-index: 2147483648; display: grid; place-items: center; padding: 16px; background: rgb(0 0 0 / 48%); }
-#attune-codex-linear-issue-modal [role="document"] { width: min(420px, calc(100vw - 32px)); border: 1px solid color-mix(in srgb, CanvasText 18%, transparent); border-radius: 10px; background: Canvas; color: CanvasText; box-shadow: 0 24px 80px rgb(0 0 0 / 42%); font: 13px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-#attune-codex-linear-issue-modal h2 { margin: 0; font-size: 16px; } #attune-codex-linear-issue-modal .attune-linear-issue-copy { max-height: min(560px, calc(100vh - 160px)); padding: 18px; overflow: auto; } #attune-codex-linear-issue-modal .attune-linear-issue-key { margin: 0 0 7px; color: color-mix(in srgb, CanvasText 64%, #7ca8ff); font-size: 12px; } #attune-codex-linear-issue-modal [data-priority] > div { display: flex; flex-wrap: wrap; gap: 6px; } #attune-codex-linear-issue-modal [data-priority] button { border: 0; border-radius: 5px; padding: 6px 8px; background: color-mix(in srgb, CanvasText 10%, transparent); color: CanvasText; cursor: pointer; font: 600 11px/1 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; } #attune-codex-linear-issue-modal footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px; border-top: 1px solid color-mix(in srgb, CanvasText 12%, transparent); }
-
-/* @attune-script
-(() => {
-  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
-  const documentHost = () => host('document.body') || document.body;
-  const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
-  const readTodos = async () => {
-    const state = window.__attuneWorkspaceBridge?.['linear-todos'] || null;
-    return { issues: Array.isArray(state?.payload?.issues) ? state.payload.issues : [], updatedAt: state?.updatedAt || null };
-  };
-  const close = () => { const panel = document.getElementById('attune-codex-linear-todos-modal'); if (panel) { panel.dataset.expanded = 'false'; const expand = panel.querySelector('[data-expand]'); if (expand) { expand.textContent = '+'; expand.setAttribute('aria-expanded', 'false'); } } };
-  const closeIssue = (returnToTasks = true) => { document.getElementById('attune-codex-linear-issue-modal')?.remove(); if (returnToTasks) document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), key: '', type: 'my-issues' }); };
-  const complete = async (button, issue) => {
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    button.disabled = true; button.textContent = 'Completing…';
-    try {
-      document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id, key: issue.key });
-      for (let attempt = 0; attempt < 16; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        const result = window.__attuneWorkspaceBridge?.['linear-todos-completion'];
-        if (result?.payload?.id !== id) continue;
-        if (result.payload.status === 'completed') {
-          button.closest('li')?.classList.add('attune-linear-completed');
-          button.textContent = 'Completed';
-          button.setAttribute('aria-label', issue.key + ' is completed');
-          return;
-        }
-        throw new Error(result.payload.message || 'Linear could not complete this issue.');
-      }
-      throw new Error('Timed out waiting for Linear. Keep Linear open and try again.');
-    } catch (error) {
-      button.disabled = false; button.textContent = 'Complete';
-      const subtitle = button.closest('[role="document"]')?.querySelector('header span');
-      if (subtitle) subtitle.textContent = error instanceof Error ? error.message : 'Unable to complete this issue.';
-    }
-  };
-  const openIssue = async (issue) => {
-    closeIssue(false);
-    const modal = document.createElement('div');
-    modal.id = 'attune-codex-linear-issue-modal';
-    modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true');
-    modal.innerHTML = '<section role="document"><div class="attune-linear-issue-copy"><p class="attune-linear-issue-key">' + escapeHtml(issue.key) + '</p><h2>' + escapeHtml(issue.title) + '</h2><p data-details>Loading issue details from Linear…</p><div data-priority></div></div><footer><button type="button" data-close>Close</button><button type="button" data-complete>Complete</button><button type="button" data-focus>Open in Linear</button></footer></section>';
-    modal.addEventListener('click', (event) => { if (event.target === modal) closeIssue(); });
-    modal.querySelector('[data-close]')?.addEventListener('click', closeIssue);
-    modal.querySelector('[data-complete]')?.addEventListener('click', () => void complete(modal.querySelector('[data-complete]'), issue));
-    modal.querySelector('[data-focus]')?.addEventListener('click', () => { document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), key: issue.key, type: 'focus' }); });
-    documentHost().append(modal);
-    modal.querySelector('[data-complete]')?.focus();
-    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
-    document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id, key: issue.key, href: issue.href, type: 'details' });
-    for (let attempt = 0; attempt < 18; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      const result = window.__attuneWorkspaceBridge?.['linear-todos-details'];
-      if (result?.payload?.id !== id) continue;
-      const details = modal.querySelector('[data-details]');
-      if (!details) return;
-      details.textContent = result.payload.status === 'ready' ? result.payload.details : (result.payload.message || 'Unable to load the Linear issue.');
-      details.style.whiteSpace = 'pre-wrap';
-      const priority = modal.querySelector('[data-priority]');
-      if (priority && result.payload.status === 'ready') {
-        priority.innerHTML = '<p class="attune-linear-issue-key">Priority · ' + escapeHtml(result.payload.priority || 'No priority') + '</p><div>' + ['No priority', 'Urgent', 'High', 'Medium', 'Low'].map((value) => '<button type="button" data-priority="' + value + '"' + (value === (result.payload.priority || 'No priority') ? ' aria-pressed="true"' : '') + '>' + value + '</button>').join('') + '</div>';
-        priority.querySelectorAll('[data-priority]').forEach((button) => button.addEventListener('click', async () => { const value = button.dataset.priority; const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7); button.disabled = true; document.documentElement.dataset.attuneLinearTodosAction = JSON.stringify({ id, key: issue.key, type: 'priority', value }); for (let attempt = 0; attempt < 16; attempt += 1) { await new Promise((resolve) => setTimeout(resolve, 500)); const response = window.__attuneWorkspaceBridge?.['linear-todos-details']; if (response?.payload?.id !== id) continue; button.disabled = false; if (response.payload.status === 'ready') { priority.querySelector('.attune-linear-issue-key').textContent = 'Priority · ' + (response.payload.priority || value); priority.querySelectorAll('[data-priority]').forEach((choice) => choice.setAttribute('aria-pressed', String(choice.dataset.priority === response.payload.priority))); } return; } button.disabled = false; }));
-      }
-      return;
-    }
-    const details = modal.querySelector('[data-details]');
-    if (details) details.textContent = 'Timed out waiting for Linear. Keep Linear open and try again.';
-  };
-  const refresh = async () => {
-    const modal = document.getElementById('attune-codex-linear-todos-modal');
-    if (!modal) return;
-    const { issues, updatedAt } = await readTodos();
-    if (modal.dataset.updatedAt === (updatedAt || '')) return;
-    modal.dataset.updatedAt = updatedAt || '';
-    const list = modal.querySelector('#attune-codex-linear-todos-list');
-    const listWrap = modal.querySelector('#attune-codex-linear-todos-list-wrap');
-    list.innerHTML = issues.length
-      ? issues.map((issue, index) => { const status = String(issue.workflowState || '').trim(); const statusKey = status.toLowerCase().replace(/\\s+/g, '-'); const meta = '<strong>' + escapeHtml(issue.key) + (status ? '<em class="attune-linear-status" data-status="' + escapeHtml(statusKey) + '">' + escapeHtml(status) + '</em>' : '') + '</strong>'; return '<li><button type="button" data-index="' + index + '">' + meta + '<span>' + escapeHtml(issue.title) + '</span></button></li>'; }).join('')
-      : '<li id="attune-codex-linear-todos-empty">No tasks yet. Open Linear on your to-do view to load tasks.</li>';
-    const syncListScrollbar = () => {
-      if (!list || !listWrap) return;
-      const maximum = Math.max(0, list.scrollHeight - list.clientHeight);
-      const scrollable = maximum > 1;
-      listWrap.dataset.scrollable = String(scrollable);
-      if (!scrollable) return;
-      const thumb = Math.max(28, Math.round((list.clientHeight * list.clientHeight) / list.scrollHeight));
-      const track = Math.max(0, list.clientHeight - thumb - 16);
-      const offset = maximum ? Math.round((list.scrollTop / maximum) * track) : 0;
-      listWrap.style.setProperty('--attune-linear-scroll-thumb-size', thumb + 'px');
-      listWrap.style.setProperty('--attune-linear-scroll-thumb-offset', offset + 'px');
-    };
-    list.onscroll = syncListScrollbar;
-    requestAnimationFrame(syncListScrollbar);
-    list.querySelectorAll('button[data-index]').forEach((button) => button.addEventListener('click', () => openIssue(issues[Number(button.dataset.index)])));
-  };
-  const open = async () => {
-    if (document.getElementById('attune-codex-linear-todos-modal')) return;
-    const modal = document.createElement('div');
-    modal.id = 'attune-codex-linear-todos-modal';
-    modal.setAttribute('aria-labelledby', 'attune-codex-linear-todos-title');
-    modal.dataset.expanded = 'false';
-    modal.innerHTML = '<section role="document"><header><h2 id="attune-codex-linear-todos-title"><img id="attune-codex-linear-todos-logo" src="${LINEAR_DARK_LOGO_DATA_URI}" alt="" />Tasks</h2><button type="button" data-expand aria-label="Show tasks" aria-expanded="false">+</button></header><div id="attune-codex-linear-todos-list-wrap"><ol id="attune-codex-linear-todos-list"></ol><i id="attune-codex-linear-todos-list-scrollbar" aria-hidden="true"></i></div></section>';
-    modal.querySelector('[data-expand]')?.addEventListener('click', (event) => { const expanded = modal.dataset.expanded !== 'true'; modal.dataset.expanded = String(expanded); event.currentTarget.textContent = expanded ? '−' : '+'; event.currentTarget.setAttribute('aria-expanded', String(expanded)); });
-    documentHost().append(modal);
-    modal.querySelector('button')?.focus();
-    await refresh();
-  };
-  const render = () => {
-    void open();
-  };
-  const onKeydown = (event) => { if (event.key === 'Escape') { if (document.getElementById('attune-codex-linear-issue-modal')) closeIssue(); else close(); } };
-  render(); document.addEventListener('keydown', onKeydown);
-  clearInterval(window.__attuneCodexLinearTodosRefresh);
-  window.__attuneCodexLinearTodosRefresh = setInterval(() => void refresh(), 1500);
-  const cleanup = () => { document.removeEventListener('keydown', onKeydown); clearInterval(window.__attuneCodexLinearTodosRefresh); document.getElementById('attune-codex-linear-todos-modal')?.remove(); closeIssue(); };
-  window.__attuneCodexLinearTodosCleanup = cleanup;
-  window.__attuneRegisterCleanup?.(cleanup);
-})();
-@end-attune-script */
-`;
-const CODEX_LINEAR_TODOS_CODEX_CSS = `${CODEX_LINEAR_TODOS_CSS}
-
-/* Codex has a wider persistent navigation rail than Cursor. */
-#attune-codex-linear-todos-trigger { top: 60px; left: 324px; box-shadow: none; }
-#attune-codex-linear-todos-modal { top: 60px; left: 324px; }
-#attune-codex-linear-todos-modal [role="document"] { box-shadow: none; }
-`;
-const CURSOR_LINEAR_TODOS_CSS = `${CODEX_LINEAR_TODOS_CSS}
-
-/* Cursor's workbench heading rule is heavier than the matching Codex title. */
-#attune-codex-linear-todos-modal h2 {
-  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-  font-size: 14px !important;
-  font-weight: 400 !important;
-  line-height: 1.2 !important;
-  letter-spacing: normal !important;
-}
-#attune-codex-linear-todos-logo { vertical-align: middle; }
-
-/* The dedicated Cursor Agents window exposes an IDE switch; regular IDE windows do not. */
-body:not(:has(button[aria-label="IDE"])) #attune-codex-linear-todos-trigger,
-body:not(:has(button[aria-label="IDE"])) #attune-codex-linear-todos-modal {
-  display: none !important;
-}
-`;
-const CODEX_YOUTUBE_PREVIEW_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-label="YouTube in Codex attunement preview">
-  <rect width="960" height="600" fill="#111315"/>
-  <rect x="34" y="30" width="892" height="540" rx="14" fill="#1b1e22" stroke="#353a40" stroke-width="2"/>
-  <rect x="34" y="30" width="892" height="48" rx="14" fill="#24282d"/>
-  <circle cx="64" cy="54" r="8" fill="#ff5f57"/><circle cx="88" cy="54" r="8" fill="#febc2e"/><circle cx="112" cy="54" r="8" fill="#28c840"/>
-  <rect x="66" y="108" width="318" height="21" rx="4" fill="#dce2e9"/><rect x="66" y="150" width="432" height="14" rx="3" fill="#7f8995"/><rect x="66" y="180" width="340" height="14" rx="3" fill="#59636e"/>
-  <rect x="516" y="108" width="368" height="344" rx="8" fill="#08090b" stroke="#464c55" stroke-width="2"/>
-  <path d="M650 195c0-14 15-23 27-15l93 54c12 7 12 23 0 30l-93 54c-12 8-27-1-27-15z" fill="#ff3434"/>
-  <path d="M695 214l43 35-43 35z" fill="white"/>
-  <rect x="538" y="474" width="222" height="16" rx="4" fill="#e5e9ee"/><rect x="538" y="506" width="286" height="12" rx="3" fill="#77818e"/>
-  <rect x="66" y="282" width="368" height="112" rx="8" fill="#24282d" stroke="#363c44"/><rect x="86" y="307" width="146" height="14" rx="3" fill="#c9d1d9"/><rect x="86" y="338" width="295" height="11" rx="3" fill="#65707c"/>
-</svg>
-`;
-const CODEX_YOUTUBE_SOURCE_CSS = `/* Attune managed: codex-youtube-player source */
-/* @attune-script
-(() => {
-  const bridgeUrl = 'http://127.0.0.1:47655/v1/youtube-now-playing';
-  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
-  let lastSignature = '';
-  let lastPublishedAt = 0;
-
-  const videoIdFromUrl = (url) => {
-    try {
-      const parsed = new URL(url);
-      if (!/(^|\\.)youtube\\.com$|(^|\\.)youtu\\.be$/i.test(parsed.hostname)) return null;
-      if (parsed.hostname.endsWith('youtu.be')) return parsed.pathname.split('/').filter(Boolean)[0] || null;
-      if (parsed.pathname === '/watch') return parsed.searchParams.get('v');
-      const parts = parsed.pathname.split('/').filter(Boolean);
-      return ['shorts', 'live', 'embed'].includes(parts[0]) ? parts[1] || null : null;
-    } catch { return null; }
-  };
-  const publish = (payload) => fetch(bridgeUrl, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  }).catch(() => {});
-  const collect = () => {
-    const videoId = videoIdFromUrl(location.href);
-    if (!videoId) return;
-    const video = host('youtube.player') || document.querySelector('video');
-    const currentTime = Number.isFinite(video?.currentTime) ? video.currentTime : 0;
-    const payload = {
-      videoUrl: location.href,
-      videoId,
-      title: (document.querySelector('h1 yt-formatted-string')?.textContent || document.title || 'YouTube video').trim(),
-      currentTime,
-      isPlaying: Boolean(video && !video.paused && !video.ended),
-    };
-    const signature = videoId + ':' + Math.floor(currentTime) + ':' + payload.isPlaying;
-    if (signature !== lastSignature || Date.now() - lastPublishedAt > 3000) {
-      publish(payload);
-      lastPublishedAt = Date.now();
-    }
-    lastSignature = signature;
-  };
-  clearInterval(window.__attuneYoutubeSourceInterval);
-  window.__attuneYoutubeSourceInterval = setInterval(collect, 1000);
-  collect();
-  const cleanup = () => {
-    clearInterval(window.__attuneYoutubeSourceInterval);
-  };
-  window.__attuneYoutubeSourceCleanup = cleanup;
-  window.__attuneRegisterCleanup?.(cleanup);
-})();
-@end-attune-script */
-`;
-const CODEX_YOUTUBE_PLAYER_CSS = `/* Attune managed: codex-youtube-player */
-#attune-codex-youtube-player { position: fixed; right: 18px; bottom: 18px; z-index: 2147483647; width: min(440px, calc(100vw - 36px)); overflow: hidden; border: 1px solid color-mix(in srgb, CanvasText 20%, transparent); border-radius: 10px; background: color-mix(in srgb, Canvas 94%, CanvasText 6%); color: CanvasText; box-shadow: 0 20px 60px rgb(0 0 0 / 38%); font: 12px/1.35 ui-sans-serif, system-ui, sans-serif; }
-#attune-codex-youtube-player header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent); }
-#attune-codex-youtube-player strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#attune-codex-youtube-player .attune-youtube-status { color: color-mix(in srgb, CanvasText 62%, transparent); white-space: nowrap; }
-#attune-codex-youtube-player iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; background: #000; }
-#attune-codex-youtube-player footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 12px; }
-#attune-codex-youtube-player button, #attune-codex-youtube-player a { appearance: none; border: 0; border-radius: 5px; padding: 6px 8px; background: color-mix(in srgb, CanvasText 11%, transparent); color: CanvasText; cursor: pointer; font: inherit; text-decoration: none; }
-#attune-codex-youtube-player button:hover, #attune-codex-youtube-player a:hover { background: color-mix(in srgb, CanvasText 18%, transparent); }
-
-/* @attune-script
-(() => {
-  const validVideoId = (value) => /^[A-Za-z0-9_-]{6,}$/.test(value || '') ? value : null;
-  const host = (role) => window.__attuneHost?.resolve?.(role) || null;
-  let shownVideoId = null;
-
-  const remove = () => document.getElementById('attune-codex-youtube-player')?.remove();
-  const render = (state) => {
-    const payload = state?.payload;
-    const videoId = validVideoId(payload?.videoId);
-    const updatedAt = Date.parse(state?.updatedAt || '');
-    if (!videoId || !Number.isFinite(updatedAt) || Date.now() - updatedAt > 8000) { remove(); shownVideoId = null; return; }
-    let root = document.getElementById('attune-codex-youtube-player');
-    const seconds = Math.max(0, Math.floor(Number(payload.currentTime) || 0));
-    const label = payload.isPlaying ? 'Playing in Chrome' : 'Paused in Chrome';
-    if (!root || shownVideoId !== videoId) {
-      root?.remove();
-      root = document.createElement('aside');
-      root.id = 'attune-codex-youtube-player';
-      root.setAttribute('aria-label', 'YouTube player from Google Chrome');
-      root.innerHTML = '<header><strong></strong><span class="attune-youtube-status"></span></header><iframe allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen title="YouTube video"></iframe><footer><button type="button">Sync to Chrome</button><a target="_blank" rel="noreferrer">Open in YouTube</a></footer>';
-      (host('document.body') || document.body).append(root);
-      shownVideoId = videoId;
-    }
-    root.querySelector('strong').textContent = payload.title || 'YouTube video';
-    root.querySelector('.attune-youtube-status').textContent = label;
-    const iframe = root.querySelector('iframe');
-    const embedUrl = 'https://www.youtube-nocookie.com/embed/' + videoId + '?rel=0&start=' + seconds;
-    if (!iframe.getAttribute('src')) iframe.src = embedUrl;
-    const link = root.querySelector('a');
-    link.href = payload.videoUrl || 'https://www.youtube.com/watch?v=' + videoId;
-    root.querySelector('button').onclick = () => { iframe.src = embedUrl; };
-  };
-  const refresh = () => {
-    render(window.__attuneWorkspaceBridge?.['youtube-now-playing'] || null);
-  };
-  window.__attuneCodexYoutubeRefresh = refresh;
-  clearInterval(window.__attuneCodexYoutubeInterval);
-  window.__attuneCodexYoutubeInterval = setInterval(refresh, 1000);
-  refresh();
-  const cleanup = () => { clearInterval(window.__attuneCodexYoutubeInterval); remove(); };
-  window.__attuneCodexYoutubeCleanup = cleanup;
-  window.__attuneRegisterCleanup?.(cleanup);
-})();
-@end-attune-script */
-`;
 const ATTUNEMENT_RUNTIME_CLEANUP_CSS = `/* @attune-script
 (() => {
   window.__attuneCodexGitActionsCleanup?.();
@@ -1275,7 +315,7 @@ function installApplicationMenu(): void {
 }
 
 async function connectSafariChatGptTab(): Promise<number> {
-  const script = quoteAppleScriptString(SAFARI_CHATGPT_TO_CODEX_LISTENER);
+  const script = quoteAppleScriptString(readChatGptToCodexScript('safari-listener.js'));
   const appleScript = `set connectedCount to 0
 set lastError to ""
 if application "Safari" is running then
@@ -1352,6 +392,21 @@ function quoteAppleScriptString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ')}"`;
 }
 
+function readChatGptToCodexScript(fileName: string): string {
+  const catalogRoot = resolveCatalogRoot(app.isPackaged, process.resourcesPath, __dirname);
+  const scriptPath = join(
+    catalogRoot,
+    'attunements',
+    CHATGPT_TO_CODEX_ATTUNEMENT_ID,
+    'apps',
+    fileName,
+  );
+  return readFileSync(scriptPath, 'utf8').replace(
+    '${CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL}',
+    CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL,
+  );
+}
+
 function startBrowserSlashMonitor(): void {
   if (process.platform !== 'darwin' || browserSlashMonitorProcess) return;
   browserSlashMonitorStopped = false;
@@ -1412,8 +467,8 @@ function handleBrowserSlashSignal(browser: string): void {
 }
 
 async function injectActiveSafariSlashCommand(): Promise<void> {
-  const probe = quoteAppleScriptString(SAFARI_CHATGPT_SLASH_PROBE);
-  const listener = quoteAppleScriptString(SAFARI_CHATGPT_TO_CODEX_LISTENER);
+  const probe = quoteAppleScriptString(readChatGptToCodexScript('safari-slash-probe.js'));
+  const listener = quoteAppleScriptString(readChatGptToCodexScript('safari-listener.js'));
   const appleScript = `if application "Safari" is not running then return "stopped"
 tell application "Safari"
   if (count of windows) is 0 then return "no-window"
@@ -1886,16 +941,18 @@ function getEnvironment(): EnvironmentInfo {
     ? join(process.resourcesPath, 'attune')
     : join(resolve(__dirname, '..'), '..', 'attune');
   const attuneRoot = resolve(process.env.ATTUNE_ROOT || bundledAttuneRoot);
+  const catalogRoot = resolveCatalogRoot(app.isPackaged, process.resourcesPath, __dirname);
   const userThemesRoot = ensureUserThemesRoot(process.env.ATTUNE_USER_THEMES_ROOT
     ? resolve(process.env.ATTUNE_USER_THEMES_ROOT)
-    : join(app.getPath('userData'), 'themes'), attuneRoot);
+    : join(app.getPath('userData'), 'themes'), catalogRoot);
   const userWorkspacesRoot = ensureUserWorkspacesRoot(process.env.ATTUNE_USER_WORKSPACES_ROOT
     ? resolve(process.env.ATTUNE_USER_WORKSPACES_ROOT)
-    : join(app.getPath('userData'), 'workspaces'));
+    : join(app.getPath('userData'), 'workspaces'), catalogRoot);
   const cliPath = resolve(process.env.ATTUNE_CLI_PATH || join(attuneRoot, 'dist', 'cli.js'));
   const nodePath = process.env.ATTUNE_NODE_PATH || (app.isPackaged ? process.execPath : 'node');
   return {
     attuneRoot,
+    catalogRoot,
     userThemesRoot,
     userWorkspacesRoot,
     cliPath,
@@ -1904,7 +961,7 @@ function getEnvironment(): EnvironmentInfo {
   };
 }
 
-function ensureUserThemesRoot(themesRoot: string, attuneRoot: string): string {
+function ensureUserThemesRoot(themesRoot: string, catalogRoot: string): string {
   mkdirSync(themesRoot, { recursive: true });
 
   const readmePath = join(themesRoot, 'README.md');
@@ -1912,12 +969,12 @@ function ensureUserThemesRoot(themesRoot: string, attuneRoot: string): string {
     writeFileSync(readmePath, USER_THEMES_README);
   }
 
-  seedEditableArrakisTheme(themesRoot, attuneRoot);
+  seedEditableTheme(catalogRoot, themesRoot, DEFAULT_THEME_ID);
 
   return themesRoot;
 }
 
-function ensureUserWorkspacesRoot(workspacesRoot: string): string {
+function ensureUserWorkspacesRoot(workspacesRoot: string, catalogRoot: string): string {
   mkdirSync(workspacesRoot, { recursive: true });
 
   const readmePath = join(workspacesRoot, 'README.md');
@@ -1925,315 +982,15 @@ function ensureUserWorkspacesRoot(workspacesRoot: string): string {
     writeFileSync(readmePath, USER_WORKSPACES_README);
   }
 
-  seedCodexMultiChatAttunement(workspacesRoot);
-  seedCodexKanbanAttunement(workspacesRoot);
-  seedChatGptClaudeModelsAttunement(workspacesRoot);
-  seedCodexGitActionsAttunement(workspacesRoot);
-  seedBlueMessagesAttunement(workspacesRoot);
-  seedCodexYouTubeAttunement(workspacesRoot);
-  seedChatGptToCodexAttunement(workspacesRoot);
-  seedCodexLinearTodosAttunement(workspacesRoot);
-  seedCursorLinearTodosAttunement(workspacesRoot);
-  seedLinearCompletedSlackDmAttunement(workspacesRoot);
+  installCatalogAttunements(catalogRoot, workspacesRoot);
   return workspacesRoot;
 }
 
-function seedChatGptClaudeModelsAttunement(workspacesRoot: string): void {
-  const bundledRoot = join(__dirname, 'assets', CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID);
-  if (!existsSync(bundledRoot)) return;
-
-  const attunementRoot = join(workspacesRoot, CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  const managed = !existsSync(manifestPath)
-    || readFileSync(manifestPath, 'utf8').includes('"name": "ChatGPT: Claude Models"')
-    || readFileSync(manifestPath, 'utf8').includes('"name": "ChatGPT: External CLI Models"');
-  if (!managed) return;
-
-  mkdirSync(appsRoot, { recursive: true });
-  for (const relativePath of [
-    'manifest.json',
-    'preview.png',
-    join('apps', 'chatgpt-claude-models.css'),
-  ]) {
-    copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
-  }
-}
-
-function seedCodexMultiChatAttunement(workspacesRoot: string): void {
-  const bundledRoot = join(__dirname, 'assets', CODEX_MULTI_CHAT_ATTUNEMENT_ID);
-  if (!existsSync(bundledRoot)) return;
-
-  const attunementRoot = join(workspacesRoot, CODEX_MULTI_CHAT_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  const managed = !existsSync(manifestPath)
-    || readFileSync(manifestPath, 'utf8').includes('"name": "Codex: Chat Canvas"');
-  if (!managed) return;
-
-  mkdirSync(appsRoot, { recursive: true });
-  for (const relativePath of [
-    'manifest.json',
-    'preview.png',
-    'codex-renderer-contract.json',
-    join('apps', 'codex-chat-canvas.css'),
-  ]) {
-    copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
-  }
-}
-
-function seedCodexKanbanAttunement(workspacesRoot: string): void {
-  const bundledRoot = join(__dirname, 'assets', CODEX_KANBAN_ATTUNEMENT_ID);
-  if (!existsSync(bundledRoot)) return;
-
-  const attunementRoot = join(workspacesRoot, CODEX_KANBAN_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  const managed = !existsSync(manifestPath)
-    || readFileSync(manifestPath, 'utf8').includes('"name": "Codex: Chat Kanban"');
-  if (!managed) return;
-
-  mkdirSync(appsRoot, { recursive: true });
-  for (const relativePath of [
-    'manifest.json',
-    'preview.png',
-    join('apps', 'codex-kanban.css'),
-    join('apps', 'codex-kanban.js'),
-  ]) {
-    copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
-  }
-}
-
-function seedLinearCompletedSlackDmAttunement(workspacesRoot: string): void {
-  const bundledRoot = join(__dirname, 'assets', LINEAR_COMPLETED_SLACK_DM_ATTUNEMENT_ID);
-  if (!existsSync(bundledRoot)) return;
-
-  const attunementRoot = join(workspacesRoot, LINEAR_COMPLETED_SLACK_DM_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  const managed = !existsSync(manifestPath)
-    || readFileSync(manifestPath, 'utf8').includes('"name": "Linear completed → Slack DM"');
-  if (!managed) return;
-
-  mkdirSync(appsRoot, { recursive: true });
-  for (const relativePath of [
-    'manifest.json',
-    'preview.png',
-    join('apps', 'linear-completion-source.css'),
-    join('apps', 'slack-completion-dm.css'),
-  ]) {
-    copyFileSync(join(bundledRoot, relativePath), join(attunementRoot, relativePath));
-  }
-}
-
-function seedCodexGitActionsAttunement(workspacesRoot: string): void {
-  const attunementRoot = join(workspacesRoot, CODEX_GIT_ACTIONS_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  mkdirSync(appsRoot, { recursive: true });
-
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8').includes('"name": "Codex Git Actions"')) {
-    writeFileSync(manifestPath, CODEX_GIT_ACTIONS_MANIFEST);
-  }
-
-  const previewPath = join(attunementRoot, 'preview.png');
-  const bundledPreviewPath = join(__dirname, 'assets', 'codex-commit-push-preview.png');
-  if (!existsSync(previewPath) && existsSync(bundledPreviewPath)) {
-    copyFileSync(bundledPreviewPath, previewPath);
-  }
-  const stylesheetPath = join(appsRoot, 'chatgpt-git-actions.css');
-  if (!existsSync(stylesheetPath) || readFileSync(stylesheetPath, 'utf8').includes('/* Attune managed: codex-git-actions') || readFileSync(stylesheetPath, 'utf8').includes('/* Codex Git Actions:')) {
-    writeFileSync(stylesheetPath, CODEX_GIT_ACTIONS_CSS);
-  }
-}
-
-function seedBlueMessagesAttunement(workspacesRoot: string): void {
-  const attunementRoot = join(workspacesRoot, BLUE_MESSAGES_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  mkdirSync(appsRoot, { recursive: true });
-
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8').includes('"name": "Blue messages"')) {
-    writeFileSync(manifestPath, BLUE_MESSAGES_MANIFEST);
-  }
-  const previewPath = join(attunementRoot, 'preview.png');
-  const bundledPreviewPath = join(__dirname, 'assets', 'codex-blue-messages-preview.png');
-  if (!existsSync(previewPath) && existsSync(bundledPreviewPath)) {
-    copyFileSync(bundledPreviewPath, previewPath);
-  }
-
-  const stylesheetPath = join(appsRoot, 'chatgpt-blue-messages.css');
-  if (!existsSync(stylesheetPath) || readFileSync(stylesheetPath, 'utf8').includes('/* Attune managed: blue-messages */')) {
-    writeFileSync(stylesheetPath, BLUE_MESSAGES_CSS);
-  }
-}
-
-function seedCodexYouTubeAttunement(workspacesRoot: string): void {
-  const attunementRoot = join(workspacesRoot, CODEX_YOUTUBE_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  mkdirSync(appsRoot, { recursive: true });
-
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8').includes('"name": "YouTube in Codex"')) {
-    writeFileSync(manifestPath, CODEX_YOUTUBE_MANIFEST);
-  }
-  writeSeedFile(join(attunementRoot, 'preview.svg'), CODEX_YOUTUBE_PREVIEW_SVG);
-
-  const chromePatch = join(appsRoot, 'chrome-youtube-source.css');
-  if (!existsSync(chromePatch) || readFileSync(chromePatch, 'utf8').includes('/* Attune managed: codex-youtube-player source */')) {
-    writeFileSync(chromePatch, CODEX_YOUTUBE_SOURCE_CSS);
-  }
-  const codexPatch = join(appsRoot, 'codex-youtube-player.css');
-  if (!existsSync(codexPatch) || readFileSync(codexPatch, 'utf8').includes('/* Attune managed: codex-youtube-player */')) {
-    writeFileSync(codexPatch, CODEX_YOUTUBE_PLAYER_CSS);
-  }
-}
-
-function seedChatGptToCodexAttunement(workspacesRoot: string): void {
-  const attunementRoot = join(workspacesRoot, CHATGPT_TO_CODEX_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  mkdirSync(appsRoot, { recursive: true });
-
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  if (!existsSync(manifestPath)
-    || !readFileSync(manifestPath, 'utf8').includes('"name": "ChatGPT Web → Codex"')
-    || !readFileSync(manifestPath, 'utf8').includes('"preview": "preview.png"')
-    || !readFileSync(manifestPath, 'utf8').includes('"Google Chrome"')
-    || readFileSync(manifestPath, 'utf8').includes('"Safari"')) {
-    writeFileSync(manifestPath, CHATGPT_TO_CODEX_MANIFEST);
-  }
-  const previewPath = join(attunementRoot, 'preview.png');
-  const bundledPreviewPath = join(__dirname, 'assets', 'chatgpt-to-codex-preview.png');
-  if (!existsSync(previewPath) && existsSync(bundledPreviewPath)) {
-    copyFileSync(bundledPreviewPath, previewPath);
-  }
-  const stylesheetPath = join(appsRoot, 'codex-chatgpt-import.css');
-  if (!existsSync(stylesheetPath) || readFileSync(stylesheetPath, 'utf8').includes('/* Attune managed: chatgpt-to-codex */')) {
-    writeFileSync(stylesheetPath, CHATGPT_TO_CODEX_CSS);
-  }
-  const chromeStylesheetPath = join(appsRoot, 'chrome-chatgpt-to-codex.css');
-  if (!existsSync(chromeStylesheetPath) || !readFileSync(chromeStylesheetPath, 'utf8').includes('/* Attune managed: chatgpt-to-codex browser source v20 */')) {
-    writeFileSync(chromeStylesheetPath, CHATGPT_TO_CODEX_BROWSER_CSS);
-  }
-}
-
-function seedCodexLinearTodosAttunement(workspacesRoot: string): void {
-  const attunementRoot = join(workspacesRoot, CODEX_LINEAR_TODOS_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  mkdirSync(appsRoot, { recursive: true });
-
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  if (!existsSync(manifestPath)
-    || readFileSync(manifestPath, 'utf8').includes('"name": "Linear To-dos in Codex"')
-    || readFileSync(manifestPath, 'utf8').includes('"preview": "preview.svg"')) {
-    writeFileSync(manifestPath, CODEX_LINEAR_TODOS_MANIFEST);
-  }
-  const previewPath = join(attunementRoot, 'preview.png');
-  const bundledPreviewPath = join(__dirname, 'assets', CODEX_LINEAR_TODOS_PREVIEW_ASSET);
-  if (existsSync(bundledPreviewPath)) {
-    copyFileSync(bundledPreviewPath, previewPath);
-  }
-  writeSeedFile(join(attunementRoot, 'preview.svg'), CODEX_LINEAR_TODOS_PREVIEW_SVG);
-
-  const linearPatch = join(appsRoot, 'linear-todos-source.css');
-  if (!existsSync(linearPatch) || readFileSync(linearPatch, 'utf8').includes('/* Attune managed: codex-linear-todos source */')) {
-    writeFileSync(linearPatch, CODEX_LINEAR_TODOS_SOURCE_CSS);
-  }
-  const codexPatch = join(appsRoot, 'codex-linear-todos.css');
-  if (!existsSync(codexPatch) || readFileSync(codexPatch, 'utf8').includes('/* Attune managed: codex-linear-todos */')) {
-    writeFileSync(codexPatch, CODEX_LINEAR_TODOS_CODEX_CSS);
-  }
-}
-
-function seedCursorLinearTodosAttunement(workspacesRoot: string): void {
-  const attunementRoot = join(workspacesRoot, CURSOR_LINEAR_TODOS_ATTUNEMENT_ID);
-  const appsRoot = join(attunementRoot, 'apps');
-  mkdirSync(appsRoot, { recursive: true });
-
-  const manifestPath = join(attunementRoot, 'manifest.json');
-  if (!existsSync(manifestPath) || readFileSync(manifestPath, 'utf8').includes('"name": "Linear To-dos in Cursor"')) {
-    writeFileSync(manifestPath, CURSOR_LINEAR_TODOS_MANIFEST);
-  }
-  const previewPath = join(attunementRoot, 'preview.png');
-  const bundledPreviewPath = join(__dirname, 'assets', CURSOR_LINEAR_TODOS_PREVIEW_ASSET);
-  if (existsSync(bundledPreviewPath)) {
-    copyFileSync(bundledPreviewPath, previewPath);
-  }
-  writeSeedFile(join(attunementRoot, 'preview.svg'), CODEX_LINEAR_TODOS_PREVIEW_SVG);
-
-  const linearPatch = join(appsRoot, 'linear-todos-source.css');
-  if (!existsSync(linearPatch) || readFileSync(linearPatch, 'utf8').includes('/* Attune managed: codex-linear-todos source */')) {
-    writeFileSync(linearPatch, CODEX_LINEAR_TODOS_SOURCE_CSS);
-  }
-  const cursorPatch = join(appsRoot, 'cursor-linear-todos.css');
-  if (!existsSync(cursorPatch) || readFileSync(cursorPatch, 'utf8').includes('/* Attune managed: codex-linear-todos */')) {
-    writeFileSync(cursorPatch, CURSOR_LINEAR_TODOS_CSS);
-  }
-}
-
-function writeSeedFile(filePath: string, contents: string): void {
-  if (!existsSync(filePath)) {
-    writeFileSync(filePath, contents);
-  }
-}
-
-function seedEditableArrakisTheme(themesRoot: string, attuneRoot: string): void {
-  const arrakisSource = join(attuneRoot, 'themes', DEFAULT_THEME_ID);
-  if (!existsSync(arrakisSource)) return;
-
-  const arrakisTheme = join(themesRoot, DEFAULT_THEME_ID);
-  if (!existsSync(arrakisTheme)) {
-    const oldReference = join(themesRoot, '_reference', DEFAULT_THEME_ID);
-    const seedSource = existsSync(oldReference) ? oldReference : arrakisSource;
-    cpSync(seedSource, arrakisTheme, {
-      recursive: true,
-      force: false,
-      errorOnExist: false,
-    });
-  }
-
-  const arrakisImageSource = getBundledThemeWallpaperPath(DEFAULT_THEME_ID, attuneRoot);
-  const arrakisImageTarget = join(arrakisTheme, BUILT_IN_THEME_WALLPAPERS[DEFAULT_THEME_ID]);
-  if (arrakisImageSource && !existsSync(arrakisImageTarget)) {
-    copyFileSync(arrakisImageSource, arrakisImageTarget);
-  }
-
-  seedMissingArrakisFont(arrakisSource, arrakisTheme);
-}
-
-function seedMissingArrakisFont(arrakisSource: string, arrakisTheme: string): void {
-  const fontFileName = 'Nasalization-Regular.otf';
-  const bundledFontPath = join(arrakisSource, 'assets', fontFileName);
-  const userFontPath = join(arrakisTheme, 'assets', fontFileName);
-  if (existsSync(bundledFontPath) && !existsSync(userFontPath)) {
-    mkdirSync(dirname(userFontPath), { recursive: true });
-    copyFileSync(bundledFontPath, userFontPath);
-  }
-
-  const userTokensPath = join(arrakisTheme, 'tokens.css');
-  if (!existsSync(userTokensPath)) return;
-
-  const tokens = readFileSync(userTokensPath, 'utf8');
-  if (tokens.includes('font-family: "Nasalization"') || !tokens.includes('--arr-font-ui: "Nasalization"')) {
-    return;
-  }
-
-  const fontFace = `@font-face {
-  font-family: "Nasalization";
-  src: url("./assets/${fontFileName}") format("opentype");
-  font-display: swap;
-  font-style: normal;
-  font-weight: 400;
-}`;
-
-  writeFileSync(userTokensPath, `${fontFace}\n\n${tokens}`);
-}
-
-function getBundledThemeWallpaperPath(themeId: string, attuneRoot = getEnvironment().attuneRoot): string | null {
+function getBundledThemeWallpaperPath(themeId: string, catalogRoot = getEnvironment().catalogRoot): string | null {
   const fileName = BUILT_IN_THEME_WALLPAPERS[themeId];
   if (!fileName) return null;
 
-  const imagePath = join(attuneRoot, 'themes', themeId, fileName);
+  const imagePath = join(catalogRoot, 'themes', themeId, fileName);
   return existsSync(imagePath) ? imagePath : null;
 }
 
@@ -3072,18 +1829,13 @@ async function buildRuntime(): Promise<string> {
   }
 
   const buildOutput = await exec('npm', ['run', 'build'], { cwd: environment.attuneRoot, timeout: 120_000 });
-  const packageJson = JSON.parse(readFileSync(join(environment.attuneRoot, 'package.json'), 'utf8')) as {
-    scripts?: Record<string, string>;
-  };
-  const themeBuildScript = packageJson.scripts?.['build:themes'] ? 'build:themes' : 'build:arrakis';
-  const themeOutput = await exec('npm', ['run', themeBuildScript], { cwd: environment.attuneRoot, timeout: 120_000 });
-  return [buildOutput, themeOutput].filter(Boolean).join('\n').trim() || 'Attune runtime built.';
+  return buildOutput.trim() || 'Attune runtime built.';
 }
 
 function discoverThemes(environment: EnvironmentInfo): ThemeInfo[] {
   const themesById = new Map<string, ThemeInfo>();
 
-  for (const theme of discoverThemesFromDirectory(join(environment.attuneRoot, 'themes'), environment.attuneRoot)) {
+  for (const theme of discoverThemesFromDirectory(join(environment.catalogRoot, 'themes'), environment.catalogRoot)) {
     themesById.set(theme.id, theme);
   }
 
@@ -3214,6 +1966,7 @@ function readThemeManifest(pathBase: string, themeDirectory: string, themeId: st
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
     name?: string;
     description?: string;
+    preview?: string;
     tokens?: string;
     baseLayout?: string;
     adapters?: Record<string, {
@@ -3249,6 +2002,11 @@ function readThemeManifest(pathBase: string, themeDirectory: string, themeId: st
     id: themeId,
     name: manifest.name ?? themeId,
     description: manifest.description ?? '',
+    previewDataUrl: readWorkspacePreviewDataUrl(
+      pathBase,
+      themeDirectory,
+      manifest.preview ?? `${themeId}.jpg`,
+    ),
     tokensPath: manifest.tokens ? resolveThemePath(pathBase, themeDirectory, manifest.tokens) : null,
     baseLayoutPath: manifest.baseLayout ? resolveThemePath(pathBase, themeDirectory, manifest.baseLayout) : null,
     adapters,

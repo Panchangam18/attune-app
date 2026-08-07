@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const attunementRoot = join(root, 'electron', 'assets', 'codex-kanban');
+const attunementRoot = join(root, '..', 'attunements', 'attunements', 'codex-kanban');
 
 test('Chat Kanban declares semantic Codex bindings and separate assets', async () => {
   const manifest = JSON.parse(await readFile(join(attunementRoot, 'manifest.json'), 'utf8'));

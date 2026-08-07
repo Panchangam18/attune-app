@@ -35,6 +35,7 @@ export interface ThemeInfo {
   id: string;
   name: string;
   description: string;
+  previewDataUrl: string | null;
   tokensPath: string | null;
   baseLayoutPath: string | null;
   adapters: ThemeAdapterInfo[];
@@ -69,6 +70,7 @@ export interface WorkspaceInfo {
 
 export interface EnvironmentInfo {
   attuneRoot: string;
+  catalogRoot: string;
   userThemesRoot: string;
   userWorkspacesRoot: string;
   cliPath: string;
