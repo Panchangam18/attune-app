@@ -26,6 +26,7 @@ type BusyAction =
   | 'profile'
   | 'workspace'
   | 'wallpaper'
+  | `agent-integration:${string}`
   | 'open-workspaces'
   | `profile-app:${string}`
   | `workspace-app:${string}`;
@@ -209,6 +210,31 @@ export function App() {
                 onChange={(event) => runAction('wallpaper', () => window.attune.setWallpaperEnabled(event.target.checked), true, false)}
               />
             </label>
+            <div className="setting-group">
+              <div className="setting-group-heading">
+                <span>Coding agent integrations</span>
+                <small>Changes apply to new agent sessions.</small>
+              </div>
+              {snapshot?.agentIntegrations.map((integration) => (
+                <label className="setting-row setting-agent" key={integration.id}>
+                  <span>
+                    {integration.name}
+                    {integration.conflict && <small>A user-managed Attune skill already exists.</small>}
+                  </span>
+                  <input
+                    className="wallpaper-toggle"
+                    type="checkbox"
+                    checked={integration.installed}
+                    disabled={busy !== null || integration.conflict}
+                    aria-label={`Make Attune available to ${integration.name}`}
+                    onChange={(event) => runAction(
+                      `agent-integration:${integration.id}`,
+                      () => window.attune.setAgentIntegration(integration.id, event.target.checked),
+                    )}
+                  />
+                </label>
+              ))}
+            </div>
             <button
               className="setting-row setting-action"
               type="button"

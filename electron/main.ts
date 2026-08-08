@@ -5,6 +5,7 @@ import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
   ActionResult,
+  AgentIntegrationId,
   AttuneAppInfo,
   EnvironmentInfo,
   RuntimeKind,
@@ -21,6 +22,7 @@ import type {
 import { processListHasExecutable } from './process-detection.js';
 import { installCatalogAttunements, resolveCatalogRoot, seedEditableTheme } from './catalog.js';
 import { selectRendererDevServerUrl } from './renderer-source.js';
+import { getAgentIntegrations, setAgentIntegration, syncManagedAgentIntegrations } from './agent-integrations.js';
 
 interface DiscoveredApp {
   name: string;
@@ -904,6 +906,9 @@ function registerIpc(): void {
   ipcMain.handle('attune:set-auto-wrap-enabled', async (_event, payload: { enabled: boolean }) => (
     wrap(() => setAutoWrapEnabled(payload.enabled))
   ));
+  ipcMain.handle('attune:set-agent-integration', async (_event, payload: { agentId: AgentIntegrationId; enabled: boolean }) => (
+    wrap(() => updateAgentIntegration(payload.agentId, payload.enabled))
+  ));
   ipcMain.handle('attune:choose-css-file', async (_event, payload: { appId: string }) => (
     wrap(() => chooseCssFile(payload.appId))
   ));
@@ -935,8 +940,26 @@ async function getSnapshot(): Promise<Snapshot> {
   const profile = readProfile();
   const apps = environment.runtimeBuilt ? await discoverApps(themes, workspaces, profile) : [];
   const targets = buildTargetStatuses(apps, themes, profile);
+  const agentIntegrationOptions = getAgentIntegrationOptions(environment);
+  syncManagedAgentIntegrations(agentIntegrationOptions);
+  const agentIntegrations = getAgentIntegrations(agentIntegrationOptions);
   console.log(`[attune] snapshot complete in ${Date.now() - startedAt}ms`);
-  return { environment, apps, themes, workspaces, profile, targets };
+  return { environment, apps, themes, workspaces, profile, targets, agentIntegrations };
+}
+
+function getAgentIntegrationOptions(environment = getEnvironment()) {
+  return {
+    homePath: app.getPath('home'),
+    userDataPath: app.getPath('userData'),
+    skillSourcePath: join(environment.attuneRoot, 'SKILL.md'),
+    cliPath: environment.cliPath,
+    nodePath: environment.nodePath,
+    electronNode: environment.nodePath === process.execPath,
+  };
+}
+
+function updateAgentIntegration(agentId: AgentIntegrationId, enabled: boolean): string {
+  return setAgentIntegration(getAgentIntegrationOptions(), agentId, enabled);
 }
 
 function getEnvironment(): EnvironmentInfo {

@@ -78,6 +78,16 @@ export interface EnvironmentInfo {
   runtimeBuilt: boolean;
 }
 
+export type AgentIntegrationId = 'codex' | 'cursor' | 'claude';
+
+export interface AgentIntegrationStatus {
+  id: AgentIntegrationId;
+  name: string;
+  installed: boolean;
+  conflict: boolean;
+  skillPath: string;
+}
+
 export interface ThemeProfile {
   activeThemeId: string;
   enabled: boolean;
@@ -110,6 +120,7 @@ export interface Snapshot {
   workspaces: WorkspaceInfo[];
   profile: ThemeProfile;
   targets: ThemeTargetStatus[];
+  agentIntegrations: AgentIntegrationStatus[];
 }
 
 export interface ActionResult<T = unknown> {

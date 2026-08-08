@@ -43,6 +43,20 @@ from the bundled catalog, while user themes override matching catalog IDs.
 If the runtime is not built yet, either run `npm run build` in `../attune` or
 use the app's build button.
 
+## Coding agent integrations
+
+Settings can install Attune's skill for ChatGPT, Cursor, and Claude. Each
+toggle writes an Attune-managed skill to that agent's global skill directory
+and removes only files previously created by Attune. Existing user-managed
+skills are preserved and reported as conflicts.
+
+The installed skill uses a launcher in Attune's application-support directory
+so packaged agents can invoke the bundled runtime. Start a new agent session
+after changing an integration toggle so the agent reloads its skill catalog.
+Enabled managed skills are refreshed from the bundled canonical skill whenever
+Attune reads its state, so runtime and agent instructions remain in sync after
+an app update.
+
 ## Scripts
 
 - `npm run dev` starts Vite and Electron.

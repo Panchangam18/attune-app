@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('attune', {
   setWorkspaceEnabled: (workspaceId: string, enabled: boolean) => invoke('attune:set-workspace-enabled', { workspaceId, enabled }),
   setWorkspaceAppEnabled: (appId: string, enabled: boolean) => invoke('attune:set-workspace-app-enabled', { appId, enabled }),
   setAutoWrapEnabled: (enabled: boolean) => invoke('attune:set-auto-wrap-enabled', { enabled }),
+  setAgentIntegration: (agentId: string, enabled: boolean) => invoke('attune:set-agent-integration', { agentId, enabled }),
   chooseCssFile: (appId: string) => invoke('attune:choose-css-file', { appId }),
   launch: (appId: string) => invoke('attune:launch', { appId }),
   stop: (appId: string) => invoke('attune:stop', { appId }),
