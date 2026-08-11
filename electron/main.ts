@@ -19,10 +19,18 @@ import type {
   WorkspaceBindingInfo,
   WorkspacePatchInfo,
 } from './types.js';
-import { processListHasExecutable } from './process-detection.js';
+import {
+  processListHasExecutable,
+  shouldKeepAttuneWatcherSession,
+  shouldRecoverAttuneSession,
+} from './process-detection.js';
 import { installCatalogAttunements, resolveCatalogRoot, seedEditableTheme } from './catalog.js';
 import { selectRendererDevServerUrl } from './renderer-source.js';
 import { getAgentIntegrations, setAgentIntegration, syncManagedAgentIntegrations } from './agent-integrations.js';
+import {
+  CLAUDE_GPT_MODELS_ATTUNEMENT_ID,
+  configureClaudeGptModels,
+} from './claude-gpt-models.js';
 
 interface DiscoveredApp {
   name: string;
@@ -40,6 +48,7 @@ interface SessionRecord {
   targetCount: number;
   updatedAt: string;
   watcherPid: number;
+  watcherToken?: string;
 }
 
 interface ScanModule {
@@ -95,6 +104,7 @@ const CURSOR_ICON_FONT_GUARD = `/* Cursor's agent UI uses its own icon font. */
 const AUTO_WRAP_INTERVAL_MS = 2000;
 const AUTO_WRAP_COOLDOWN_MS = 15000;
 const CLAUDE_CODEX_PROXY_ENV = 'ATTUNE_CLAUDE_CODEX_PROXY_ENABLED';
+const CLAUDE_GPT_MODELS_ENV = 'ATTUNE_CLAUDE_GPT_MODELS_ENABLED';
 const LINEAR_TODOS_BRIDGE_KEY = 'linear-todos';
 const LINEAR_TODOS_COMPLETION_BRIDGE_KEY = 'linear-todos-completion';
 const LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY = 'linear-completed-slack-dm';
@@ -1322,14 +1332,29 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
     enabledWorkspaceAppIds: targetApps.map((target) => target.appId),
   };
   const isClaudeModelsToggle = workspaceId === CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID;
+  const isClaudeGptModelsToggle = workspaceId === CLAUDE_GPT_MODELS_ATTUNEMENT_ID;
+
+  const claudeBridgeChange = isClaudeGptModelsToggle
+    ? configureClaudeGptModels({
+      homePath: app.getPath('home'),
+      attuneUserDataPath: app.getPath('userData'),
+      enabled,
+    })
+    : null;
 
   for (const target of discoveredApps.filter((candidate) => changedAppIds.has(candidate.appId))) {
     applyCompositeStylesheet(target.appId, target.appInfo.name, configModule, themes, workspaces, newProfile);
   }
-
   writeProfile(newProfile);
   let restartedChatGpt = false;
+  let restartedClaude = false;
   for (const target of discoveredApps.filter((candidate) => changedAppIds.has(candidate.appId))) {
+    if (isClaudeGptModelsToggle && isClaudeDesktop(target.appInfo)) {
+      restartedClaude = enabled
+        ? await restartRunningAppThroughAttune(target.appInfo, target.appId, scanModule)
+        : await restartRunningAppNormally(target.appInfo, target.appId, scanModule);
+      continue;
+    }
     if (isClaudeModelsToggle && isChatGptDesktop(target.appInfo)) {
       restartedChatGpt = await restartRunningAppThroughAttune(
         target.appInfo,
@@ -1354,6 +1379,13 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
   void runAutoWrapPass();
 
   if (!enabled) {
+    if (isClaudeGptModelsToggle) {
+      return restartedClaude
+        ? `${workspace.name} attunement disabled and Claude restarted normally in first-party mode.`
+        : claudeBridgeChange?.changed
+          ? `${workspace.name} attunement disabled. Claude will remain in first-party mode on its next launch.`
+          : `${workspace.name} attunement disabled.`;
+    }
     if (!isClaudeModelsToggle) return `${workspace.name} attunement disabled.`;
     return restartedChatGpt
       ? `${workspace.name} attunement disabled and ChatGPT restarted.`
@@ -1363,6 +1395,13 @@ async function setWorkspaceEnabled(workspaceId: string, enabled: boolean): Promi
     return `${workspace.name} attunement enabled, but no matching apps were found.`;
   }
   const appNames = targetApps.map((target) => target.appInfo.name).join(', ');
+  if (isClaudeGptModelsToggle) {
+    return restartedClaude
+      ? `${workspace.name} attunement enabled for ${appNames}; Claude restarted with Claude and GPT models together.`
+      : claudeBridgeChange?.changed
+        ? `${workspace.name} attunement enabled for ${appNames}. Claude and GPT models will appear together on Claude's next launch.`
+        : `${workspace.name} attunement enabled for ${appNames}. It will apply the next time Claude launches through Attune.`;
+  }
   if (!isClaudeModelsToggle) {
     return `${workspace.name} attunement enabled for ${appNames}. Launch or reopen those apps to see it.`;
   }
@@ -1402,14 +1441,28 @@ async function setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<
     autoWrapEnabled: enabled ? true : profile.autoWrapEnabled,
     enabledWorkspaceAppIds: [...enabledWorkspaceAppIds],
   };
-  applyCompositeStylesheet(appId, appInfo.name, configModule, themes, workspaces, newProfile);
-  writeProfile(newProfile);
   const isClaudeModelsChatGpt = profile.activeWorkspaceId === CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID
     && isChatGptDesktop(appInfo);
+  const isClaudeGptModelsClaude = profile.activeWorkspaceId === CLAUDE_GPT_MODELS_ATTUNEMENT_ID
+    && isClaudeDesktop(appInfo);
+  const claudeBridgeChange = isClaudeGptModelsClaude
+    ? configureClaudeGptModels({
+      homePath: app.getPath('home'),
+      attuneUserDataPath: app.getPath('userData'),
+      enabled,
+    })
+    : null;
+  applyCompositeStylesheet(appId, appInfo.name, configModule, themes, workspaces, newProfile);
+  writeProfile(newProfile);
   const restartedChatGpt = isClaudeModelsChatGpt
     ? await restartRunningAppThroughAttune(appInfo, appId, scanModule)
     : false;
-  if (enabled && !isClaudeModelsChatGpt) {
+  const restartedClaude = isClaudeGptModelsClaude
+    ? enabled
+      ? await restartRunningAppThroughAttune(appInfo, appId, scanModule)
+      : await restartRunningAppNormally(appInfo, appId, scanModule)
+    : false;
+  if (enabled && !isClaudeModelsChatGpt && !isClaudeGptModelsClaude) {
     await attachRunningSessionIfAvailable(appInfo, appId, environment, scanModule);
     void runAutoWrapPass();
   }
@@ -1419,6 +1472,13 @@ async function setWorkspaceAppEnabled(appId: string, enabled: boolean): Promise<
   }
   if (isClaudeModelsChatGpt) {
     return `${workspace.name} attunement ${enabled ? 'enabled' : 'disabled'} for ${appInfo.name}. It will apply the next time ChatGPT launches.`;
+  }
+  if (isClaudeGptModelsClaude) {
+    return restartedClaude
+      ? `${workspace.name} attunement ${enabled ? 'enabled' : 'disabled'} for ${appInfo.name}; Claude restarted.`
+      : claudeBridgeChange?.changed
+        ? `${workspace.name} attunement ${enabled ? 'enabled' : 'disabled'} for ${appInfo.name}. It will apply on Claude's next launch.`
+        : `${workspace.name} attunement ${enabled ? 'enabled' : 'disabled'} for ${appInfo.name}.`;
   }
   return `${workspace.name} attunement ${enabled ? 'enabled' : 'disabled'} for ${appInfo.name}.`;
 }
@@ -1670,6 +1730,7 @@ async function launchApp(appId: string): Promise<string> {
   const launchEnvironment = {
     ...runtimeNodeEnvironment(environment),
     [CLAUDE_CODEX_PROXY_ENV]: isClaudeCodexProxyEnabled(profile, appId, appInfo) ? '1' : '0',
+    [CLAUDE_GPT_MODELS_ENV]: isClaudeGptModelsEnabled(profile, appId, appInfo) ? '1' : '0',
   };
   const output = await exec(environment.nodePath, [environment.cliPath, 'launch', appInfo.name], {
     cwd: environment.attuneRoot,
@@ -1693,10 +1754,33 @@ function isChatGptDesktop(appInfo: DiscoveredApp): boolean {
   return appInfo.bundleId === 'com.openai.codex';
 }
 
+function isClaudeDesktop(appInfo: DiscoveredApp): boolean {
+  return appInfo.bundleId === 'com.anthropic.claudefordesktop';
+}
+
+function isClaudeGptModelsEnabled(
+  profile: ThemeProfile,
+  appId: string,
+  appInfo: DiscoveredApp,
+): boolean {
+  return isClaudeDesktop(appInfo)
+    && profile.workspaceEnabled
+    && profile.enabledWorkspaceIds.includes(CLAUDE_GPT_MODELS_ATTUNEMENT_ID)
+    && profile.enabledWorkspaceAppIds.includes(appId);
+}
+
 async function ensureConfiguredForLaunch(appInfo: DiscoveredApp, appId: string): Promise<void> {
   const profile = readProfile();
   const styledAppIds = getEnabledStyleAppIds(profile);
   if (!styledAppIds.has(appId)) return;
+
+  if (isClaudeGptModelsEnabled(profile, appId, appInfo)) {
+    configureClaudeGptModels({
+      homePath: app.getPath('home'),
+      attuneUserDataPath: app.getPath('userData'),
+      enabled: true,
+    });
+  }
 
   const environment = getEnvironment();
   const configModule = await loadAttuneModule<ConfigModule>('config.js');
@@ -1742,7 +1826,9 @@ async function runAutoWrapPass(): Promise<void> {
     ]);
     const apps = scanModule.scanForSupportedApps()
       .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }))
-      .filter((target) => styledAppIds.has(target.appId));
+      .filter((target) => styledAppIds.has(target.appId))
+      .filter((target) => !isClaudeDesktop(target.appInfo)
+        || isClaudeGptModelsEnabled(profile, target.appId, target.appInfo));
 
     for (const target of apps) {
       const now = Date.now();
@@ -1750,7 +1836,26 @@ async function runAutoWrapPass(): Promise<void> {
       if ((lastWrapAtByAppId.get(target.appId) ?? 0) + AUTO_WRAP_COOLDOWN_MS > now) continue;
 
       const session = sessionModule.getSession(target.appId);
-      if (session && session.status !== 'waiting') continue;
+      if (session) {
+        const watcherAlive = isProcessIdRunning(session.watcherPid);
+        const persistentWhileWaiting = isClaudeGptModelsEnabled(
+          profile,
+          target.appId,
+          target.appInfo,
+        );
+        if (shouldKeepAttuneWatcherSession(
+          session,
+          watcherAlive,
+          persistentWhileWaiting,
+          now,
+        )) continue;
+        if (shouldRecoverAttuneSession(session, watcherAlive, now)) {
+          console.warn(
+            `[attune] recovering stale session for ${target.appInfo.name}`,
+            { watcherAlive, watcherPid: session.watcherPid, updatedAt: session.updatedAt },
+          );
+        }
+      }
 
       const executablePath = scanModule.getAppExecutablePath(target.appInfo);
       if (!await isProcessRunning(executablePath)) continue;
@@ -1785,6 +1890,8 @@ async function restartRunningAppThroughAttune(
   appId: string,
   scanModule: ScanModule,
 ): Promise<boolean> {
+  const sessionModule = await loadAttuneModule<SessionModule>('session.js');
+  sessionModule.stopSession(appId);
   const executablePath = scanModule.getAppExecutablePath(appInfo);
   if (!await isProcessRunning(executablePath)) return false;
 
@@ -1794,6 +1901,32 @@ async function restartRunningAppThroughAttune(
     await quitApp(appInfo);
     await waitForProcessExit(executablePath, 10000);
     await launchApp(appId);
+    mainWindow?.webContents.send('attune:auto-wrap-event', {
+      appId,
+      appName: appInfo.name,
+    });
+    return true;
+  } finally {
+    wrappingAppIds.delete(appId);
+  }
+}
+
+async function restartRunningAppNormally(
+  appInfo: DiscoveredApp,
+  appId: string,
+  scanModule: ScanModule,
+): Promise<boolean> {
+  const sessionModule = await loadAttuneModule<SessionModule>('session.js');
+  sessionModule.stopSession(appId);
+  const executablePath = scanModule.getAppExecutablePath(appInfo);
+  if (!await isProcessRunning(executablePath)) return false;
+
+  wrappingAppIds.add(appId);
+  lastWrapAtByAppId.set(appId, Date.now());
+  try {
+    await quitApp(appInfo);
+    await waitForProcessExit(executablePath, 10000);
+    await exec('/usr/bin/open', [appInfo.path], { cwd: process.cwd() });
     mainWindow?.webContents.send('attune:auto-wrap-event', {
       appId,
       appName: appInfo.name,
@@ -1837,6 +1970,16 @@ async function isProcessRunning(executablePath: string): Promise<boolean> {
     return processListHasExecutable(processList, executablePath);
   } catch {
     return false;
+  }
+}
+
+function isProcessIdRunning(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return Boolean(error && typeof error === 'object' && 'code' in error && error.code === 'EPERM');
   }
 }
 
