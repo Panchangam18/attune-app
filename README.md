@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/Panchangam18/attune-app/releases/download/v0.1.18/Attune-0.1.18-mac-universal.dmg">
+  <a href="https://github.com/Panchangam18/attune-app/releases/download/v0.1.19/Attune-0.1.19-mac-universal.dmg">
     <img src="public/readme-icon.svg" width="144" alt="Download the latest Attune release for macOS">
   </a>
 </p>
