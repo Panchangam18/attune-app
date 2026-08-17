@@ -51,6 +51,30 @@ async function run() {
   );
   if (!pickerVisible) throw new Error('The picker overlay was not installed.');
 
+  const hierarchyNavigation = await window.webContents.executeJavaScript(`(() => {
+    const span = document.querySelector('button span');
+    const bounds = span.getBoundingClientRect();
+    span.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      composed: true,
+      clientX: bounds.x + bounds.width / 2,
+      clientY: bounds.y + bounds.height / 2,
+    }));
+    const label = document.querySelector('[data-attune-element-picker="label"]');
+    const before = label.textContent;
+    const movedUp = window.__attuneElementPickerCommand?.('up');
+    const afterUp = label.textContent;
+    const movedDown = window.__attuneElementPickerCommand?.('down');
+    const afterDown = label.textContent;
+    return { before, movedUp, afterUp, movedDown, afterDown };
+  })()`);
+  if (!hierarchyNavigation.movedUp || !hierarchyNavigation.afterUp.includes('<header>')) {
+    throw new Error(`Picker did not navigate to the parent: ${JSON.stringify(hierarchyNavigation)}`);
+  }
+  if (!hierarchyNavigation.movedDown || !hierarchyNavigation.afterDown.includes('<button>')) {
+    throw new Error(`Picker did not navigate back to the child: ${JSON.stringify(hierarchyNavigation)}`);
+  }
+
   await window.webContents.executeJavaScript(`(() => {
     const span = document.querySelector('button span');
     const bounds = span.getBoundingClientRect();

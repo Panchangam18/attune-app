@@ -463,6 +463,7 @@ function runElementPicker(
       else root.setAttribute(pickerActiveAttribute, previousPickerActiveValue);
       if (win.__attuneElementPickerCleanup === cancel) delete win.__attuneElementPickerCleanup;
       if (win.__attuneElementPickerComplete === complete) delete win.__attuneElementPickerComplete;
+      if (win.__attuneElementPickerCommand === applyPickerCommand) delete win.__attuneElementPickerCommand;
     };
     const finish = (result: Record<string, unknown>) => {
       if (settled) return;
@@ -537,26 +538,27 @@ function runElementPicker(
           : 'Selected — copying reference…';
       runtime.setTimeout(() => { if (label.isConnected) cancel('copy-timeout'); }, 5000);
     }
-    function onKeyDown(event: any) {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation?.();
+    function applyPickerCommand(command: string) {
+      if (command === 'cancel') {
         cancel('escape');
-        return;
+        return true;
       }
-      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation?.();
-        return;
+      if (command !== 'up' && command !== 'down') return false;
+      if (chain.length) {
+        if (command === 'up') chainIndex = Math.min(chain.length - 1, chainIndex + 1);
+        else chainIndex = Math.max(0, chainIndex - 1);
       }
+      positionOverlay();
+      return true;
+    }
+    function onKeyDown(event: any) {
+      const command = event.key === 'Escape'
+        ? 'cancel'
+        : event.key === 'ArrowUp' ? 'up' : event.key === 'ArrowDown' ? 'down' : null;
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();
-      if (event.key === 'ArrowUp') chainIndex = Math.min(chain.length - 1, chainIndex + 1);
-      else chainIndex = Math.max(0, chainIndex - 1);
-      positionOverlay();
+      if (command) applyPickerCommand(command);
     }
 
     const blockedEventNames = [
@@ -593,5 +595,6 @@ function runElementPicker(
     const timeout = runtime.setTimeout(() => cancel('timeout'), timeoutMs);
     win.__attuneElementPickerCleanup = cancel;
     win.__attuneElementPickerComplete = complete;
+    win.__attuneElementPickerCommand = applyPickerCommand;
   });
 }

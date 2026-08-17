@@ -53,6 +53,7 @@ test('builds a self-contained picker expression with the global shortcut afforda
   assert.doesNotThrow(() => new Function(`return ${expression}`));
   assert.match(expression, /data-attune-element-picker/);
   assert.match(expression, /ArrowUp/);
+  assert.match(expression, /__attuneElementPickerCommand/);
   assert.match(expression, /stopImmediatePropagation/);
   assert.match(expression, /data-attune-element-picker=.freeze/);
   assert.match(expression, /animation-play-state: paused/);

@@ -299,8 +299,10 @@ let chromeSlashRefreshTimer: NodeJS.Timeout | null = null;
 let scaffoldRefreshTimer: NodeJS.Timeout | null = null;
 let elementPickerRunning = false;
 let activeElementPickerTarget: ElementPickerTarget | null = null;
+let elementPickerNavigationQueue = Promise.resolve();
 let pendingComponentSmuggle: PendingComponentSmuggle | null = null;
 let activeComponentSmuggle: ComponentSmuggleBridge | null = null;
+const activeElementPickerNavigationAccelerators = new Set<string>();
 const scaffoldWatchers: FSWatcher[] = [];
 const wrappingAppIds = new Set<string>();
 const lastWrapAtByAppId = new Map<string, number>();
@@ -352,6 +354,7 @@ app.on('before-quit', () => {
   if (chatGptClipboardTimer) clearInterval(chatGptClipboardTimer);
   if (scaffoldRefreshTimer) clearTimeout(scaffoldRefreshTimer);
   globalShortcut.unregister(ELEMENT_PICKER_ACCELERATOR);
+  unregisterElementPickerNavigationShortcuts();
   if (pendingComponentSmuggle) clearTimeout(pendingComponentSmuggle.timeout);
   void activeComponentSmuggle?.stop();
   for (const watcher of scaffoldWatchers.splice(0)) watcher.close();
@@ -409,6 +412,45 @@ function triggerElementPickerShortcut(source: string, preferredBrowser?: 'safari
   });
 }
 
+function unregisterElementPickerNavigationShortcuts(): void {
+  for (const accelerator of activeElementPickerNavigationAccelerators) {
+    globalShortcut.unregister(accelerator);
+  }
+  activeElementPickerNavigationAccelerators.clear();
+  elementPickerNavigationQueue = Promise.resolve();
+}
+
+function registerElementPickerNavigationShortcuts(target: ElementPickerTarget): void {
+  unregisterElementPickerNavigationShortcuts();
+  const commands = [
+    ['Up', 'up'],
+    ['Down', 'down'],
+    ['Escape', 'cancel'],
+  ] as const;
+  for (const [accelerator, command] of commands) {
+    const registered = globalShortcut.register(accelerator, () => {
+      if (!elementPickerRunning || activeElementPickerTarget !== target) return;
+      elementPickerNavigationQueue = elementPickerNavigationQueue
+        .catch(() => undefined)
+        .then(async () => {
+          if (!elementPickerRunning || activeElementPickerTarget !== target) return;
+          await evaluateElementPickerTargetJson(
+            target,
+            `JSON.stringify(Boolean(window.__attuneElementPickerCommand?.(${JSON.stringify(command)})))`,
+          );
+        })
+        .catch((error) => {
+          console.warn(
+            `[attune] element picker ${command} command failed:`,
+            error instanceof Error ? error.message : String(error),
+          );
+        });
+    });
+    if (registered) activeElementPickerNavigationAccelerators.add(accelerator);
+    else console.warn(`[attune] unable to register element picker navigation key ${accelerator}`);
+  }
+}
+
 async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promise<void> {
   if (elementPickerRunning) {
     if (activeElementPickerTarget) {
@@ -447,6 +489,7 @@ async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promi
     const frozenFrameDataUrl = target.transport === 'cdp'
       ? await capturePageScreenshot(target.webSocketDebuggerUrl)
       : null;
+    registerElementPickerNavigationShortcuts(target);
     const rawResult = await runElementPickerOnTarget(
       target,
       buildElementPickerExpression(target.appName, frozenFrameDataUrl, {
@@ -539,6 +582,7 @@ async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promi
     console.warn('[attune] element picker failed:', message);
     showElementPickerNotice(message);
   } finally {
+    unregisterElementPickerNavigationShortcuts();
     activeElementPickerTarget = null;
     elementPickerRunning = false;
   }
