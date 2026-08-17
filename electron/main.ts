@@ -1,6 +1,7 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, shell, type NativeImage, type OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, Menu, Notification, shell, type NativeImage, type OpenDialogOptions } from 'electron';
 import { execFile, spawn } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type {
@@ -31,6 +32,28 @@ import {
   CLAUDE_GPT_MODELS_ATTUNEMENT_ID,
   configureClaudeGptModels,
 } from './claude-gpt-models.js';
+import {
+  buildElementPickerExpression,
+  ELEMENT_PICKER_ACCELERATOR,
+  ELEMENT_PICKER_TIMEOUT_MS,
+  ELEMENT_SELECTION_TTL_MS,
+  formatElementReference,
+  isElementPickerResult,
+  type ElementPickerSelection,
+  type ElementSelectionReceipt,
+} from './element-picker.js';
+import {
+  ComponentSmuggleBridge,
+  componentSmuggleAnchor,
+  componentSmuggleGlobalCaptureRectangle,
+  type ComponentSmuggleCaptureRegion,
+  type ComponentSmuggleKeyChord,
+  type ComponentSmuggleSpec,
+} from './component-smuggler.js';
+import {
+  SafariAppleEventsPageClient,
+  type SafariPageReference,
+} from './safari-page-client.js';
 
 interface DiscoveredApp {
   name: string;
@@ -49,6 +72,22 @@ interface SessionRecord {
   updatedAt: string;
   watcherPid: number;
   watcherToken?: string;
+}
+
+interface ElementPickerTarget {
+  appId: string;
+  appName: string;
+  appPid?: number;
+  transport: 'cdp' | 'safari-apple-events';
+  webSocketDebuggerUrl: string;
+  safariPage?: SafariPageReference;
+}
+
+interface PendingComponentSmuggle {
+  target: ElementPickerTarget;
+  selection: ElementPickerSelection;
+  anchorToken: string;
+  timeout: NodeJS.Timeout;
 }
 
 interface ScanModule {
@@ -253,9 +292,15 @@ let linearTodosBridgeTimer: NodeJS.Timeout | null = null;
 let chatGptClipboardTimer: NodeJS.Timeout | null = null;
 let browserSlashMonitorProcess: ReturnType<typeof spawn> | null = null;
 let browserSlashMonitorStopped = false;
+let lastElementPickerShortcutAt = 0;
+let pendingGlobalElementPickerTimer: NodeJS.Timeout | null = null;
 let safariSlashInjectionTimer: NodeJS.Timeout | null = null;
 let chromeSlashRefreshTimer: NodeJS.Timeout | null = null;
 let scaffoldRefreshTimer: NodeJS.Timeout | null = null;
+let elementPickerRunning = false;
+let activeElementPickerTarget: ElementPickerTarget | null = null;
+let pendingComponentSmuggle: PendingComponentSmuggle | null = null;
+let activeComponentSmuggle: ComponentSmuggleBridge | null = null;
 const scaffoldWatchers: FSWatcher[] = [];
 const wrappingAppIds = new Set<string>();
 const lastWrapAtByAppId = new Map<string, number>();
@@ -278,6 +323,7 @@ app.whenReady().then(() => {
   registerIpc();
   createWindow();
   installApplicationMenu();
+  registerElementPickerShortcut();
   startAutoWrapMonitor();
   startLinearTodosBridge();
   startChatGptClipboardBridge();
@@ -300,10 +346,14 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   browserSlashMonitorStopped = true;
   browserSlashMonitorProcess?.kill();
+  if (pendingGlobalElementPickerTimer) clearTimeout(pendingGlobalElementPickerTimer);
   if (safariSlashInjectionTimer) clearTimeout(safariSlashInjectionTimer);
   if (chromeSlashRefreshTimer) clearTimeout(chromeSlashRefreshTimer);
   if (chatGptClipboardTimer) clearInterval(chatGptClipboardTimer);
   if (scaffoldRefreshTimer) clearTimeout(scaffoldRefreshTimer);
+  globalShortcut.unregister(ELEMENT_PICKER_ACCELERATOR);
+  if (pendingComponentSmuggle) clearTimeout(pendingComponentSmuggle.timeout);
+  void activeComponentSmuggle?.stop();
   for (const watcher of scaffoldWatchers.splice(0)) watcher.close();
 });
 
@@ -327,6 +377,359 @@ function installApplicationMenu(): void {
       ],
     },
   ]));
+}
+
+function registerElementPickerShortcut(): void {
+  const registered = globalShortcut.register(ELEMENT_PICKER_ACCELERATOR, () => {
+    if (pendingGlobalElementPickerTimer) clearTimeout(pendingGlobalElementPickerTimer);
+    // The native browser monitor also sees this chord and knows which browser
+    // owns it. Give that richer signal a brief chance to arrive before using
+    // the generic Electron fallback for desktop apps.
+    pendingGlobalElementPickerTimer = setTimeout(() => {
+      pendingGlobalElementPickerTimer = null;
+      triggerElementPickerShortcut('electron-global-shortcut');
+    }, 75);
+    pendingGlobalElementPickerTimer.unref();
+  });
+  if (!registered) {
+    console.warn(`[attune] unable to register element picker shortcut ${ELEMENT_PICKER_ACCELERATOR}`);
+  }
+}
+
+function triggerElementPickerShortcut(source: string, preferredBrowser?: 'safari' | 'chrome'): void {
+  const now = Date.now();
+  if (now - lastElementPickerShortcutAt < 500) {
+    console.log(`[attune] ignored duplicate element picker shortcut from ${source}`);
+    return;
+  }
+  lastElementPickerShortcutAt = now;
+  console.log(`[attune] element picker shortcut from ${source}`);
+  void startElementPicker(preferredBrowser).catch((error) => {
+    console.warn('[attune] element picker shortcut failed:', error instanceof Error ? error.message : String(error));
+  });
+}
+
+async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promise<void> {
+  if (elementPickerRunning) {
+    if (activeElementPickerTarget) {
+      try {
+        await evaluateElementPickerTargetJson(
+          activeElementPickerTarget,
+          `JSON.stringify((() => { window.__attuneElementPickerCleanup?.('shortcut'); return true; })())`,
+        );
+      } catch (error) {
+        console.warn('[attune] unable to cancel active element picker:', error instanceof Error ? error.message : String(error));
+      }
+    }
+    return;
+  }
+
+  elementPickerRunning = true;
+  let target: ElementPickerTarget | null = null;
+  const anchorToken = randomUUID();
+  try {
+    target = await findFocusedElementPickerTarget(preferredBrowser);
+    if (!target) {
+      showElementPickerNotice('Bring an app opened through Attune to the front, then press ⌥⌘A again.');
+      return;
+    }
+    const pendingSource = pendingComponentSmuggle;
+    if (pendingSource && pendingSource.target.webSocketDebuggerUrl === target.webSocketDebuggerUrl) {
+      showElementPickerNotice('Bring a different app opened through Attune to the front, then press ⌥⌘A to choose the destination.');
+      return;
+    }
+    if (pendingSource && target.transport === 'safari-apple-events') {
+      showElementPickerNotice('Safari can currently supply a component; choose an Attune-opened app as this smuggle\'s destination.');
+      return;
+    }
+
+    activeElementPickerTarget = target;
+    const frozenFrameDataUrl = target.transport === 'cdp'
+      ? await capturePageScreenshot(target.webSocketDebuggerUrl)
+      : null;
+    const rawResult = await runElementPickerOnTarget(
+      target,
+      buildElementPickerExpression(target.appName, frozenFrameDataUrl, {
+        mode: pendingSource ? 'smuggle-target' : 'reference',
+        anchorToken,
+      }),
+    );
+    if (!isElementPickerResult(rawResult)) {
+      throw new Error(`Attune lost its connection to ${target.appName} before an element was selected.`);
+    }
+    if (rawResult.status === 'cancelled') return;
+
+    if (pendingSource) {
+      const bridge = new ComponentSmuggleBridge(
+        {
+          ...pendingSource.target,
+          anchor: componentSmuggleAnchor(pendingSource.selection, pendingSource.anchorToken),
+        },
+        {
+          ...target,
+          anchor: componentSmuggleAnchor(rawResult, anchorToken),
+        },
+        (reason, error) => {
+          if (activeComponentSmuggle === bridge) activeComponentSmuggle = null;
+          if (reason === 'error') showElementPickerNotice(`Component smuggling stopped: ${error?.message || 'renderer disconnected'}`);
+        },
+        (chord) => forwardComponentSmuggleKeyChord(pendingSource.target.appPid, chord),
+        (region, onFrame) => startComponentSmuggleWindowStream(pendingSource.target.appPid, region, onFrame),
+        {
+          source: pendingSource.target.safariPage
+            ? new SafariAppleEventsPageClient(
+              pendingSource.target.safariPage,
+              (chord) => forwardComponentSmuggleKeyChord(pendingSource.target.appPid, chord),
+            )
+            : undefined,
+        },
+      );
+      await activeComponentSmuggle?.stop();
+      await bridge.start();
+      activeComponentSmuggle = bridge;
+      clearTimeout(pendingSource.timeout);
+      pendingComponentSmuggle = null;
+      saveComponentSmuggleSpec(pendingSource, target, rawResult, anchorToken);
+      await evaluateElementPickerTargetJson(
+        target,
+        `JSON.stringify((() => { window.__attuneElementPickerComplete?.(); return true; })())`,
+      );
+      const placementLabel = rawResult.placement === 'left'
+        ? 'in the left side of'
+        : rawResult.placement === 'right' ? 'in the right side of' : 'inside';
+      showElementPickerNotice(`Smuggling ${pendingSource.target.appName} component ${placementLabel} the selected ${target.appName} component. Use the × control on the transplant to stop.`);
+      return;
+    }
+
+    const { receipt, receiptPath } = saveElementSelection(target, rawResult);
+    if (rawResult.intent === 'smuggle-source') {
+      const timeout = setTimeout(() => {
+        const pending = pendingComponentSmuggle;
+        if (!pending || pending.anchorToken !== anchorToken) return;
+        pendingComponentSmuggle = null;
+        void removeSmuggleAnchor(pending.target, pending.anchorToken);
+        showElementPickerNotice('The pending component smuggle expired. Option-click the source again to restart.');
+      }, ELEMENT_PICKER_TIMEOUT_MS);
+      pendingComponentSmuggle = { target, selection: rawResult, anchorToken, timeout };
+      await evaluateElementPickerTargetJson(
+        target,
+        `JSON.stringify((() => { window.__attuneElementPickerComplete?.(); return true; })())`,
+      );
+      showElementPickerNotice(`Source selected in ${target.appName}. In the destination, press ⌥⌘A, then click the left edge, center, or right edge of a component to choose placement.`);
+      return;
+    }
+    clipboard.writeText(formatElementReference(receipt, receiptPath));
+    await evaluateElementPickerTargetJson(
+      target,
+      `JSON.stringify((() => { window.__attuneElementPickerComplete?.(); return true; })())`,
+    );
+  } catch (error) {
+    if (target?.webSocketDebuggerUrl) {
+      try {
+        await evaluateElementPickerTargetJson(
+          target,
+          `JSON.stringify((() => { window.__attuneElementPickerCleanup?.('error'); return true; })())`,
+        );
+        await removeSmuggleAnchor(target, anchorToken);
+      } catch (cleanupError) {
+        console.warn('[attune] element picker cleanup failed:', cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+      }
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn('[attune] element picker failed:', message);
+    showElementPickerNotice(message);
+  } finally {
+    activeElementPickerTarget = null;
+    elementPickerRunning = false;
+  }
+}
+
+async function findFocusedElementPickerTarget(preferredBrowser?: 'safari' | 'chrome'): Promise<ElementPickerTarget | null> {
+  if (preferredBrowser === 'safari') {
+    return findFocusedSafariElementPickerTarget(true);
+  }
+  const [scanModule, sessionModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<SessionModule>('session.js'),
+  ]);
+  const attachedApps = scanModule.scanForSupportedApps().flatMap((appInfo) => {
+    const appId = scanModule.getAppId(appInfo);
+    const session = sessionModule.getSession(appId);
+    return session?.status === 'attached' ? [{ appInfo, appId, session }] : [];
+  });
+  const pageTargets = (await Promise.all(attachedApps.map(async ({ appInfo, appId, session }) => {
+    try {
+      const response = await fetch(`http://127.0.0.1:${session.port}/json`, {
+        signal: AbortSignal.timeout(1_000),
+      });
+      if (!response.ok) return [];
+      const targets = await response.json() as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
+      return targets
+        .filter((candidate) => candidate.type === 'page' && candidate.webSocketDebuggerUrl)
+        .map((candidate) => ({
+          appId,
+          appName: appInfo.name,
+          appPid: session.appPid,
+          transport: 'cdp',
+          webSocketDebuggerUrl: candidate.webSocketDebuggerUrl!,
+        } satisfies ElementPickerTarget));
+    } catch {
+      return [];
+    }
+  }))).flat();
+
+  const eligiblePageTargets = preferredBrowser === 'chrome'
+    ? pageTargets.filter((candidate) => candidate.appId.startsWith('com.google.Chrome') || candidate.appName.toLowerCase().includes('chrome'))
+    : pageTargets;
+  const probes = await Promise.all(eligiblePageTargets.map(async (candidate) => {
+    const focus = await evaluatePageJson(
+      candidate.webSocketDebuggerUrl,
+      `JSON.stringify({ focused: document.hasFocus(), visibility: document.visibilityState })`,
+      false,
+      800,
+    ) as { focused?: boolean; visibility?: string } | null;
+    return { candidate, focused: focus?.focused === true, visible: focus?.visibility === 'visible' };
+  }));
+  return (probes.find((probe) => probe.focused)
+    ?? (preferredBrowser === 'chrome' ? probes.find((probe) => probe.visible) : undefined))?.candidate
+    ?? (preferredBrowser === 'chrome' ? null : await findFocusedSafariElementPickerTarget());
+}
+
+async function findFocusedSafariElementPickerTarget(knownFrontmost = false): Promise<ElementPickerTarget | null> {
+  if (process.platform !== 'darwin') return null;
+  const appleScript = `if application "Safari" is not running then return ""
+tell application "Safari"
+  if (count of windows) is 0 then return ""
+  set sourceWindow to front window
+  set sourceTab to current tab of sourceWindow
+  try
+    set pageMetadata to do JavaScript "JSON.stringify({ focused: document.hasFocus(), title: document.title, url: location.href })" in sourceTab
+  on error
+    return "javascript-unavailable"
+  end try
+  return (id of sourceWindow as text) & "|" & (index of sourceTab as text) & "|" & pageMetadata
+end tell`;
+  try {
+    const [probe, pidOutput] = await Promise.all([
+      exec('/usr/bin/osascript', ['-e', appleScript], { cwd: process.cwd(), timeout: 3_000 }),
+      exec('/usr/bin/pgrep', ['-x', 'Safari'], { cwd: process.cwd(), timeout: 3_000 }),
+    ]);
+    if (!probe.trim()) return null;
+    if (probe.trim() === 'javascript-unavailable') {
+      throw new Error('Enable Safari Develop → Allow JavaScript from Apple Events, then press ⌥⌘A again.');
+    }
+    const firstSeparator = probe.indexOf('|');
+    const secondSeparator = probe.indexOf('|', firstSeparator + 1);
+    if (firstSeparator < 1 || secondSeparator < 0) return null;
+    const windowId = Number(probe.slice(0, firstSeparator));
+    const tabIndex = Number(probe.slice(firstSeparator + 1, secondSeparator));
+    const metadata = JSON.parse(probe.slice(secondSeparator + 1)) as { focused?: boolean; title?: string; url?: string };
+    const appPid = Number.parseInt(pidOutput.trim().split(/\s+/)[0] || '', 10);
+    if ((!knownFrontmost && !metadata.focused) || !Number.isSafeInteger(windowId) || !Number.isSafeInteger(tabIndex)) return null;
+    const safariPage: SafariPageReference = {
+      appPid,
+      windowId,
+      tabIndex,
+      url: String(metadata.url || ''),
+    };
+    return {
+      appId: 'com.apple.Safari',
+      appName: 'Safari',
+      appPid,
+      transport: 'safari-apple-events',
+      webSocketDebuggerUrl: `safari://window/${windowId}/tab/${tabIndex}`,
+      safariPage,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes('Allow JavaScript from Apple Events')) throw error;
+    return null;
+  }
+}
+
+function saveElementSelection(
+  target: ElementPickerTarget,
+  selection: ElementPickerSelection,
+): { receipt: ElementSelectionReceipt; receiptPath: string } {
+  const directory = join(app.getPath('userData'), 'element-selections');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  pruneElementSelectionReceipts(directory);
+  const selectedAt = new Date();
+  const selectionId = randomUUID();
+  const receipt: ElementSelectionReceipt = {
+    ...selection,
+    schemaVersion: 1,
+    selectionId,
+    appId: target.appId,
+    appName: target.appName,
+    selectedAt: selectedAt.toISOString(),
+    expiresAt: new Date(selectedAt.getTime() + ELEMENT_SELECTION_TTL_MS).toISOString(),
+  };
+  const receiptPath = join(directory, `${selectionId}.json`);
+  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  return { receipt, receiptPath };
+}
+
+function saveComponentSmuggleSpec(
+  source: PendingComponentSmuggle,
+  target: ElementPickerTarget,
+  targetSelection: ElementPickerSelection,
+  targetAnchorToken: string,
+): string {
+  const directory = join(app.getPath('userData'), 'component-smuggles');
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const smuggleId = randomUUID();
+  const spec: ComponentSmuggleSpec = {
+    schemaVersion: 1,
+    smuggleId,
+    createdAt: new Date().toISOString(),
+    source: {
+      appId: source.target.appId,
+      appName: source.target.appName,
+      anchor: componentSmuggleAnchor(source.selection, source.anchorToken),
+    },
+    target: {
+      appId: target.appId,
+      appName: target.appName,
+      anchor: componentSmuggleAnchor(targetSelection, targetAnchorToken),
+    },
+    transport: 'dom-twin',
+  };
+  const specPath = join(directory, `${smuggleId}.json`);
+  writeFileSync(specPath, `${JSON.stringify(spec, null, 2)}\n`, { mode: 0o600 });
+  return specPath;
+}
+
+async function removeSmuggleAnchor(target: ElementPickerTarget, token: string): Promise<void> {
+  await evaluateElementPickerTargetJson(
+    target,
+    `JSON.stringify((() => {
+      const token = ${JSON.stringify(token)};
+      const retained = window.__attuneSmuggleAnchors?.[token];
+      retained?.removeAttribute?.('data-attune-smuggle-anchor');
+      document.querySelector?.('[data-attune-smuggle-anchor=' + JSON.stringify(token) + ']')?.removeAttribute?.('data-attune-smuggle-anchor');
+      if (window.__attuneSmuggleAnchors) delete window.__attuneSmuggleAnchors[token];
+      return true;
+    })())`,
+  );
+}
+
+function pruneElementSelectionReceipts(directory: string, now = Date.now()): void {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isFile() || !/^[0-9a-f-]{36}\.json$/i.test(entry.name)) continue;
+    const receiptPath = join(directory, entry.name);
+    try {
+      if (now - statSync(receiptPath).mtimeMs > ELEMENT_SELECTION_TTL_MS) rmSync(receiptPath);
+    } catch {}
+  }
+}
+
+function showElementPickerNotice(body: string): void {
+  if (Notification.isSupported()) {
+    new Notification({ title: 'Attune Pick Element', body }).show();
+  } else {
+    console.warn(`[attune] ${body}`);
+  }
 }
 
 async function connectSafariChatGptTab(): Promise<number> {
@@ -407,6 +810,11 @@ function quoteAppleScriptString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ')}"`;
 }
 
+function quoteAppleScriptJavaScript(value: string): string {
+  const lines = value.replace(/\r\n?/g, '\n').split('\n');
+  return `(${lines.map(quoteAppleScriptString).join(' & linefeed & ')})`;
+}
+
 function readChatGptToCodexScript(fileName: string): string {
   const catalogRoot = resolveCatalogRoot(app.isPackaged, process.resourcesPath, __dirname);
   const scriptPath = join(
@@ -420,6 +828,104 @@ function readChatGptToCodexScript(fileName: string): string {
     '${CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL}',
     CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL,
   );
+}
+
+function componentSmuggleKeyForwarderPath(): string {
+  const bundledPath = join(__dirname, 'assets', 'key-chord-forwarder');
+  return app.isPackaged
+    ? bundledPath.replace(`${join('app.asar', '')}`, `${join('app.asar.unpacked', '')}`)
+    : bundledPath;
+}
+
+function componentSmuggleWindowStreamPath(): string {
+  const bundledPath = join(__dirname, 'assets', 'window-region-stream');
+  return app.isPackaged
+    ? bundledPath.replace(`${join('app.asar', '')}`, `${join('app.asar.unpacked', '')}`)
+    : bundledPath;
+}
+
+async function forwardComponentSmuggleKeyChord(
+  appPid: number | undefined,
+  chord: ComponentSmuggleKeyChord,
+): Promise<{ transport: 'native'; code: string }> {
+  if (process.platform !== 'darwin') throw new Error('native shortcut forwarding currently requires macOS');
+  if (!Number.isSafeInteger(appPid) || Number(appPid) <= 0) throw new Error('source app process is unavailable');
+  const helperPath = componentSmuggleKeyForwarderPath();
+  if (!existsSync(helperPath)) throw new Error(`native shortcut forwarder is missing: ${helperPath}`);
+  const modifiers = [
+    chord.metaKey ? 'meta' : '',
+    chord.ctrlKey ? 'ctrl' : '',
+    chord.altKey ? 'alt' : '',
+    chord.shiftKey ? 'shift' : '',
+  ].filter(Boolean).join(',');
+  await exec(helperPath, [String(appPid), chord.code, modifiers], { cwd: process.cwd(), timeout: 2_000 });
+  return { transport: 'native', code: chord.code };
+}
+
+async function startComponentSmuggleWindowStream(
+  appPid: number | undefined,
+  region: ComponentSmuggleCaptureRegion,
+  onFrame: (pngBase64: string) => void,
+): Promise<() => void> {
+  if (process.platform !== 'darwin') throw new Error('window surface capture currently requires macOS');
+  if (!Number.isSafeInteger(appPid) || Number(appPid) <= 0) throw new Error('source app process is unavailable');
+  const helperPath = componentSmuggleWindowStreamPath();
+  if (!existsSync(helperPath)) throw new Error(`window surface capture helper is missing: ${helperPath}`);
+  const globalRegion = componentSmuggleGlobalCaptureRectangle(region);
+  const capture = spawn(helperPath, [
+    String(appPid), String(globalRegion.x), String(globalRegion.y), String(globalRegion.width), String(globalRegion.height), '10', '0',
+    String(region.screenX), String(region.screenY), String(region.outerWidth), String(region.outerHeight),
+    String(region.nativeWindowId || 0),
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+  capture.stdout.setEncoding('utf8');
+  capture.stderr.setEncoding('utf8');
+  let stopped = false;
+  let stdout = '';
+  capture.stdout.on('data', (chunk: string) => {
+    stdout += chunk;
+    const lines = stdout.split(/\r?\n/);
+    stdout = lines.pop() || '';
+    for (const line of lines) {
+      const frame = line.trim();
+      if (frame.length >= 100 && /^[A-Za-z0-9+/=]+$/.test(frame)) onFrame(frame);
+    }
+  });
+  await new Promise<void>((resolveReady, reject) => {
+    let stderr = '';
+    let lastError = '';
+    let settled = false;
+    const timeout = setTimeout(() => {
+      capture.kill();
+      reject(new Error('window surface capture timed out'));
+    }, 5000);
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolveReady();
+    };
+    capture.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+      const lines = stderr.split(/\r?\n/);
+      stderr = lines.pop() || '';
+      for (const line of lines) {
+        if (line.startsWith('ready ')) {
+          finish();
+          return;
+        }
+        if (line.trim()) lastError = line.trim();
+      }
+    });
+    capture.once('error', (error) => finish(error));
+    capture.once('exit', (code) => {
+      if (!stopped && code !== 0) finish(new Error(lastError || stderr.trim() || `window surface capture exited with code ${code}`));
+    });
+  });
+  return () => {
+    stopped = true;
+    capture.kill();
+  };
 }
 
 function startBrowserSlashMonitor(): void {
@@ -456,13 +962,22 @@ function startBrowserSlashMonitor(): void {
   });
 }
 
-function handleBrowserSlashSignal(browser: string): void {
-  if (browser.startsWith('status:')) {
-    console.log(`[attune] browser slash monitor ${browser}`);
+function handleBrowserSlashSignal(signal: string): void {
+  if (signal.startsWith('status:')) {
+    console.log(`[attune] browser slash monitor ${signal}`);
     return;
   }
-  console.log(`[attune] browser slash signal ${browser}`);
-  if (browser === 'safari') {
+  console.log(`[attune] browser keyboard signal ${signal}`);
+  if (signal === 'picker:safari' || signal === 'picker:chrome') {
+    if (pendingGlobalElementPickerTimer) {
+      clearTimeout(pendingGlobalElementPickerTimer);
+      pendingGlobalElementPickerTimer = null;
+    }
+    const browser = signal.slice('picker:'.length) as 'safari' | 'chrome';
+    triggerElementPickerShortcut(`native-browser-monitor:${browser}`, browser);
+    return;
+  }
+  if (signal === 'safari') {
     if (safariSlashInjectionTimer) clearTimeout(safariSlashInjectionTimer);
     safariSlashInjectionTimer = setTimeout(() => {
       safariSlashInjectionTimer = null;
@@ -471,7 +986,7 @@ function handleBrowserSlashSignal(browser: string): void {
     safariSlashInjectionTimer.unref();
     return;
   }
-  if (browser === 'chrome') {
+  if (signal === 'chrome') {
     if (chromeSlashRefreshTimer) clearTimeout(chromeSlashRefreshTimer);
     chromeSlashRefreshTimer = setTimeout(() => {
       chromeSlashRefreshTimer = null;
@@ -843,22 +1358,136 @@ async function dispatchCdpDigitKey(webSocketDebuggerUrl: string, digit: string):
   });
 }
 
-async function evaluatePageJson(webSocketDebuggerUrl: string, expression: string, awaitPromise = false): Promise<unknown> {
+async function evaluateElementPickerTargetJson(
+  target: ElementPickerTarget,
+  expression: string,
+  awaitPromise = false,
+  timeoutMs = 1500,
+): Promise<unknown> {
+  if (target.transport === 'cdp') {
+    return evaluatePageJson(target.webSocketDebuggerUrl, expression, awaitPromise, timeoutMs);
+  }
+  if (!target.safariPage) return null;
+  const client = new SafariAppleEventsPageClient(target.safariPage);
+  try {
+    await client.connect();
+    const value = await client.evaluate(expression, timeoutMs);
+    if (typeof value !== 'string') return value;
+    try { return JSON.parse(value); } catch { return value; }
+  } finally {
+    client.close();
+  }
+}
+
+async function runElementPickerOnTarget(
+  target: ElementPickerTarget,
+  expression: string,
+): Promise<unknown> {
+  if (target.transport === 'cdp') {
+    return evaluatePageJson(
+      target.webSocketDebuggerUrl,
+      expression,
+      true,
+      ELEMENT_PICKER_TIMEOUT_MS + 2_000,
+    );
+  }
+  if (!target.safariPage) return null;
+  const resultKey = `__attuneSafariElementPickerResult_${randomUUID().replace(/-/g, '')}`;
+  const installer = `(() => {
+    globalThis[${JSON.stringify(resultKey)}] = '';
+    Promise.resolve(${expression}).then(
+      value => { globalThis[${JSON.stringify(resultKey)}] = String(value || ''); },
+      error => { globalThis[${JSON.stringify(resultKey)}] = JSON.stringify({ status: 'cancelled', error: String(error) }); },
+    );
+    return true;
+  })()`;
+  const pollJavascript = `(() => {
+    const value = globalThis[${JSON.stringify(resultKey)}] || '';
+    if (value) delete globalThis[${JSON.stringify(resultKey)}];
+    return value;
+  })()`;
+  const page = target.safariPage;
+  const attempts = Math.ceil(ELEMENT_PICKER_TIMEOUT_MS / 100);
+  const appleScript = `tell application "Safari"
+  if not (exists window id ${page.windowId}) then error "Safari picker window is unavailable"
+  set pickerWindow to window id ${page.windowId}
+  if (count of tabs of pickerWindow) < ${page.tabIndex} then error "Safari picker tab is unavailable"
+  set pickerTab to tab ${page.tabIndex} of pickerWindow
+  do JavaScript ${quoteAppleScriptJavaScript(installer)} in pickerTab
+  repeat ${attempts} times
+    set pickerResult to do JavaScript ${quoteAppleScriptString(pollJavascript)} in pickerTab
+    if pickerResult is not "" then return pickerResult
+    delay 0.1
+  end repeat
+  return "{\\"status\\":\\"cancelled\\"}"
+end tell`;
+  const raw = await exec('/usr/bin/osascript', ['-e', appleScript], {
+    cwd: process.cwd(),
+    timeout: ELEMENT_PICKER_TIMEOUT_MS + 5_000,
+  });
+  try { return JSON.parse(raw.trim()); } catch { return null; }
+}
+
+async function evaluatePageJson(
+  webSocketDebuggerUrl: string,
+  expression: string,
+  awaitPromise = false,
+  timeoutMs = 1500,
+): Promise<unknown> {
   const WebSocketConstructor = (globalThis as unknown as { WebSocket?: new (url: string) => { addEventListener(type: string, listener: (event: any) => void): void; send(message: string): void; close(): void } }).WebSocket;
   if (!WebSocketConstructor) return null;
   return new Promise((resolve) => {
     const socket = new WebSocketConstructor(webSocketDebuggerUrl);
-    const timeout = setTimeout(() => { socket.close(); resolve(null); }, 1500);
+    let settled = false;
+    const finish = (value: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.close();
+      resolve(value);
+    };
+    const timeout = setTimeout(() => finish(null), timeoutMs);
     socket.addEventListener('message', (event) => {
       try {
         const message = JSON.parse(event.data) as { id?: number; result?: { result?: { value?: string } } };
         if (message.id !== 1) return;
-        clearTimeout(timeout);
-        socket.close();
-        resolve(JSON.parse(message.result?.result?.value ?? 'null'));
-      } catch { clearTimeout(timeout); socket.close(); resolve(null); }
+        finish(JSON.parse(message.result?.result?.value ?? 'null'));
+      } catch { finish(null); }
     });
+    socket.addEventListener('close', () => finish(null));
+    socket.addEventListener('error', () => finish(null));
     socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise, returnByValue: true } })));
+  });
+}
+
+async function capturePageScreenshot(webSocketDebuggerUrl: string): Promise<string | null> {
+  const WebSocketConstructor = (globalThis as unknown as { WebSocket?: new (url: string) => { addEventListener(type: string, listener: (event: any) => void): void; send(message: string): void; close(): void } }).WebSocket;
+  if (!WebSocketConstructor) return null;
+  return new Promise((resolve) => {
+    const socket = new WebSocketConstructor(webSocketDebuggerUrl);
+    let settled = false;
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.close();
+      resolve(value);
+    };
+    const timeout = setTimeout(() => finish(null), 2_000);
+    socket.addEventListener('message', (event) => {
+      try {
+        const message = JSON.parse(event.data) as { id?: number; result?: { data?: string } };
+        if (message.id !== 1) return;
+        finish(message.result?.data ? `data:image/png;base64,${message.result.data}` : null);
+      } catch { finish(null); }
+    });
+    socket.addEventListener('close', () => finish(null));
+    socket.addEventListener('error', () => finish(null));
+    socket.addEventListener('open', () => socket.send(JSON.stringify({
+      id: 1,
+      method: 'Page.captureScreenshot',
+      params: { format: 'png', fromSurface: true, captureBeyondViewport: false },
+    })));
   });
 }
 

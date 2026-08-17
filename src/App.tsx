@@ -200,6 +200,13 @@ export function App() {
 
         {settingsOpen && (
           <section className="settings-panel" aria-label="Settings">
+            <div className="setting-row picker-shortcut-row">
+              <span className="picker-shortcut-copy">
+                Pick an element
+                <small>Click to copy a reference. Option-click to smuggle; choose an internal left, center, or right lane in the destination component.</small>
+              </span>
+              <kbd>⌥⌘A</kbd>
+            </div>
             <label className="setting-row">
               <span>Change desktop wallpaper with themes</span>
               <input
@@ -738,6 +745,8 @@ Attunements folder: ${workspacePath}
 Installed examples: ${workspacePath}
 
 Read a relevant installed attunement first. Catalog-managed packages contain an .attune-package.json marker; copy one to a new sibling folder before customizing it so catalog updates cannot overwrite your changes. Create each new attunement with manifest.json, a preview screenshot named preview.png or preview.jpg, and an apps/ folder containing CSS patches. Prefer manifest version 2 with a "targets" object keyed by app name, semantic bindings, and relative source paths such as "apps/spotify-quiet-home.css". You can also set "preview": "preview.png" in the manifest.
+
+When a reusable attunement target has no semantic host role, add a stable role/resolver for it before styling. Name the role after the element's purpose rather than its current DOM structure, update the role catalog or resolver, and add coverage when appropriate so the mapping survives renderer updates. Do not create roles for one-off decorative elements.
 
 For simple layout changes, write CSS only. For app embeds, put idempotent JavaScript inside a CSS comment block:
 

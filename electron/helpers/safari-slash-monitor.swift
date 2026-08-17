@@ -2,35 +2,94 @@ import AppKit
 import CoreGraphics
 import Foundation
 
+let aKey = CGKeyCode(0)
 let slashKey = CGKeyCode(44)
-let blockedModifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand]
-var wasDown = false
+let keyboardModifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand]
+let originalParentPid = getppid()
+var lastSignalAt: [String: TimeInterval] = [:]
+
+func browserSignalPrefix() -> String? {
+  let application = NSWorkspace.shared.frontmostApplication
+  let bundleId = application?.bundleIdentifier
+  if bundleId?.hasPrefix("com.apple.Safari") == true {
+    return "safari"
+  }
+  if bundleId?.hasPrefix("com.google.Chrome") == true
+    || application?.localizedName?.localizedCaseInsensitiveContains("Chrome") == true {
+    return "chrome"
+  }
+  return nil
+}
+
+func signalForKeyDown(_ event: CGEvent) -> String? {
+  guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0,
+        let browser = browserSignalPrefix() else {
+    return nil
+  }
+
+  let key = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+  let modifiers = event.flags.intersection(keyboardModifiers)
+  if key == aKey,
+     modifiers.contains(.maskCommand),
+     modifiers.contains(.maskAlternate),
+     !modifiers.contains(.maskShift),
+     !modifiers.contains(.maskControl) {
+    return "picker:\(browser)"
+  }
+  if key == slashKey && modifiers.isEmpty {
+    return browser
+  }
+  return nil
+}
+
+func emit(_ signal: String) {
+  print(signal)
+  fflush(stdout)
+}
+
+func emitOnce(_ signal: String) {
+  let now = ProcessInfo.processInfo.systemUptime
+  let debounceSeconds = signal.hasPrefix("picker:") ? 0.5 : 0.1
+  if let previous = lastSignalAt[signal], now - previous < debounceSeconds {
+    return
+  }
+  lastSignalAt[signal] = now
+  emit(signal)
+}
 
 print("status:\(CGPreflightListenEventAccess() ? "granted" : "denied")")
 fflush(stdout)
 if let testSignal = ProcessInfo.processInfo.environment["ATTUNE_BROWSER_SLASH_TEST_SIGNAL"],
-   testSignal == "safari" || testSignal == "chrome" {
-  print(testSignal)
-  fflush(stdout)
+   ["safari", "chrome", "picker:safari", "picker:chrome"].contains(testSignal) {
+  emit(testSignal)
 }
 
-while true {
-  autoreleasepool {
-    let isDown = CGEventSource.keyState(.combinedSessionState, key: slashKey)
-    if isDown && !wasDown {
-      let flags = CGEventSource.flagsState(.combinedSessionState)
-      let frontmostBundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-      if frontmostBundleId == "com.apple.Safari" && flags.intersection(blockedModifiers).isEmpty {
-        print("safari")
-        fflush(stdout)
-      } else if (frontmostBundleId?.hasPrefix("com.google.Chrome") == true
-        || NSWorkspace.shared.frontmostApplication?.localizedName?.localizedCaseInsensitiveContains("Chrome") == true)
-        && flags.intersection(blockedModifiers).isEmpty {
-        print("chrome")
-        fflush(stdout)
-      }
+let eventMask = CGEventMask(1 << CGEventType.keyDown.rawValue)
+let eventTap = CGEvent.tapCreate(
+  tap: .cgSessionEventTap,
+  place: .headInsertEventTap,
+  options: .listenOnly,
+  eventsOfInterest: eventMask,
+  callback: { _, eventType, event, _ in
+    if eventType == .keyDown, let signal = signalForKeyDown(event) {
+      emitOnce(signal)
     }
-    wasDown = isDown
-  }
-  usleep(15_000)
+    return Unmanaged.passUnretained(event)
+  },
+  userInfo: nil
+)
+
+guard let eventTap else {
+  fputs("Unable to create browser keyboard event tap\n", stderr)
+  exit(1)
 }
+
+let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+CGEvent.tapEnable(tap: eventTap, enable: true)
+Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { _ in
+  if getppid() != originalParentPid {
+    exit(0)
+  }
+}
+CFRunLoopRun()

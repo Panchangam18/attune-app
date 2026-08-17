@@ -8,7 +8,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && vite build && npm run build:electron",
-    "build:electron": "rm -rf dist-electron && tsc -p tsconfig.node.json && bash scripts/build-safari-slash-monitor.sh dist-electron/assets/safari-slash-monitor",
+    "build:electron": "rm -rf dist-electron && tsc -p tsconfig.node.json && bash scripts/build-safari-slash-monitor.sh dist-electron/assets/safari-slash-monitor && bash scripts/build-key-chord-forwarder.sh dist-electron/assets/key-chord-forwarder && bash scripts/build-window-region-stream.sh dist-electron/assets/window-region-stream",
     "test": "npm run build:electron && node --test test/*.test.mjs",
     "build:runtime": "npm --prefix ../attune run build",
     "dev": "npm run build:electron && concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && ATTUNE_APP_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
@@ -40,7 +40,9 @@
     "productName": "Attune",
     "asar": true,
     "asarUnpack": [
-      "dist-electron/assets/safari-slash-monitor"
+      "dist-electron/assets/safari-slash-monitor",
+      "dist-electron/assets/key-chord-forwarder",
+      "dist-electron/assets/window-region-stream"
     ],
     "directories": {
       "output": "release"

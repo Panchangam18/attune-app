@@ -1,0 +1,179 @@
+const { app, BrowserWindow } = require('electron');
+const { join } = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+async function run() {
+  const pickerModuleUrl = pathToFileURL(join(__dirname, '..', '..', 'dist-electron', 'element-picker.js')).href;
+  const { buildElementPickerExpression } = await import(pickerModuleUrl);
+  const window = new BrowserWindow({
+    show: false,
+    width: 720,
+    height: 480,
+    webPreferences: { backgroundThrottling: false },
+  });
+  await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
+    <!doctype html>
+    <html>
+      <head>
+        <style>
+          body { margin: 0; font: 16px sans-serif; }
+          header { padding: 30px; }
+          @keyframes pulse { from { opacity: .8; } to { opacity: 1; } }
+          button { width: 180px; height: 48px; color: rgb(250, 250, 250); background: rgb(40, 40, 40); border-radius: 8px; animation: pulse 2s infinite alternate; }
+        </style>
+      </head>
+      <body>
+        <header aria-label="Chat header">
+          <button aria-label="Toggle sidebar" data-attune-host-roles="codex.sidebarToggle"><span>Toggle</span></button>
+        </header>
+        <script>
+          window.hostClicks = 0;
+          window.hostPointerMoves = 0;
+          window.hostKeys = 0;
+          window.hostWheels = 0;
+          document.querySelector('button').addEventListener('click', () => { window.hostClicks += 1; });
+          document.querySelector('button').addEventListener('pointermove', () => { window.hostPointerMoves += 1; });
+          document.addEventListener('keydown', () => { window.hostKeys += 1; });
+          document.addEventListener('wheel', () => { window.hostWheels += 1; });
+        </script>
+      </body>
+    </html>
+  `)}`);
+
+  const frozenFrame = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+X4f6WQAAAABJRU5ErkJggg==';
+  const pickerResult = window.webContents.executeJavaScript(buildElementPickerExpression('Codex', frozenFrame));
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const pickerVisible = await window.webContents.executeJavaScript(
+    `Boolean(document.querySelector('[data-attune-element-picker="outline"]'))
+      && Boolean(document.querySelector('[data-attune-element-picker="freeze"]'))
+      && document.documentElement.getAttribute('data-attune-element-picker-active') === 'true'
+      && getComputedStyle(document.querySelector('button')).animationPlayState === 'paused'`,
+  );
+  if (!pickerVisible) throw new Error('The picker overlay was not installed.');
+
+  await window.webContents.executeJavaScript(`(() => {
+    const span = document.querySelector('button span');
+    const bounds = span.getBoundingClientRect();
+    span.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      composed: true,
+      clientX: bounds.x + bounds.width / 2,
+      clientY: bounds.y + bounds.height / 2,
+    }));
+    span.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true }));
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true }));
+    document.dispatchEvent(new WheelEvent('wheel', { deltaY: 120, bubbles: true, cancelable: true }));
+    span.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      clientX: bounds.x + bounds.width / 2,
+      clientY: bounds.y + bounds.height / 2,
+    }));
+  })()`);
+  const result = JSON.parse(await pickerResult);
+  if (result.status !== 'selected') throw new Error(`Unexpected picker result: ${JSON.stringify(result)}`);
+  if (result.intent !== 'reference') throw new Error(`Unexpected picker intent: ${JSON.stringify(result)}`);
+  if (result.roles[0] !== 'codex.sidebarToggle') throw new Error(`The semantic button was not preferred: ${JSON.stringify(result.roles)}`);
+  if (result.selector !== '[data-attune-host-roles~="codex.sidebarToggle"]') throw new Error(`Unexpected selector: ${result.selector}`);
+  if (result.fingerprint.label !== 'Toggle sidebar') throw new Error(`Unexpected fingerprint: ${JSON.stringify(result.fingerprint)}`);
+  const hostEvents = await window.webContents.executeJavaScript(`({
+    clicks: window.hostClicks,
+    pointerMoves: window.hostPointerMoves,
+    keys: window.hostKeys,
+    wheels: window.hostWheels,
+  })`);
+  if (Object.values(hostEvents).some((count) => count !== 0)) {
+    throw new Error(`Picker mode leaked host input: ${JSON.stringify(hostEvents)}`);
+  }
+
+  await window.webContents.executeJavaScript(`window.__attuneElementPickerComplete?.()`);
+  await new Promise((resolve) => setTimeout(resolve, 1_000));
+  const remainingPickerNodes = await window.webContents.executeJavaScript(
+    `({
+      nodes: document.querySelectorAll('[data-attune-element-picker]').length,
+      active: document.documentElement.hasAttribute('data-attune-element-picker-active'),
+      animation: getComputedStyle(document.querySelector('button')).animationPlayState,
+    })`,
+  );
+  if (remainingPickerNodes.nodes !== 0 || remainingPickerNodes.active || remainingPickerNodes.animation !== 'running') {
+    throw new Error(`Picker cleanup did not restore the app: ${JSON.stringify(remainingPickerNodes)}`);
+  }
+
+  const sourceToken = 'fixture-smuggle-source';
+  const smuggleResultPromise = window.webContents.executeJavaScript(
+    buildElementPickerExpression('Codex', null, { anchorToken: sourceToken }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await window.webContents.executeJavaScript(`(() => {
+    const span = document.querySelector('button span');
+    const bounds = span.getBoundingClientRect();
+    span.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      composed: true,
+      clientX: bounds.x + bounds.width / 2,
+      clientY: bounds.y + bounds.height / 2,
+    }));
+    span.dispatchEvent(new MouseEvent('click', {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      altKey: true,
+      clientX: bounds.x + bounds.width / 2,
+      clientY: bounds.y + bounds.height / 2,
+    }));
+  })()`);
+  const smuggleResult = JSON.parse(await smuggleResultPromise);
+  if (smuggleResult.intent !== 'smuggle-source' || smuggleResult.fingerprint.tag !== 'button') {
+    throw new Error(`Option-click did not choose the highlighted component: ${JSON.stringify(smuggleResult)}`);
+  }
+  const sourceAnchored = await window.webContents.executeJavaScript(`
+    window.__attuneSmuggleAnchors?.[${JSON.stringify(sourceToken)}] === document.querySelector('button')
+      && document.querySelector('button').getAttribute('data-attune-smuggle-anchor') === ${JSON.stringify(sourceToken)}
+  `);
+  if (!sourceAnchored) throw new Error('Option-click did not retain the live source anchor.');
+  await window.webContents.executeJavaScript(`(() => {
+    window.__attuneElementPickerCleanup?.('fixture');
+    document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
+    delete window.__attuneSmuggleAnchors[${JSON.stringify(sourceToken)}];
+  })()`);
+
+  const targetToken = 'fixture-smuggle-target';
+  const targetResultPromise = window.webContents.executeJavaScript(
+    buildElementPickerExpression('Codex', null, { mode: 'smuggle-target', anchorToken: targetToken }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('button');
+    const bounds = button.getBoundingClientRect();
+    const x = bounds.right - 2;
+    const y = bounds.y + bounds.height / 2;
+    button.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, composed: true, clientX: x, clientY: y }));
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y }));
+  })()`);
+  const targetResult = JSON.parse(await targetResultPromise);
+  if (targetResult.intent !== 'smuggle-target' || targetResult.placement !== 'right') {
+    throw new Error(`Destination edge did not select right placement: ${JSON.stringify(targetResult)}`);
+  }
+  const targetAnchored = await window.webContents.executeJavaScript(`
+    window.__attuneSmuggleAnchors?.[${JSON.stringify(targetToken)}] === document.querySelector('button')
+  `);
+  if (!targetAnchored) throw new Error('Destination placement did not retain the target anchor.');
+  await window.webContents.executeJavaScript(`(() => {
+    window.__attuneElementPickerCleanup?.('fixture');
+    document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
+    delete window.__attuneSmuggleAnchors[${JSON.stringify(targetToken)}];
+  })()`);
+  window.destroy();
+}
+
+app.whenReady().then(async () => {
+  try {
+    await run();
+    console.log('element-picker-ok');
+    app.exit(0);
+  } catch (error) {
+    console.error(error);
+    app.exit(1);
+  }
+});
