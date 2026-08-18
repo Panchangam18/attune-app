@@ -43,6 +43,10 @@ import {
   type ElementSelectionReceipt,
 } from './element-picker.js';
 import {
+  parseNativeAppPickerSignal,
+  supportedButNotAttachedPickerNotice,
+} from './element-picker-shortcut.js';
+import {
   ComponentSmuggleBridge,
   componentSmuggleAnchor,
   componentSmuggleGlobalCaptureRectangle,
@@ -54,6 +58,10 @@ import {
   SafariAppleEventsPageClient,
   type SafariPageReference,
 } from './safari-page-client.js';
+import {
+  serializeSafariCommand,
+  waitForSafariPickerResult,
+} from './safari-command-queue.js';
 
 interface DiscoveredApp {
   name: string;
@@ -399,7 +407,12 @@ function registerElementPickerShortcut(): void {
   }
 }
 
-function triggerElementPickerShortcut(source: string, preferredBrowser?: 'safari' | 'chrome'): void {
+function triggerElementPickerShortcut(
+  source: string,
+  preferredBrowser?: 'safari' | 'chrome',
+  preferredAppPid?: number,
+  preferredAppId?: string,
+): void {
   const now = Date.now();
   if (now - lastElementPickerShortcutAt < 500) {
     console.log(`[attune] ignored duplicate element picker shortcut from ${source}`);
@@ -407,7 +420,7 @@ function triggerElementPickerShortcut(source: string, preferredBrowser?: 'safari
   }
   lastElementPickerShortcutAt = now;
   console.log(`[attune] element picker shortcut from ${source}`);
-  void startElementPicker(preferredBrowser).catch((error) => {
+  void startElementPicker(preferredBrowser, preferredAppPid, preferredAppId).catch((error) => {
     console.warn('[attune] element picker shortcut failed:', error instanceof Error ? error.message : String(error));
   });
 }
@@ -451,7 +464,11 @@ function registerElementPickerNavigationShortcuts(target: ElementPickerTarget): 
   }
 }
 
-async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promise<void> {
+async function startElementPicker(
+  preferredBrowser?: 'safari' | 'chrome',
+  preferredAppPid?: number,
+  preferredAppId?: string,
+): Promise<void> {
   if (elementPickerRunning) {
     if (activeElementPickerTarget) {
       try {
@@ -470,8 +487,13 @@ async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promi
   let target: ElementPickerTarget | null = null;
   const anchorToken = randomUUID();
   try {
-    target = await findFocusedElementPickerTarget(preferredBrowser);
+    target = await findFocusedElementPickerTarget(preferredBrowser, preferredAppPid);
     if (!target) {
+      const supportedApp = await findSupportedUnattachedPickerApp(preferredAppId);
+      if (supportedApp) {
+        showElementPickerNotice(supportedButNotAttachedPickerNotice(supportedApp.name));
+        return;
+      }
       showElementPickerNotice('Bring an app opened through Attune to the front, then press ⌥⌘A again.');
       return;
     }
@@ -539,8 +561,12 @@ async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promi
       );
       const placementLabel = rawResult.placement === 'left'
         ? 'in the left side of'
-        : rawResult.placement === 'right' ? 'in the right side of' : 'inside';
-      showElementPickerNotice(`Smuggling ${pendingSource.target.appName} component ${placementLabel} the selected ${target.appName} component. Use the × control on the transplant to stop.`);
+        : rawResult.placement === 'right'
+          ? 'in the right side of'
+          : rawResult.placement === 'top'
+            ? 'at the top of'
+            : rawResult.placement === 'bottom' ? 'at the bottom of' : 'inside';
+      showElementPickerNotice(`Smuggling ${pendingSource.target.appName} component ${placementLabel} the selected ${target.appName} component. Enter select mode to resize it or use × to stop.`);
       return;
     }
 
@@ -558,7 +584,7 @@ async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promi
         target,
         `JSON.stringify((() => { window.__attuneElementPickerComplete?.(); return true; })())`,
       );
-      showElementPickerNotice(`Source selected in ${target.appName}. In the destination, press ⌥⌘A, then click the left edge, center, or right edge of a component to choose placement.`);
+      showElementPickerNotice(`Source selected in ${target.appName}. In the destination, press ⌥⌘A, then click the top edge, bottom edge, left edge, center, or right edge of a component to choose placement.`);
       return;
     }
     clipboard.writeText(formatElementReference(receipt, receiptPath));
@@ -588,7 +614,23 @@ async function startElementPicker(preferredBrowser?: 'safari' | 'chrome'): Promi
   }
 }
 
-async function findFocusedElementPickerTarget(preferredBrowser?: 'safari' | 'chrome'): Promise<ElementPickerTarget | null> {
+async function findSupportedUnattachedPickerApp(preferredAppId?: string): Promise<DiscoveredApp | null> {
+  if (!preferredAppId) return null;
+  const [scanModule, sessionModule] = await Promise.all([
+    loadAttuneModule<ScanModule>('scan.js'),
+    loadAttuneModule<SessionModule>('session.js'),
+  ]);
+  const appInfo = scanModule.scanForSupportedApps()
+    .find((candidate) => scanModule.getAppId(candidate) === preferredAppId);
+  if (!appInfo) return null;
+  const session = sessionModule.getSession(preferredAppId);
+  return session?.status === 'attached' ? null : appInfo;
+}
+
+async function findFocusedElementPickerTarget(
+  preferredBrowser?: 'safari' | 'chrome',
+  preferredAppPid?: number,
+): Promise<ElementPickerTarget | null> {
   if (preferredBrowser === 'safari') {
     return findFocusedSafariElementPickerTarget(true);
   }
@@ -624,7 +666,9 @@ async function findFocusedElementPickerTarget(preferredBrowser?: 'safari' | 'chr
 
   const eligiblePageTargets = preferredBrowser === 'chrome'
     ? pageTargets.filter((candidate) => candidate.appId.startsWith('com.google.Chrome') || candidate.appName.toLowerCase().includes('chrome'))
-    : pageTargets;
+    : Number.isSafeInteger(preferredAppPid) && Number(preferredAppPid) > 0
+      ? pageTargets.filter((candidate) => candidate.appPid === preferredAppPid)
+      : pageTargets;
   const probes = await Promise.all(eligiblePageTargets.map(async (candidate) => {
     const focus = await evaluatePageJson(
       candidate.webSocketDebuggerUrl,
@@ -634,9 +678,13 @@ async function findFocusedElementPickerTarget(preferredBrowser?: 'safari' | 'chr
     ) as { focused?: boolean; visibility?: string } | null;
     return { candidate, focused: focus?.focused === true, visible: focus?.visibility === 'visible' };
   }));
-  return (probes.find((probe) => probe.focused)
-    ?? (preferredBrowser === 'chrome' ? probes.find((probe) => probe.visible) : undefined))?.candidate
-    ?? (preferredBrowser === 'chrome' ? null : await findFocusedSafariElementPickerTarget());
+  const exactNativeTarget = Number.isSafeInteger(preferredAppPid) && Number(preferredAppPid) > 0
+    ? probes.find((probe) => probe.focused) ?? probes.find((probe) => probe.visible) ?? probes[0]
+    : undefined;
+  return exactNativeTarget?.candidate
+    ?? (probes.find((probe) => probe.focused)
+      ?? (preferredBrowser === 'chrome' ? probes.find((probe) => probe.visible) : undefined))?.candidate
+    ?? (preferredBrowser === 'chrome' || preferredAppPid ? null : await findFocusedSafariElementPickerTarget());
 }
 
 async function findFocusedSafariElementPickerTarget(knownFrontmost = false): Promise<ElementPickerTarget | null> {
@@ -655,7 +703,7 @@ tell application "Safari"
 end tell`;
   try {
     const [probe, pidOutput] = await Promise.all([
-      exec('/usr/bin/osascript', ['-e', appleScript], { cwd: process.cwd(), timeout: 3_000 }),
+      execSafariAppleScript(appleScript, 3_000),
       exec('/usr/bin/pgrep', ['-x', 'Safari'], { cwd: process.cwd(), timeout: 3_000 }),
     ]);
     if (!probe.trim()) return null;
@@ -798,7 +846,7 @@ if application "Safari" is running then
   end tell
 end if
 return (connectedCount as text) & "|" & lastError`;
-  const output = await exec('/usr/bin/osascript', ['-e', appleScript], { cwd: process.cwd(), timeout: 6_000 });
+  const output = await execSafariAppleScript(appleScript, 6_000);
   const [countValue, lastError] = output.trim().split('|', 2);
   const count = Number.parseInt(countValue, 10) || 0;
   if (count === 0) throw new Error(lastError || 'Open a ChatGPT conversation in Safari first. If it is already open, enable Safari Develop → Allow JavaScript from Apple Events, then choose this command again.');
@@ -830,7 +878,7 @@ if application "Safari" is running then
   end tell
 end if
 return disconnectedCount as text`;
-  const output = await exec('/usr/bin/osascript', ['-e', appleScript], { cwd: process.cwd(), timeout: 6_000 });
+  const output = await execSafariAppleScript(appleScript, 6_000);
   return Number.parseInt(output.trim(), 10) || 0;
 }
 
@@ -854,9 +902,11 @@ function quoteAppleScriptString(value: string): string {
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ')}"`;
 }
 
-function quoteAppleScriptJavaScript(value: string): string {
-  const lines = value.replace(/\r\n?/g, '\n').split('\n');
-  return `(${lines.map(quoteAppleScriptString).join(' & linefeed & ')})`;
+function execSafariAppleScript(script: string, timeoutMs: number): Promise<string> {
+  return serializeSafariCommand(() => exec('/usr/bin/osascript', ['-e', script], {
+    cwd: process.cwd(),
+    timeout: timeoutMs,
+  }));
 }
 
 function readChatGptToCodexScript(fileName: string): string {
@@ -1021,6 +1071,20 @@ function handleBrowserSlashSignal(signal: string): void {
     triggerElementPickerShortcut(`native-browser-monitor:${browser}`, browser);
     return;
   }
+  const nativeApp = parseNativeAppPickerSignal(signal);
+  if (nativeApp) {
+    if (pendingGlobalElementPickerTimer) {
+      clearTimeout(pendingGlobalElementPickerTimer);
+      pendingGlobalElementPickerTimer = null;
+    }
+    triggerElementPickerShortcut(
+      `native-app-monitor:${nativeApp.appPid}`,
+      undefined,
+      nativeApp.appPid,
+      nativeApp.appId || undefined,
+    );
+    return;
+  }
   if (signal === 'safari') {
     if (safariSlashInjectionTimer) clearTimeout(safariSlashInjectionTimer);
     safariSlashInjectionTimer = setTimeout(() => {
@@ -1061,10 +1125,7 @@ tell application "Safari"
   end try
 end tell`;
   try {
-    const result = await exec('/usr/bin/osascript', ['-e', appleScript], {
-      cwd: process.cwd(),
-      timeout: 3_000,
-    });
+    const result = await execSafariAppleScript(appleScript, 3_000);
     console.log(`[attune] one-shot Safari slash injection ${result.trim() || 'empty'}`);
   } catch (error) {
     console.warn('[attune] one-shot Safari slash injection failed:', error);
@@ -1171,10 +1232,7 @@ return ""`;
 
   await delay(150);
   for (let attempt = 0; attempt < 30; attempt += 1) {
-    const output = (await exec('/usr/bin/osascript', ['-e', appleScript], {
-      cwd: process.cwd(),
-      timeout: 3_000,
-    })).trim();
+    const output = (await execSafariAppleScript(appleScript, 3_000)).trim();
     if (output) return JSON.parse(output);
     await delay(100);
   }
@@ -1448,28 +1506,22 @@ async function runElementPickerOnTarget(
   const pollJavascript = `(() => {
     const value = globalThis[${JSON.stringify(resultKey)}] || '';
     if (value) delete globalThis[${JSON.stringify(resultKey)}];
-    return value;
+    return {
+      value,
+      installed: typeof globalThis.__attuneElementPickerCleanup === 'function',
+    };
   })()`;
-  const page = target.safariPage;
-  const attempts = Math.ceil(ELEMENT_PICKER_TIMEOUT_MS / 100);
-  const appleScript = `tell application "Safari"
-  if not (exists window id ${page.windowId}) then error "Safari picker window is unavailable"
-  set pickerWindow to window id ${page.windowId}
-  if (count of tabs of pickerWindow) < ${page.tabIndex} then error "Safari picker tab is unavailable"
-  set pickerTab to tab ${page.tabIndex} of pickerWindow
-  do JavaScript ${quoteAppleScriptJavaScript(installer)} in pickerTab
-  repeat ${attempts} times
-    set pickerResult to do JavaScript ${quoteAppleScriptString(pollJavascript)} in pickerTab
-    if pickerResult is not "" then return pickerResult
-    delay 0.1
-  end repeat
-  return "{\\"status\\":\\"cancelled\\"}"
-end tell`;
-  const raw = await exec('/usr/bin/osascript', ['-e', appleScript], {
-    cwd: process.cwd(),
-    timeout: ELEMENT_PICKER_TIMEOUT_MS + 5_000,
-  });
-  try { return JSON.parse(raw.trim()); } catch { return null; }
+  const client = new SafariAppleEventsPageClient(target.safariPage);
+  try {
+    await client.connect();
+    await client.evaluate(installer, 5_000);
+    return waitForSafariPickerResult(
+      () => client.evaluate(pollJavascript, 3_000),
+      ELEMENT_PICKER_TIMEOUT_MS,
+    );
+  } finally {
+    client.close();
+  }
 }
 
 async function evaluatePageJson(

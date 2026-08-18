@@ -5,6 +5,7 @@ import type {
   ComponentSmuggleKeyForwarder,
   ComponentSmugglePageClient,
 } from './component-smuggler.js';
+import { serializeSafariCommand } from './safari-command-queue.js';
 
 export interface SafariPageReference {
   appPid: number;
@@ -23,7 +24,7 @@ function quoteAppleScriptJavaScript(value: string): string {
 }
 
 function runAppleScript(script: string, timeoutMs: number): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return serializeSafariCommand(() => new Promise((resolve, reject) => {
     execFile('/usr/bin/osascript', ['-e', script], {
       encoding: 'utf8',
       timeout: timeoutMs,
@@ -35,7 +36,7 @@ function runAppleScript(script: string, timeoutMs: number): Promise<string> {
       }
       resolve(stdout.trim());
     });
-  });
+  }));
 }
 
 /**

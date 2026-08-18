@@ -8,8 +8,7 @@ let keyboardModifiers: CGEventFlags = [.maskShift, .maskControl, .maskAlternate,
 let originalParentPid = getppid()
 var lastSignalAt: [String: TimeInterval] = [:]
 
-func browserSignalPrefix() -> String? {
-  let application = NSWorkspace.shared.frontmostApplication
+func browserSignalPrefix(_ application: NSRunningApplication?) -> String? {
   let bundleId = application?.bundleIdentifier
   if bundleId?.hasPrefix("com.apple.Safari") == true {
     return "safari"
@@ -22,11 +21,12 @@ func browserSignalPrefix() -> String? {
 }
 
 func signalForKeyDown(_ event: CGEvent) -> String? {
-  guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0,
-        let browser = browserSignalPrefix() else {
+  guard event.getIntegerValueField(.keyboardEventAutorepeat) == 0 else {
     return nil
   }
 
+  let application = NSWorkspace.shared.frontmostApplication
+  let browser = browserSignalPrefix(application)
   let key = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
   let modifiers = event.flags.intersection(keyboardModifiers)
   if key == aKey,
@@ -34,9 +34,18 @@ func signalForKeyDown(_ event: CGEvent) -> String? {
      modifiers.contains(.maskAlternate),
      !modifiers.contains(.maskShift),
      !modifiers.contains(.maskControl) {
-    return "picker:\(browser)"
+    if let browser {
+      return "picker:\(browser)"
+    }
+    if let application, application.processIdentifier > 0 {
+      if let bundleId = application.bundleIdentifier, !bundleId.isEmpty {
+        return "picker:app:\(application.processIdentifier):\(bundleId)"
+      }
+      return "picker:app:\(application.processIdentifier)"
+    }
+    return nil
   }
-  if key == slashKey && modifiers.isEmpty {
+  if key == slashKey, modifiers.isEmpty, let browser {
     return browser
   }
   return nil
@@ -60,7 +69,8 @@ func emitOnce(_ signal: String) {
 print("status:\(CGPreflightListenEventAccess() ? "granted" : "denied")")
 fflush(stdout)
 if let testSignal = ProcessInfo.processInfo.environment["ATTUNE_BROWSER_SLASH_TEST_SIGNAL"],
-   ["safari", "chrome", "picker:safari", "picker:chrome"].contains(testSignal) {
+   ["safari", "chrome", "picker:safari", "picker:chrome"].contains(testSignal)
+      || testSignal.range(of: #"^picker:app:[1-9][0-9]*(?::[A-Za-z0-9][A-Za-z0-9._-]{0,255})?$"#, options: .regularExpression) != nil {
   emit(testSignal)
 }
 

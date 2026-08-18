@@ -17,6 +17,7 @@ async function run() {
       <head>
         <style>
           body { margin: 0; font: 16px sans-serif; }
+          body > div { display: none; }
           header { padding: 30px; }
           @keyframes pulse { from { opacity: .8; } to { opacity: 1; } }
           button { width: 180px; height: 48px; color: rgb(250, 250, 250); background: rgb(40, 40, 40); border-radius: 8px; animation: pulse 2s infinite alternate; }
@@ -47,6 +48,8 @@ async function run() {
     `Boolean(document.querySelector('[data-attune-element-picker="outline"]'))
       && Boolean(document.querySelector('[data-attune-element-picker="freeze"]'))
       && document.documentElement.getAttribute('data-attune-element-picker-active') === 'true'
+      && getComputedStyle(document.querySelector('[data-attune-element-picker="outline"]')).display === 'block'
+      && getComputedStyle(document.querySelector('[data-attune-element-picker="label"]')).display === 'block'
       && getComputedStyle(document.querySelector('button')).animationPlayState === 'paused'`,
   );
   if (!pickerVisible) throw new Error('The picker overlay was not installed.');
@@ -187,6 +190,60 @@ async function run() {
     window.__attuneElementPickerCleanup?.('fixture');
     document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
     delete window.__attuneSmuggleAnchors[${JSON.stringify(targetToken)}];
+  })()`);
+
+  const topTargetToken = 'fixture-smuggle-target-top';
+  const topTargetResultPromise = window.webContents.executeJavaScript(
+    buildElementPickerExpression('Codex', null, { mode: 'smuggle-target', anchorToken: topTargetToken }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('button');
+    const bounds = button.getBoundingClientRect();
+    const x = bounds.x + bounds.width / 2;
+    const y = bounds.top + 2;
+    button.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, composed: true, clientX: x, clientY: y }));
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y }));
+  })()`);
+  const topTargetResult = JSON.parse(await topTargetResultPromise);
+  if (topTargetResult.intent !== 'smuggle-target' || topTargetResult.placement !== 'top') {
+    throw new Error(`Destination top edge did not select top placement: ${JSON.stringify(topTargetResult)}`);
+  }
+  const topTargetAnchored = await window.webContents.executeJavaScript(`
+    window.__attuneSmuggleAnchors?.[${JSON.stringify(topTargetToken)}] === document.querySelector('button')
+  `);
+  if (!topTargetAnchored) throw new Error('Top destination placement did not retain the target anchor.');
+  await window.webContents.executeJavaScript(`(() => {
+    window.__attuneElementPickerCleanup?.('fixture');
+    document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
+    delete window.__attuneSmuggleAnchors[${JSON.stringify(topTargetToken)}];
+  })()`);
+
+  const bottomTargetToken = 'fixture-smuggle-target-bottom';
+  const bottomTargetResultPromise = window.webContents.executeJavaScript(
+    buildElementPickerExpression('Codex', null, { mode: 'smuggle-target', anchorToken: bottomTargetToken }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('button');
+    const bounds = button.getBoundingClientRect();
+    const x = bounds.x + bounds.width / 2;
+    const y = bounds.bottom - 2;
+    button.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, composed: true, clientX: x, clientY: y }));
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y }));
+  })()`);
+  const bottomTargetResult = JSON.parse(await bottomTargetResultPromise);
+  if (bottomTargetResult.intent !== 'smuggle-target' || bottomTargetResult.placement !== 'bottom') {
+    throw new Error(`Destination bottom edge did not select bottom placement: ${JSON.stringify(bottomTargetResult)}`);
+  }
+  const bottomTargetAnchored = await window.webContents.executeJavaScript(`
+    window.__attuneSmuggleAnchors?.[${JSON.stringify(bottomTargetToken)}] === document.querySelector('button')
+  `);
+  if (!bottomTargetAnchored) throw new Error('Bottom destination placement did not retain the target anchor.');
+  await window.webContents.executeJavaScript(`(() => {
+    window.__attuneElementPickerCleanup?.('fixture');
+    document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
+    delete window.__attuneSmuggleAnchors[${JSON.stringify(bottomTargetToken)}];
   })()`);
   window.destroy();
 }

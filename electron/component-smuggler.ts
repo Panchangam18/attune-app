@@ -5,7 +5,7 @@ export interface ComponentSmuggleAnchor {
   roles: string[];
   selector: string;
   fingerprint: ElementPickerSelection['fingerprint'];
-  placement: 'inside' | 'left' | 'right';
+  placement: 'inside' | 'top' | 'bottom' | 'left' | 'right';
 }
 
 export interface ComponentSmuggleEndpoint {
@@ -99,7 +99,10 @@ export function componentSmuggleAnchor(selection: ElementPickerSelection, token:
     roles: [...selection.roles],
     selector: selection.selector,
     fingerprint: selection.fingerprint,
-    placement: selection.placement === 'left' || selection.placement === 'right' ? selection.placement : 'inside',
+    placement: selection.placement === 'top' || selection.placement === 'bottom'
+      || selection.placement === 'left' || selection.placement === 'right'
+      ? selection.placement
+      : 'inside',
   };
 }
 
@@ -718,7 +721,10 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
 
   let mount = resolveAnchor();
   if (!mount) return { ok: false, reason: 'target-anchor-unresolved' };
-  const placement = anchor.placement === 'left' || anchor.placement === 'right' ? anchor.placement : 'inside';
+  const placement = anchor.placement === 'top' || anchor.placement === 'bottom'
+    || anchor.placement === 'left' || anchor.placement === 'right'
+    ? anchor.placement
+    : 'inside';
   const host = doc.createElement('attune-component-smuggle');
   host.setAttribute('data-attune-component-smuggle', 'host');
   Object.assign(host.style, {
@@ -783,18 +789,61 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   const portalSurface = doc.createElement('div');
   portalSurface.setAttribute('data-attune-component-smuggle', 'portal-surface');
   Object.assign(portalSurface.style, { position: 'fixed', inset: '0', pointerEvents: 'none', overflow: 'visible' });
+  const resizeLayer = doc.createElement('div');
+  resizeLayer.setAttribute('data-attune-component-smuggle', 'resize-controls');
+  Object.assign(resizeLayer.style, {
+    position: 'fixed', left: '0', top: '0', width: '0', height: '0', zIndex: '2147483647',
+    pointerEvents: 'none', opacity: '0', visibility: 'hidden',
+    outline: '1px solid rgba(243,214,111,.9)', outlineOffset: '1px',
+  });
+  const resizeHandleSpecs: Record<string, Record<string, string>> = {
+    n: { left: '50%', top: '0', width: '32px', height: '10px', transform: 'translate(-50%,-50%)', cursor: 'ns-resize' },
+    s: { left: '50%', top: '100%', width: '32px', height: '10px', transform: 'translate(-50%,-50%)', cursor: 'ns-resize' },
+    e: { left: '100%', top: '50%', width: '10px', height: '32px', transform: 'translate(-50%,-50%)', cursor: 'ew-resize' },
+    w: { left: '0', top: '50%', width: '10px', height: '32px', transform: 'translate(-50%,-50%)', cursor: 'ew-resize' },
+    ne: { left: '100%', top: '0', width: '12px', height: '12px', transform: 'translate(-50%,-50%)', cursor: 'nesw-resize' },
+    nw: { left: '0', top: '0', width: '12px', height: '12px', transform: 'translate(-50%,-50%)', cursor: 'nwse-resize' },
+    se: { left: '100%', top: '100%', width: '12px', height: '12px', transform: 'translate(-50%,-50%)', cursor: 'nwse-resize' },
+    sw: { left: '0', top: '100%', width: '12px', height: '12px', transform: 'translate(-50%,-50%)', cursor: 'nesw-resize' },
+  };
+  const resizeHandles = new Map<string, any>();
+  for (const [direction, geometry] of Object.entries(resizeHandleSpecs)) {
+    const handle = doc.createElement('button');
+    handle.type = 'button';
+    handle.tabIndex = -1;
+    handle.setAttribute('aria-label', `Resize smuggled component ${direction}`);
+    handle.setAttribute('data-attune-smuggle-resize-handle', direction);
+    Object.assign(handle.style, {
+      position: 'absolute', display: 'block', margin: '0', padding: '0', zIndex: '1',
+      border: '1px solid rgb(16,18,17)', borderRadius: direction.length === 2 ? '3px' : '999px',
+      background: '#f3d66f', boxShadow: '0 1px 5px rgba(0,0,0,.5)',
+      pointerEvents: 'none', touchAction: 'none', WebkitAppRegion: 'no-drag',
+      ...geometry,
+    });
+    resizeLayer.appendChild(handle);
+    resizeHandles.set(direction, handle);
+  }
+  portalSurface.appendChild(resizeLayer);
   portalShadow.append(portalReset, portalSurface);
   doc.documentElement.appendChild(portalHost);
   const voidTags = new Set(['input', 'img', 'br', 'hr', 'meta', 'link', 'source', 'track', 'area', 'base', 'col', 'embed', 'param', 'wbr']);
   let closing = false;
   const pickerActiveAttribute = 'data-attune-element-picker-active';
+  let selectionModeActive = false;
+  let positionResizeLayer = () => {};
   const updateCloseVisibility = () => {
     const visible = doc.documentElement.getAttribute(pickerActiveAttribute) === 'true';
+    selectionModeActive = visible;
     close.style.opacity = visible ? '1' : '0';
     close.style.visibility = visible ? 'visible' : 'hidden';
     close.style.pointerEvents = visible ? 'auto' : 'none';
     close.tabIndex = visible ? 0 : -1;
     close.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    resizeLayer.style.opacity = visible ? '1' : '0';
+    resizeLayer.style.visibility = visible ? 'visible' : 'hidden';
+    portalHost.style.zIndex = visible ? '2147483647' : '2147483646';
+    for (const handle of resizeHandles.values()) handle.style.pointerEvents = visible ? 'auto' : 'none';
+    positionResizeLayer();
   };
   const selectionModeObserver = new runtime.MutationObserver(updateCloseVisibility);
   selectionModeObserver.observe(doc.documentElement, {
@@ -802,7 +851,8 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     attributeFilter: [pickerActiveAttribute],
   });
   updateCloseVisibility();
-  const contained = placement === 'left' || placement === 'right';
+  const contained = placement === 'top' || placement === 'bottom'
+    || placement === 'left' || placement === 'right';
   const layoutAttribute = 'data-attune-component-smuggle-layout';
   const layoutStyle = doc.createElement('style');
   layoutStyle.setAttribute('data-attune-component-smuggle', 'layout');
@@ -824,7 +874,9 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
       width: bounds.width,
       height: bounds.height,
       clientWidth: container.clientWidth,
+      clientHeight: container.clientHeight,
       scrollWidth: container.scrollWidth,
+      scrollHeight: container.scrollHeight,
       paddingLeft: Number.parseFloat(computed.paddingLeft) || 0,
       paddingRight: Number.parseFloat(computed.paddingRight) || 0,
       paddingTop: Number.parseFloat(computed.paddingTop) || 0,
@@ -836,7 +888,7 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     decoratedMount = container;
     container.setAttribute(layoutAttribute, anchor.token);
     Object.assign(host.style, {
-      position: 'absolute', left: '', right: '', top: `${mountBaseline.paddingTop}px`,
+      position: 'absolute', left: '', right: '', top: '', bottom: '',
       margin: '0', zIndex: '1', flex: 'none', alignSelf: 'auto',
     });
     close.style.top = '0';
@@ -847,13 +899,22 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     const hostBounds = host.getBoundingClientRect();
     const hostWidth = Math.max(0, hostBounds.width);
     const hostHeight = Math.max(0, hostBounds.height);
-    const gap = hostWidth > 0 ? 8 : 0;
-    const reserve = hostWidth + gap;
-    const paddingLeft = mountBaseline.paddingLeft + (placement === 'left' ? reserve : 0);
-    const paddingRight = mountBaseline.paddingRight + (placement === 'right' ? reserve : 0);
-    const needsHorizontalScroll = reserve + mountBaseline.scrollWidth > mountBaseline.clientWidth + 1;
+    const horizontalGap = hostWidth > 0 ? 8 : 0;
+    const verticalGap = hostHeight > 0 ? 8 : 0;
+    const horizontalReserve = placement === 'left' || placement === 'right' ? hostWidth + horizontalGap : 0;
+    const verticalReserve = placement === 'top' || placement === 'bottom' ? hostHeight + verticalGap : 0;
+    const paddingLeft = mountBaseline.paddingLeft + (placement === 'left' ? horizontalReserve : 0);
+    const paddingRight = mountBaseline.paddingRight + (placement === 'right' ? horizontalReserve : 0);
+    const paddingTop = mountBaseline.paddingTop + (placement === 'top' ? verticalReserve : 0);
+    const paddingBottom = mountBaseline.paddingBottom + (placement === 'bottom' ? verticalReserve : 0);
+    const availableWidth = Math.max(0, mountBaseline.width - mountBaseline.paddingLeft - mountBaseline.paddingRight);
     const availableHeight = Math.max(0, mountBaseline.height - mountBaseline.paddingTop - mountBaseline.paddingBottom);
-    const needsVerticalScroll = hostHeight > availableHeight + 1;
+    const needsHorizontalScroll = placement === 'top' || placement === 'bottom'
+      ? hostWidth > availableWidth + 1
+      : horizontalReserve + mountBaseline.scrollWidth > mountBaseline.clientWidth + 1;
+    const needsVerticalScroll = placement === 'top' || placement === 'bottom'
+      ? verticalReserve + mountBaseline.scrollHeight > mountBaseline.clientHeight + 1
+      : hostHeight > availableHeight + 1;
     const selector = `[${layoutAttribute}=${JSON.stringify(anchor.token)}]`;
     const css = `${selector}{
       position:${mountBaseline.position}!important;
@@ -866,13 +927,37 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
       max-block-size:${mountBaseline.height}px!important;
       padding-left:${paddingLeft}px!important;
       padding-right:${paddingRight}px!important;
+      padding-top:${paddingTop}px!important;
+      padding-bottom:${paddingBottom}px!important;
       overflow-x:${needsHorizontalScroll ? 'auto' : mountBaseline.overflowX}!important;
       overflow-y:${needsVerticalScroll ? 'auto' : mountBaseline.overflowY}!important;
     }`;
     if (layoutStyle.textContent !== css) layoutStyle.textContent = css;
-    host.style.left = placement === 'left' ? `${mountBaseline.paddingLeft}px` : '';
+    host.style.left = placement === 'left' || placement === 'top' || placement === 'bottom'
+      ? `${mountBaseline.paddingLeft}px`
+      : '';
     host.style.right = placement === 'right' ? `${mountBaseline.paddingRight}px` : '';
-    host.style.top = `${mountBaseline.paddingTop}px`;
+    if (placement === 'bottom') {
+      const containerBounds = decoratedMount.getBoundingClientRect();
+      let contentBottom = mountBaseline.paddingTop;
+      for (const child of Array.from(decoratedMount.children || []) as any[]) {
+        if (child === host) continue;
+        const childPosition = runtime.getComputedStyle(child).position;
+        if (childPosition === 'absolute' || childPosition === 'fixed') continue;
+        const childBounds = child.getBoundingClientRect();
+        const relativeBottom = childBounds.bottom - containerBounds.top + decoratedMount.scrollTop;
+        if (Number.isFinite(relativeBottom)) contentBottom = Math.max(contentBottom, relativeBottom);
+      }
+      const bottomAlignedTop = Math.max(
+        mountBaseline.paddingTop,
+        mountBaseline.clientHeight - mountBaseline.paddingBottom - hostHeight,
+      );
+      host.style.top = `${Math.max(bottomAlignedTop, contentBottom + verticalGap)}px`;
+      host.style.bottom = '';
+    } else {
+      host.style.top = `${mountBaseline.paddingTop}px`;
+      host.style.bottom = '';
+    }
   };
   const remeasureContainedMount = () => {
     if (!contained || !decoratedMount?.isConnected) return;
@@ -894,7 +979,7 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     const container = voidTags.has(mount.tagName?.toLowerCase?.()) ? mount.parentElement : mount;
     if (!container) return false;
     prepareContainedMount(container);
-    if (placement === 'left') {
+    if (placement === 'left' || placement === 'top') {
       if (host.parentElement !== container || host !== container.firstChild) container.insertBefore(host, container.firstChild);
     } else if (host.parentElement !== container) {
       container.appendChild(host);
@@ -1215,20 +1300,64 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   let currentVisualFrame: any = null;
   let currentVisualSequence = 0;
   let currentSatellites: Array<{ wrapper: any; bounds: any }> = [];
+  let customViewSize: { width: number; height: number } | null = null;
+  let customViewOffset = { x: 0, y: 0 };
+  let resizeState: any = null;
+  const sourceSize = () => ({
+    width: Math.max(1, Number(currentSourceSize.width) || Number(currentVisualFrame?.rootWidth) || Number(currentVisualFrame?.width) || 1),
+    height: Math.max(1, Number(currentSourceSize.height) || Number(currentVisualFrame?.rootHeight) || Number(currentVisualFrame?.height) || 1),
+  });
+  const viewSize = () => {
+    const source = sourceSize();
+    return {
+      width: Math.max(1, Number(customViewSize?.width) || source.width),
+      height: Math.max(1, Number(customViewSize?.height) || source.height),
+    };
+  };
+  const applyHostGeometry = (size: { width: number; height: number }) => {
+    host.style.width = `${size.width}px`;
+    host.style.height = `${size.height}px`;
+    host.style.transform = customViewOffset.x || customViewOffset.y
+      ? `translate(${customViewOffset.x}px, ${customViewOffset.y}px)`
+      : 'none';
+    host.style.transformOrigin = 'top left';
+    surface.style.width = `${size.width}px`;
+    surface.style.height = `${size.height}px`;
+  };
+  positionResizeLayer = () => {
+    if (!selectionModeActive || !host.isConnected) {
+      resizeLayer.style.display = 'none';
+      return;
+    }
+    const bounds = host.getBoundingClientRect();
+    if (!(bounds.width > 0) || !(bounds.height > 0)) {
+      resizeLayer.style.display = 'none';
+      return;
+    }
+    resizeLayer.style.display = 'block';
+    resizeLayer.style.left = `${bounds.left}px`;
+    resizeLayer.style.top = `${bounds.top}px`;
+    resizeLayer.style.width = `${bounds.width}px`;
+    resizeLayer.style.height = `${bounds.height}px`;
+  };
   const positionSatellites = () => {
     const rootElement = currentFrame?.firstElementChild;
     if (!rootElement?.isConnected) return;
+    const source = sourceSize();
+    const view = viewSize();
+    const scaleX = view.width / source.width;
+    const scaleY = view.height / source.height;
     const rootBounds = rootElement.getBoundingClientRect();
     for (const satellite of currentSatellites) {
-      satellite.wrapper.style.left = `${rootBounds.left + Number(satellite.bounds.x || 0)}px`;
-      satellite.wrapper.style.top = `${rootBounds.top + Number(satellite.bounds.y || 0)}px`;
+      satellite.wrapper.style.left = `${rootBounds.left + Number(satellite.bounds.x || 0) * scaleX}px`;
+      satellite.wrapper.style.top = `${rootBounds.top + Number(satellite.bounds.y || 0) * scaleY}px`;
       satellite.wrapper.style.width = `${Number(satellite.bounds.width || 0)}px`;
       satellite.wrapper.style.height = `${Number(satellite.bounds.height || 0)}px`;
-      satellite.wrapper.style.transform = 'none';
+      satellite.wrapper.style.transform = `scale(${scaleX}, ${scaleY})`;
     }
   };
   const renderSatellites = (satellites: any[]) => {
-    portalSurface.replaceChildren();
+    for (const satellite of currentSatellites) satellite.wrapper.remove();
     currentSatellites = [];
     for (const satellite of satellites || []) {
       const next = createNode(satellite.tree);
@@ -1251,33 +1380,114 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   };
   const fitSurface = () => {
     if (!currentFrame?.isConnected) return;
-    const sourceWidth = currentSourceSize.width || currentFrame.scrollWidth || 1;
-    const sourceHeight = currentSourceSize.height || currentFrame.scrollHeight || 0;
-    host.style.width = `${sourceWidth}px`;
-    surface.style.width = `${sourceWidth}px`;
-    currentFrame.style.width = `${sourceWidth}px`;
-    currentFrame.style.height = `${sourceHeight}px`;
-    currentFrame.style.transform = 'none';
+    const source = sourceSize();
+    const view = viewSize();
+    const scaleX = view.width / source.width;
+    const scaleY = view.height / source.height;
+    applyHostGeometry(view);
+    currentFrame.style.width = `${source.width}px`;
+    currentFrame.style.height = `${source.height}px`;
+    currentFrame.style.transform = `scale(${scaleX}, ${scaleY})`;
     currentFrame.style.transformOrigin = 'top left';
-    surface.style.height = `${Math.ceil(sourceHeight)}px`;
     positionSatellites();
     layoutContainedHost();
+    positionResizeLayer();
   };
   const fitVisual = () => {
     if (!currentVisualFrame || visualViewport.parentElement !== surface) return;
-    const sourceWidth = Number(currentVisualFrame.rootWidth || currentVisualFrame.width) || 1;
-    const sourceHeight = Number(currentVisualFrame.rootHeight || currentVisualFrame.height) || 1;
-    host.style.width = `${sourceWidth}px`;
-    surface.style.width = `${sourceWidth}px`;
-    visualViewport.style.width = `${Math.ceil(sourceWidth)}px`;
-    visualViewport.style.height = `${Math.ceil(sourceHeight)}px`;
-    visualImage.style.left = `${Number(currentVisualFrame.offsetX || 0)}px`;
-    visualImage.style.top = `${Number(currentVisualFrame.offsetY || 0)}px`;
-    visualImage.style.width = `${Number(currentVisualFrame.width || sourceWidth)}px`;
-    visualImage.style.height = `${Number(currentVisualFrame.height || sourceHeight)}px`;
-    surface.style.height = `${Math.ceil(sourceHeight)}px`;
+    const source = sourceSize();
+    const view = viewSize();
+    const scaleX = view.width / source.width;
+    const scaleY = view.height / source.height;
+    applyHostGeometry(view);
+    visualViewport.style.width = `${view.width}px`;
+    visualViewport.style.height = `${view.height}px`;
+    visualImage.style.left = `${Number(currentVisualFrame.offsetX || 0) * scaleX}px`;
+    visualImage.style.top = `${Number(currentVisualFrame.offsetY || 0) * scaleY}px`;
+    visualImage.style.width = `${Number(currentVisualFrame.width || source.width) * scaleX}px`;
+    visualImage.style.height = `${Number(currentVisualFrame.height || source.height) * scaleY}px`;
     layoutContainedHost();
+    positionResizeLayer();
   };
+  const refreshView = () => {
+    fitSurface();
+    fitVisual();
+    layoutContainedHost();
+    positionResizeLayer();
+  };
+  const resizeTo = (width: number, height: number) => {
+    const nextWidth = Math.max(48, Math.min(8192, Number(width) || viewSize().width));
+    const nextHeight = Math.max(32, Math.min(8192, Number(height) || viewSize().height));
+    customViewSize = { width: nextWidth, height: nextHeight };
+    refreshView();
+    return { ...customViewSize };
+  };
+  const resetSize = () => {
+    customViewSize = null;
+    customViewOffset = { x: 0, y: 0 };
+    refreshView();
+    return viewSize();
+  };
+  const suspendPickerFrame = () => {
+    for (const kind of ['freeze', 'outline', 'placement', 'label']) {
+      const node = doc.querySelector(`[data-attune-element-picker=${JSON.stringify(kind)}]`);
+      node?.style?.setProperty?.('display', 'none', 'important');
+    }
+  };
+  const beginResize = (direction: string, event: any) => {
+    if (!selectionModeActive || closing || disposed) return;
+    const bounds = host.getBoundingClientRect();
+    resizeState = {
+      direction,
+      pointerId: event.pointerId,
+      startX: Number(event.clientX) || 0,
+      startY: Number(event.clientY) || 0,
+      width: bounds.width,
+      height: bounds.height,
+      offsetX: customViewOffset.x,
+      offsetY: customViewOffset.y,
+    };
+    suspendPickerFrame();
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+  };
+  const moveResize = (event: any) => {
+    if (!resizeState || (resizeState.pointerId !== undefined && event.pointerId !== resizeState.pointerId)) return;
+    const deltaX = (Number(event.clientX) || 0) - resizeState.startX;
+    const deltaY = (Number(event.clientY) || 0) - resizeState.startY;
+    let width = resizeState.width;
+    let height = resizeState.height;
+    if (resizeState.direction.includes('e')) width = resizeState.width + deltaX;
+    if (resizeState.direction.includes('w')) width = resizeState.width - deltaX;
+    if (resizeState.direction.includes('s')) height = resizeState.height + deltaY;
+    if (resizeState.direction.includes('n')) height = resizeState.height - deltaY;
+    width = Math.max(48, Math.min(8192, width));
+    height = Math.max(32, Math.min(8192, height));
+    customViewOffset = {
+      x: resizeState.offsetX + (resizeState.direction.includes('w') ? resizeState.width - width : 0),
+      y: resizeState.offsetY + (resizeState.direction.includes('n') ? resizeState.height - height : 0),
+    };
+    customViewSize = { width, height };
+    refreshView();
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+  };
+  const endResize = (event: any) => {
+    if (!resizeState || (resizeState.pointerId !== undefined && event.pointerId !== resizeState.pointerId)) return;
+    resizeState = null;
+    positionResizeLayer();
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+  };
+  for (const [direction, handle] of resizeHandles) {
+    handle.addEventListener('pointerdown', (event: any) => beginResize(direction, event), true);
+  }
+  runtime.addEventListener('pointermove', moveResize, true);
+  runtime.addEventListener('pointerup', endResize, true);
+  runtime.addEventListener('pointercancel', endResize, true);
   const applyVisual = (frame: any) => {
     if (disposed || !frame?.data || Number(frame.sequence) <= currentVisualSequence) return false;
     appendHost();
@@ -1413,6 +1623,7 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   const resizeObserver = runtime.ResizeObserver ? new runtime.ResizeObserver(() => { fitSurface(); fitVisual(); layoutContainedHost(); }) : null;
   resizeObserver?.observe(host);
   runtime.addEventListener('resize', remeasureContainedMount, true);
+  runtime.addEventListener('scroll', positionResizeLayer, true);
   const cleanup = () => {
     if (disposed) return;
     disposed = true;
@@ -1420,6 +1631,10 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     selectionModeObserver.disconnect();
     resizeObserver?.disconnect();
     runtime.removeEventListener('resize', remeasureContainedMount, true);
+    runtime.removeEventListener('scroll', positionResizeLayer, true);
+    runtime.removeEventListener('pointermove', moveResize, true);
+    runtime.removeEventListener('pointerup', endResize, true);
+    runtime.removeEventListener('pointercancel', endResize, true);
     host.remove();
     portalHost.remove();
     releaseContainedMount();
@@ -1432,6 +1647,9 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     apply,
     applyVisual,
     requestClose,
+    resizeTo,
+    resetSize,
+    isResizing: () => Boolean(resizeState),
     drainActions: () => actions.splice(0),
     cleanup,
     status: () => ({
@@ -1443,6 +1661,11 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
       satelliteCount: currentSatellites.length,
       rendering: currentVisualFrame ? 'source-capture' : 'dom-twin',
       visualSequence: currentVisualSequence,
+      sourceSize: sourceSize(),
+      viewSize: viewSize(),
+      viewOffset: { ...customViewOffset },
+      customSize: Boolean(customViewSize),
+      resizing: Boolean(resizeState),
       closing,
       placement,
       placementLayout: contained ? 'contained' : 'inside',

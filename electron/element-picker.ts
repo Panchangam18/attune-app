@@ -4,7 +4,7 @@ export const ELEMENT_SELECTION_TTL_MS = 24 * 60 * 60 * 1000;
 export const ELEMENT_SMUGGLE_ANCHOR_ATTRIBUTE = 'data-attune-smuggle-anchor';
 
 export type ElementPickerIntent = 'reference' | 'smuggle-source' | 'smuggle-target';
-export type ElementSmugglePlacement = 'inside' | 'left' | 'right';
+export type ElementSmugglePlacement = 'inside' | 'top' | 'bottom' | 'left' | 'right';
 
 export interface ElementPickerOptions {
   mode?: 'reference' | 'smuggle-target';
@@ -86,7 +86,7 @@ export function isElementPickerResult(value: unknown): value is ElementPickerRes
   const selection = candidate as Partial<ElementPickerSelection>;
   return Array.isArray(selection.roles)
     && (selection.intent === 'reference' || selection.intent === 'smuggle-source' || selection.intent === 'smuggle-target')
-    && (selection.placement === undefined || selection.placement === 'inside' || selection.placement === 'left' || selection.placement === 'right')
+    && (selection.placement === undefined || selection.placement === 'inside' || selection.placement === 'top' || selection.placement === 'bottom' || selection.placement === 'left' || selection.placement === 'right')
     && typeof selection.selector === 'string'
     && Boolean(selection.fingerprint)
     && typeof selection.fingerprint?.tag === 'string'
@@ -183,6 +183,7 @@ function runElementPicker(
         cursor: crosshair !important;
       }
       [data-attune-element-picker="freeze"] {
+        display: block !important;
         position: fixed !important;
         inset: 0 !important;
         z-index: 2147483647 !important;
@@ -196,6 +197,7 @@ function runElementPicker(
         user-select: none !important;
       }
       [data-attune-element-picker="outline"] {
+        display: block !important;
         position: fixed !important;
         z-index: 2147483647 !important;
         pointer-events: none !important;
@@ -205,6 +207,7 @@ function runElementPicker(
         box-shadow: 0 8px 28px rgb(0 0 0 / 28%) !important;
       }
       [data-attune-element-picker="label"] {
+        display: block !important;
         position: fixed !important;
         z-index: 2147483647 !important;
         pointer-events: none !important;
@@ -246,12 +249,18 @@ function runElementPicker(
     label.setAttribute(pickerNodeAttribute, 'label');
     const placementIndicator = doc.createElement('div');
     placementIndicator.setAttribute(pickerNodeAttribute, 'placement');
-    placementIndicator.style.display = 'none';
+    placementIndicator.style.setProperty('display', 'none', 'important');
     (doc.head || doc.documentElement).appendChild(style);
     (doc.body || doc.documentElement).append(...[freezeFrame, outline, placementIndicator, label].filter(Boolean));
 
     const clean = (value: unknown, limit = 120) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
     const isPickerNode = (element: any) => Boolean(element?.closest?.(`[${pickerNodeAttribute}]`));
+    const isSmuggleResizeHandle = (event: any) => (event.composedPath?.() || []).some((item: any) => (
+      item?.hasAttribute?.('data-attune-smuggle-resize-handle')
+    ));
+    const isSmuggleResizeInteraction = (event: any) => (
+      isSmuggleResizeHandle(event) || Boolean(win.__attuneComponentSmuggleTarget?.isResizing?.())
+    );
     const rolesFor = (element: any) => clean(element?.getAttribute?.('data-attune-host-roles'), 300).split(/\s+/).filter(Boolean);
     const accessibleLabel = (element: any) => clean(
       element?.getAttribute?.('aria-label')
@@ -284,10 +293,13 @@ function runElementPicker(
     const placementFor = (element: any, point = lastPoint): ElementSmugglePlacement => {
       if (pickerOptions.mode !== 'smuggle-target') return 'inside';
       const bounds = element?.getBoundingClientRect?.();
-      if (!bounds || bounds.width <= 0) return 'inside';
-      const ratio = (Number(point?.x) - bounds.left) / bounds.width;
-      if (ratio <= 0.3) return 'left';
-      if (ratio >= 0.7) return 'right';
+      if (!bounds || bounds.width <= 0 || bounds.height <= 0) return 'inside';
+      const verticalRatio = (Number(point?.y) - bounds.top) / bounds.height;
+      if (verticalRatio <= 0.3) return 'top';
+      if (verticalRatio >= 0.7) return 'bottom';
+      const horizontalRatio = (Number(point?.x) - bounds.left) / bounds.width;
+      if (horizontalRatio <= 0.3) return 'left';
+      if (horizontalRatio >= 0.7) return 'right';
       return 'inside';
     };
 
@@ -295,6 +307,8 @@ function runElementPicker(
       const element = currentElement();
       if (!element?.isConnected) return;
       const bounds = element.getBoundingClientRect();
+      outline.style.setProperty('display', 'block', 'important');
+      label.style.setProperty('display', 'block', 'important');
       outline.style.left = `${Math.max(0, bounds.left)}px`;
       outline.style.top = `${Math.max(0, bounds.top)}px`;
       outline.style.width = `${Math.max(0, Math.min(bounds.width, runtime.innerWidth - Math.max(0, bounds.left)))}px`;
@@ -304,19 +318,31 @@ function runElementPicker(
       const name = accessibleLabel(element) || clean(element.innerText || element.textContent, 64);
       const placement = placementFor(element);
       const modeLabel = pickerOptions.mode === 'smuggle-target'
-        ? placement === 'left'
-          ? 'Place in LEFT side of highlighted component'
+        ? placement === 'top'
+          ? 'Place in TOP of highlighted component'
+          : placement === 'bottom'
+            ? 'Place in BOTTOM of highlighted component'
+          : placement === 'left'
+            ? 'Place in LEFT side of highlighted component'
           : placement === 'right'
             ? 'Place in RIGHT side of highlighted component'
             : 'Insert INSIDE highlighted component'
         : 'Click to copy · Option-click highlighted component to smuggle';
       if (pickerOptions.mode === 'smuggle-target' && placement !== 'inside') {
-        placementIndicator.style.display = 'block';
-        placementIndicator.style.left = `${Math.max(0, Math.min(runtime.innerWidth - 6, placement === 'left' ? bounds.left - 3 : bounds.right - 3))}px`;
-        placementIndicator.style.top = `${Math.max(0, bounds.top)}px`;
-        placementIndicator.style.height = `${Math.max(8, Math.min(bounds.height, runtime.innerHeight - Math.max(0, bounds.top)))}px`;
+        placementIndicator.style.setProperty('display', 'block', 'important');
+        if (placement === 'top' || placement === 'bottom') {
+          placementIndicator.style.left = `${Math.max(0, bounds.left)}px`;
+          placementIndicator.style.top = `${Math.max(0, Math.min(runtime.innerHeight - 6, placement === 'top' ? bounds.top - 3 : bounds.bottom - 3))}px`;
+          placementIndicator.style.width = `${Math.max(8, Math.min(bounds.width, runtime.innerWidth - Math.max(0, bounds.left)))}px`;
+          placementIndicator.style.height = '6px';
+        } else {
+          placementIndicator.style.left = `${Math.max(0, Math.min(runtime.innerWidth - 6, placement === 'left' ? bounds.left - 3 : bounds.right - 3))}px`;
+          placementIndicator.style.top = `${Math.max(0, bounds.top)}px`;
+          placementIndicator.style.width = '6px';
+          placementIndicator.style.height = `${Math.max(8, Math.min(bounds.height, runtime.innerHeight - Math.max(0, bounds.top)))}px`;
+        }
       } else {
-        placementIndicator.style.display = 'none';
+        placementIndicator.style.setProperty('display', 'none', 'important');
       }
       label.textContent = `${modeLabel}  ·  ${roles.length ? roles.join(' · ') : 'Unmapped'}  <${tag}>${name ? `  ${name}` : ''}`;
       const labelLeft = Math.max(8, Math.min(bounds.left, runtime.innerWidth - Math.min(520, label.offsetWidth || 260) - 8));
@@ -478,8 +504,8 @@ function runElementPicker(
     };
     const complete = () => {
       removeListeners();
-      outline.style.display = 'none';
-      placementIndicator.style.display = 'none';
+      outline.style.setProperty('display', 'none', 'important');
+      placementIndicator.style.setProperty('display', 'none', 'important');
       label.textContent = `${appName} element copied`;
       label.style.top = '12px';
       label.style.left = '50%';
@@ -487,6 +513,7 @@ function runElementPicker(
       runtime.setTimeout(removeNodes, 900);
     };
     function onPointerMove(event: any) {
+      if (isSmuggleResizeInteraction(event)) return;
       event.stopPropagation();
       event.stopImmediatePropagation?.();
       const raw = (event.composedPath?.() || []).find((item: any) => item instanceof runtime.Element && !isPickerNode(item))
@@ -502,6 +529,12 @@ function runElementPicker(
       positionOverlay();
     }
     function onClick(event: any) {
+      if (isSmuggleResizeHandle(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        return;
+      }
       const eventPath = event.composedPath?.() || [];
       const smuggleClose = eventPath.find((item: any) => (
         item?.getAttribute?.('aria-label') === 'Stop component smuggling'
@@ -534,7 +567,7 @@ function runElementPicker(
       label.textContent = intent === 'smuggle-source'
         ? 'Source selected — choose a destination…'
         : intent === 'smuggle-target'
-          ? `${placement === 'inside' ? 'Inside' : placement === 'left' ? 'Left' : 'Right'} destination selected — starting smuggle…`
+          ? `${placement === 'inside' ? 'Inside' : placement === 'top' ? 'Top' : placement === 'bottom' ? 'Bottom' : placement === 'left' ? 'Left' : 'Right'} destination selected — starting smuggle…`
           : 'Selected — copying reference…';
       runtime.setTimeout(() => { if (label.isConnected) cancel('copy-timeout'); }, 5000);
     }
@@ -571,6 +604,7 @@ function runElementPicker(
       'copy', 'cut', 'paste',
     ];
     function blockHostEvent(event: any) {
+      if (isSmuggleResizeInteraction(event)) return;
       if (event.cancelable) event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();

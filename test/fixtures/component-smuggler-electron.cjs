@@ -322,7 +322,7 @@ async function run() {
     throw new Error(`A stale snapshot touched optimistic input: ${JSON.stringify(optimisticGuard)}`);
   }
   await targetWindow.webContents.executeJavaScript('window.__attuneComponentSmuggleTarget.cleanup()');
-  for (const placement of ['left', 'right']) {
+  for (const placement of ['top', 'bottom', 'left', 'right']) {
     const containedAnchor = { ...targetAnchor, token: `target-${placement}`, placement };
     const containedInstall = await targetWindow.webContents.executeJavaScript(
       buildComponentSmuggleTargetExpression(containedAnchor),
@@ -340,16 +340,22 @@ async function run() {
       const mountBounds = mount.getBoundingClientRect();
       const hostBounds = host.getBoundingClientRect();
       const contentBounds = content.getBoundingClientRect();
+      const verticallyReachable = hostBounds.bottom <= mountBounds.bottom + 1
+        || mount.scrollHeight > mount.clientHeight + 1;
       return {
         placement: window.__attuneComponentSmuggleTarget.status().placement,
         placementLayout: window.__attuneComponentSmuggleTarget.status().placementLayout,
         insideMount: host.parentElement === mount,
         outerWidthPreserved: Math.abs(mountBounds.width - 300) < 1,
         hostContained: hostBounds.left >= mountBounds.left - 1 && hostBounds.right <= mountBounds.right + 1
-          && hostBounds.top >= mountBounds.top - 1 && hostBounds.bottom <= mountBounds.bottom + 1,
-        contentReserved: ${JSON.stringify(placement)} === 'left'
-          ? contentBounds.left >= hostBounds.right + 7
-          : contentBounds.right <= hostBounds.left - 7,
+          && hostBounds.top >= mountBounds.top - 1 && verticallyReachable,
+        contentReserved: ${JSON.stringify(placement)} === 'top'
+          ? contentBounds.top >= hostBounds.bottom + 7
+          : ${JSON.stringify(placement)} === 'bottom'
+            ? contentBounds.bottom <= hostBounds.top - 7
+          : ${JSON.stringify(placement)} === 'left'
+            ? contentBounds.left >= hostBounds.right + 7
+            : contentBounds.right <= hostBounds.left - 7,
       };
     })()`);
     await targetWindow.webContents.executeJavaScript('window.replaceTarget()');
@@ -369,7 +375,8 @@ async function run() {
     const restored = await targetWindow.webContents.executeJavaScript(`(() => {
       const mount = document.querySelector('[data-attune-host-roles~="fixture.target"]');
       return !mount.hasAttribute('data-attune-component-smuggle-layout')
-        && Math.abs(mount.getBoundingClientRect().width - 300) < 1;
+        && Math.abs(mount.getBoundingClientRect().width - 300) < 1
+        && Math.abs(mount.getBoundingClientRect().height - 80) < 1;
     })()`);
     if (!restored) throw new Error(`Contained ${placement} placement did not restore the destination bounds.`);
   }
@@ -659,6 +666,103 @@ async function run() {
     || visualWheel?.deltaX !== 32 || visualWheel?.deltaY !== 48
     || !(visualState.actions[0]?.position?.xRatio > 0) || visualState.actions.at(-1)?.position !== null) {
     throw new Error(`Source-rendered capture did not preserve its input relay: ${JSON.stringify(visualState)}`);
+  }
+
+  const resizePickerResultPromise = targetWindow.webContents.executeJavaScript(
+    buildElementPickerExpression(
+      'Fixture target',
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwWSJwAAAABJRU5ErkJggg==',
+    ),
+  );
+  await wait(180);
+  const resizeSetup = await targetWindow.webContents.executeJavaScript(`(() => {
+    const api = window.__attuneComponentSmuggleTarget;
+    const portal = document.querySelector('attune-component-smuggle-portals').shadowRoot;
+    const controls = portal.querySelector('[data-attune-component-smuggle="resize-controls"]');
+    const handles = [...portal.querySelectorAll('[data-attune-smuggle-resize-handle]')];
+    const northwest = portal.querySelector('[data-attune-smuggle-resize-handle="nw"]');
+    const hostBounds = document.querySelector('attune-component-smuggle').getBoundingClientRect();
+    return {
+      before: api.status(),
+      handleCount: handles.length,
+      controlsVisible: getComputedStyle(controls).visibility === 'visible'
+        && getComputedStyle(northwest).pointerEvents === 'auto',
+      point: { x: hostBounds.left, y: hostBounds.top },
+    };
+  })()`);
+  targetWindow.webContents.debugger.attach('1.3');
+  try {
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: resizeSetup.point.x, y: resizeSetup.point.y,
+      button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse',
+    });
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: resizeSetup.point.x + 160, y: resizeSetup.point.y + 60,
+      button: 'left', buttons: 1, pointerType: 'mouse',
+    });
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: resizeSetup.point.x + 160, y: resizeSetup.point.y + 60,
+      button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse',
+    });
+  } finally {
+    targetWindow.webContents.debugger.detach();
+  }
+  const resizedState = await targetWindow.webContents.executeJavaScript(`(() => {
+    const api = window.__attuneComponentSmuggleTarget;
+    const viewport = document.querySelector('attune-component-smuggle').shadowRoot
+      .querySelector('[data-attune-component-smuggle="visual-viewport"]');
+    const resizedBounds = viewport.getBoundingClientRect();
+    viewport.dispatchEvent(new PointerEvent('pointermove', {
+      clientX: resizedBounds.left + resizedBounds.width * 0.25,
+      clientY: resizedBounds.top + resizedBounds.height * 0.75,
+      bubbles: true, composed: true,
+    }));
+    const after = api.status();
+    const hover = api.drainActions().find((action) => action.type === 'visual-hover');
+    return {
+      after,
+      viewport: { width: resizedBounds.width, height: resizedBounds.height },
+      image: (() => {
+        const bounds = viewport.querySelector('[data-attune-component-smuggle="visual-frame"]').getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      })(),
+      hover,
+      pickerFrameHidden: getComputedStyle(document.querySelector('[data-attune-element-picker="freeze"]')).display === 'none',
+    };
+  })()`);
+  if (resizeSetup.handleCount !== 8 || !resizeSetup.controlsVisible || !resizedState.pickerFrameHidden
+    || resizeSetup.before.sourceSize.width !== 800 || resizeSetup.before.sourceSize.height !== 120
+    || Math.round(resizedState.after.viewSize.width) !== 640 || Math.round(resizedState.after.viewSize.height) !== 60
+    || resizedState.after.sourceSize.width !== 800 || resizedState.after.sourceSize.height !== 120
+    || !resizedState.after.customSize || resizedState.after.resizing
+    || Math.round(resizedState.after.viewOffset.x) !== 160 || Math.round(resizedState.after.viewOffset.y) !== 60
+    || Math.round(resizedState.viewport.width) !== 640 || Math.round(resizedState.viewport.height) !== 60
+    || Math.round(resizedState.image.width) !== 640 || Math.round(resizedState.image.height) !== 60
+    || Math.abs(resizedState.hover?.position?.xRatio - 0.25) > 0.001
+    || Math.abs(resizedState.hover?.position?.yRatio - 0.75) > 0.001) {
+    throw new Error(`Select-mode custom resize failed: ${JSON.stringify(resizedState)}`);
+  }
+  await targetWindow.webContents.executeJavaScript(`window.__attuneElementPickerCleanup('fixture-resize')`);
+  const resizePickerResult = JSON.parse(await resizePickerResultPromise);
+  await wait(160);
+  const resetResizeState = await targetWindow.webContents.executeJavaScript(`(() => {
+    const api = window.__attuneComponentSmuggleTarget;
+    const reset = api.resetSize();
+    const portal = document.querySelector('attune-component-smuggle-portals').shadowRoot;
+    const controls = portal.querySelector('[data-attune-component-smuggle="resize-controls"]');
+    const handle = portal.querySelector('[data-attune-smuggle-resize-handle="se"]');
+    return {
+      reset,
+      status: api.status(),
+      controlsVisibility: getComputedStyle(controls).visibility,
+      handlePointerEvents: getComputedStyle(handle).pointerEvents,
+    };
+  })()`);
+  if (resizePickerResult.status !== 'cancelled'
+    || Math.round(resetResizeState.reset.width) !== 800 || Math.round(resetResizeState.reset.height) !== 120
+    || resetResizeState.status.customSize || resetResizeState.status.viewOffset.x !== 0 || resetResizeState.status.viewOffset.y !== 0
+    || resetResizeState.controlsVisibility !== 'hidden' || resetResizeState.handlePointerEvents !== 'none') {
+    throw new Error(`Custom resize did not reset cleanly: ${JSON.stringify({ resizePickerResult, resetResizeState })}`);
   }
 
   const normalCloseState = await targetWindow.webContents.executeJavaScript(`(() => {
