@@ -62,6 +62,7 @@ test('builds a self-contained picker expression with the global shortcut afforda
   assert.match(expression, /smuggle-source/);
   assert.match(expression, /LEFT side/);
   assert.match(expression, /RIGHT side/);
+  assert.match(expression, /Option-click to REPLACE/);
   assert.doesNotMatch(expression, /0 0 0 [13]px/);
   assert.match(expression, /Codex \\"Desktop\\"/);
 });
@@ -95,6 +96,8 @@ test('formats unmapped selections as resolver work with bounded evidence', () =>
 test('validates only bounded picker result shapes', () => {
   assert.equal(isElementPickerResult({ status: 'cancelled' }), true);
   assert.equal(isElementPickerResult(receipt()), true);
+  assert.equal(isElementPickerResult(receipt({ placement: 'replace' })), true);
+  assert.equal(isElementPickerResult(receipt({ placement: 'overwrite' })), false);
   assert.equal(isElementPickerResult(receipt({ intent: 'invalid' })), false);
   assert.equal(isElementPickerResult({ status: 'selected', roles: [] }), false);
   assert.equal(isElementPickerResult(null), false);

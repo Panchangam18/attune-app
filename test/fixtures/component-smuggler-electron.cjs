@@ -68,9 +68,15 @@ async function run() {
         [role="toolbar"] button[aria-pressed="true"] { background: rgb(40, 140, 90); }
         button::after { content: " Ready"; color: rgb(210, 220, 255); }
         svg { width: 12px; height: 12px; }
-      </style></head><body>
+        [data-fixture-covered-editor] { position: relative; grid-column: 1 / 3; width: 180px; height: 32px; }
+        [data-fixture-covered-editor] textarea { position: absolute; inset: 0; width: 180px; height: 32px; }
+        [data-fixture-editor-cover] { position: absolute; inset: 0; z-index: 2; background: transparent; }
+      </style></head><body><aside id="outside-source-component">Unrelated activity</aside>
         <section data-attune-host-roles="fixture.source" data-attune-smuggle-anchor="source-token">
           <strong>Live card <span role="textbox" contenteditable="true" aria-label="Editor">Draft</span></strong><button aria-label="Increment"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M2 7h12v2H2z"/></svg>Count 0</button>
+          <div data-fixture-covered-editor><textarea aria-label="Covered editor">Seed</textarea><div data-fixture-editor-cover></div></div>
+          <table data-fixture-table><thead><tr><th colspan="3" scope="colgroup">August</th><th colspan="2" scope="colgroup">September</th></tr></thead><tbody><tr><td>A</td><td>B</td><td>C</td><td>D</td><td>E</td></tr></tbody></table>
+          <canvas data-fixture-canvas width="80" height="24" style="width:80px;height:24px"></canvas>
           <div role="toolbar" aria-label="Formatting"><button aria-label="Bold" aria-pressed="false">B</button><button aria-label="Italic" aria-pressed="false">I</button></div>
           <button aria-label="Show formatting toolbar" style="position:absolute;left:450px;top:12px">Aa</button>
         </section>
@@ -104,18 +110,23 @@ async function run() {
             document.querySelector('[role="toolbar"]').style.display = 'flex';
             event.currentTarget.setAttribute('aria-label', 'Hide formatting toolbar');
           });
-          const wire = (root) => root.querySelector('button').addEventListener('click', () => {
-            window.sourceClicks += 1;
-            root.querySelector('button').textContent = 'Count ' + window.sourceClicks;
-            if (!document.querySelector('[role="menu"]')) {
-              const menu = document.createElement('div');
-              menu.setAttribute('role', 'menu');
-              menu.style.cssText = 'position:fixed;left:20px;top:100px;width:180px;height:40px;background:white;z-index:1000';
-              menu.innerHTML = '<button aria-label="Portal action">Portal action</button>';
-              menu.querySelector('button').addEventListener('click', () => { window.portalClicks += 1; menu.remove(); });
-              document.body.appendChild(menu);
-            }
-          });
+          const wire = (root) => {
+            root.querySelector('[data-fixture-editor-cover]').addEventListener('click', () => {
+              root.querySelector('[aria-label="Covered editor"]').focus({ preventScroll: true });
+            });
+            root.querySelector('button').addEventListener('click', () => {
+              window.sourceClicks += 1;
+              root.querySelector('button').textContent = 'Count ' + window.sourceClicks;
+              if (!document.querySelector('[role="menu"]')) {
+                const menu = document.createElement('div');
+                menu.setAttribute('role', 'menu');
+                menu.style.cssText = 'position:fixed;left:20px;top:100px;width:180px;height:40px;background:white;z-index:1000';
+                menu.innerHTML = '<button aria-label="Portal action">Portal action</button>';
+                menu.querySelector('button').addEventListener('click', () => { window.portalClicks += 1; menu.remove(); });
+                document.body.appendChild(menu);
+              }
+            });
+          };
           wire(document.querySelector('[data-attune-host-roles~="fixture.source"]'));
           window.replaceSource = () => {
             const previous = document.querySelector('[data-attune-host-roles~="fixture.source"]');
@@ -131,11 +142,16 @@ async function run() {
     targetWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(`
       <!doctype html><html><body>
         <div id="target-row" style="display:flex;align-items:flex-start">
-          <main style="width:300px;height:80px;flex:0 0 auto" data-attune-host-roles="fixture.target" data-attune-smuggle-anchor="target-token">
+          <main contenteditable="true" style="width:300px;height:80px;flex:0 0 auto" data-attune-host-roles="fixture.target" data-attune-smuggle-anchor="target-token">
             <div data-fixture-target-content style="width:120px;height:40px">Target content</div>
           </main>
         </div>
         <script>
+          document.addEventListener('pointerdown', (event) => {
+            if (event.composedPath().some((item) => item?.tagName === 'ATTUNE-COMPONENT-SMUGGLE')) {
+              setTimeout(() => document.querySelector('main')?.focus(), 25);
+            }
+          }, true);
           window.replaceTarget = () => {
             const previous = document.querySelector('[data-attune-host-roles~="fixture.target"]');
             const replacement = previous.cloneNode(false);
@@ -183,7 +199,7 @@ async function run() {
         `window.__attuneComponentSmuggleTarget.apply(${JSON.stringify(packets)})`,
       );
     }
-    return packets.length;
+    return packets;
   };
   const settle = async (actions) => {
     const revision = actions.reduce((latest, action) => Math.max(latest, Number(action.revision) || 0), 0);
@@ -194,6 +210,14 @@ async function run() {
     }
   };
   await pump();
+  await sourceWindow.webContents.executeJavaScript(
+    `document.querySelector('#outside-source-component').setAttribute('data-unrelated-update', String(Date.now()))`,
+  );
+  await wait(25);
+  const unrelatedPackets = await pump();
+  if (unrelatedPackets.length) {
+    throw new Error(`Unrelated source activity refreshed the smuggled component: ${JSON.stringify(unrelatedPackets.map((packet) => packet.type))}`);
+  }
   const initial = await targetWindow.webContents.executeJavaScript(`(() => {
     const host = document.querySelector('attune-component-smuggle');
     return {
@@ -212,12 +236,25 @@ async function run() {
           fullSize: Boolean(rootRect && hostRect && rootRect.width > 800 && hostRect.width >= rootRect.width - 1),
           namedGridPlacement: Boolean(buttonRect && strongRect && buttonRect.x < strongRect.x),
           viewBox: root?.querySelector('svg')?.getAttribute('viewBox') || '',
+          tableStructure: (() => {
+            const headers = [...(root?.querySelectorAll('[data-fixture-table] thead th') || [])];
+            return headers.map((header) => ({
+              colSpan: header.colSpan,
+              colspan: header.getAttribute('colspan'),
+              scope: header.getAttribute('scope'),
+            }));
+          })(),
+          visualIsland: root?.querySelector('[data-attune-smuggle-visual-island]')?.getAttribute('data-attune-smuggle-visual-kind') || '',
         };
       })(),
     };
   })()`);
   if (!initial.connected || !initial.text.includes('Live card') || !initial.text.includes('Ready') || !initial.buttonPath
-    || !initial.layout.fullSize || !initial.layout.namedGridPlacement || initial.layout.viewBox !== '0 0 16 16') {
+    || !initial.layout.fullSize || !initial.layout.namedGridPlacement || initial.layout.viewBox !== '0 0 16 16'
+    || JSON.stringify(initial.layout.tableStructure) !== JSON.stringify([
+      { colSpan: 3, colspan: '3', scope: 'colgroup' },
+      { colSpan: 2, colspan: '2', scope: 'colgroup' },
+    ]) || initial.layout.visualIsland !== 'canvas') {
     throw new Error(`Initial twin was not rendered: ${JSON.stringify(initial)}`);
   }
 
@@ -274,6 +311,21 @@ async function run() {
     || nativeHoverState.scrolled.events !== 1) {
     throw new Error(`Native pointer input did not round-trip through Chromium: ${JSON.stringify(nativeHoverState)}`);
   }
+
+  const streamedInteractionReady = await targetWindow.webContents.executeJavaScript(`(() => {
+    const api = window.__attuneComponentSmuggleTarget;
+    api.applyVisual({
+      sequence: 1,
+      data: ${JSON.stringify('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwWSJwAAAABJRU5ErkJggg==')},
+      width: 800, height: 120, rootWidth: 800, rootHeight: 120, offsetX: 0, offsetY: 0,
+    });
+    const shadow = document.querySelector('attune-component-smuggle').shadowRoot;
+    const frame = shadow.querySelector('[data-attune-component-smuggle="frame"]');
+    const viewport = shadow.querySelector('[data-attune-component-smuggle="visual-viewport"]');
+    return Boolean(frame && frame.style.opacity === '0' && frame.style.pointerEvents === 'none'
+      && viewport.style.pointerEvents === 'auto');
+  })()`);
+  if (!streamedInteractionReady) throw new Error('The streamed pixels did not take ownership from the passive DOM twin.');
 
   await targetWindow.webContents.executeJavaScript(`(() => {
     const shadow = document.querySelector('attune-component-smuggle').shadowRoot;
@@ -380,6 +432,49 @@ async function run() {
     })()`);
     if (!restored) throw new Error(`Contained ${placement} placement did not restore the destination bounds.`);
   }
+  const replaceAnchor = { ...targetAnchor, token: 'target-replace', placement: 'replace' };
+  const replaceInstall = await targetWindow.webContents.executeJavaScript(
+    buildComponentSmuggleTargetExpression(replaceAnchor),
+  );
+  await targetWindow.webContents.executeJavaScript(`window.__attuneComponentSmuggleTarget.applyVisual({
+    sequence: 1,
+    data: ${JSON.stringify('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwWSJwAAAABJRU5ErkJggg==')},
+    width: 120, height: 50, rootWidth: 120, rootHeight: 50, offsetX: 0, offsetY: 0,
+  })`);
+  await wait(20);
+  const replacementState = await targetWindow.webContents.executeJavaScript(`(() => {
+    const mount = document.querySelector('[data-attune-host-roles~="fixture.target"]');
+    const host = document.querySelector('attune-component-smuggle');
+    const status = window.__attuneComponentSmuggleTarget.status();
+    return {
+      placement: status.placement,
+      placementLayout: status.placementLayout,
+      hidden: getComputedStyle(mount).display === 'none',
+      substituted: host?.nextSibling === mount && host?.parentElement === mount.parentElement,
+    };
+  })()`);
+  await targetWindow.webContents.executeJavaScript('window.replaceTarget()');
+  await wait(40);
+  const reboundReplacement = await targetWindow.webContents.executeJavaScript(`(() => {
+    const mount = document.querySelector('[data-attune-host-roles~="fixture.target"]');
+    const host = document.querySelector('attune-component-smuggle');
+    return getComputedStyle(mount).display === 'none'
+      && host?.nextSibling === mount
+      && window.__attuneComponentSmuggleTarget.status().placementLayout === 'replace';
+  })()`);
+  if (!replaceInstall.ok || replacementState.placement !== 'replace'
+    || replacementState.placementLayout !== 'replace' || !replacementState.hidden
+    || !replacementState.substituted || !reboundReplacement) {
+    throw new Error(`Replace placement failed: ${JSON.stringify({ replaceInstall, replacementState, reboundReplacement })}`);
+  }
+  await targetWindow.webContents.executeJavaScript('window.__attuneComponentSmuggleTarget.cleanup()');
+  const replacementRestored = await targetWindow.webContents.executeJavaScript(`(() => {
+    const mount = document.querySelector('[data-attune-host-roles~="fixture.target"]');
+    return getComputedStyle(mount).display !== 'none'
+      && !mount.hasAttribute('data-attune-component-smuggle-layout')
+      && !document.querySelector('attune-component-smuggle');
+  })()`);
+  if (!replacementRestored) throw new Error('Replace placement did not restore the destination component.');
   await sourceWindow.webContents.executeJavaScript('window.__attuneComponentSmuggleSource.cleanup()');
   const cleanSourceInstall = await sourceWindow.webContents.executeJavaScript(
     buildComponentSmuggleSourceExpression(sourceAnchor),
@@ -407,7 +502,11 @@ async function run() {
   );
   await settle(actions);
   await wait(50);
-  await pump();
+  const clickPackets = await pump();
+  if (!clickPackets.some((packet) => packet.type === 'patch')
+    || clickPackets.some((packet) => packet.type === 'snapshot')) {
+    throw new Error(`Ordinary interaction rebuilt the complete DOM: ${JSON.stringify(clickPackets.map((packet) => packet.type))}`);
+  }
   const clicked = await Promise.all([
     sourceWindow.webContents.executeJavaScript('window.sourceClicks'),
     targetWindow.webContents.executeJavaScript(`document.querySelector('attune-component-smuggle').shadowRoot.textContent`),
@@ -630,12 +729,28 @@ async function run() {
     throw new Error(`Source capture controls were unavailable: ${JSON.stringify(captureSourceState)}`);
   }
 
+  await sourceWindow.webContents.executeJavaScript(`(() => {
+    const unrelated = document.createElement('div');
+    unrelated.setAttribute('data-fixture-unrelated-editor-line', 'true');
+    unrelated.style.cssText = 'position:absolute;left:420px;top:120px;width:160px;height:18px;z-index:100';
+    document.body.appendChild(unrelated);
+  })()`);
+  await wait(30);
+  await pump();
+  const unrelatedSatelliteLeaked = await targetWindow.webContents.executeJavaScript(`Boolean(
+    document.querySelector('attune-component-smuggle-portals').shadowRoot
+      .querySelector('[data-fixture-unrelated-editor-line]')
+  )`);
+  await sourceWindow.webContents.executeJavaScript(`document.querySelector('[data-fixture-unrelated-editor-line]')?.remove()`);
+  if (unrelatedSatelliteLeaked) throw new Error('Unrelated absolute source content leaked into the smuggled satellites.');
+
   const visualState = await targetWindow.webContents.executeJavaScript(`(() => {
     const api = window.__attuneComponentSmuggleTarget;
     api.applyVisual({ sequence: 1, data: ${JSON.stringify('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwWSJwAAAABJRU5ErkJggg==')}, width: 800, height: 120, rootWidth: 800, rootHeight: 120, offsetX: 0, offsetY: 0 });
     const shadow = document.querySelector('attune-component-smuggle').shadowRoot;
+    const portalShadow = document.querySelector('attune-component-smuggle-portals').shadowRoot;
     const viewport = shadow.querySelector('[data-attune-component-smuggle="visual-viewport"]');
-    const relay = shadow.querySelector('[data-attune-component-smuggle="input-relay"]');
+    const relay = portalShadow.querySelector('[data-attune-component-smuggle="input-relay"]');
     relay.__attuneIdentity = 'preserved';
     viewport.dispatchEvent(new PointerEvent('pointermove', { clientX: 200, clientY: 40, bubbles: true, composed: true }));
     viewport.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 20, clientY: 20, bubbles: true, composed: true, cancelable: true }));
@@ -650,10 +765,14 @@ async function run() {
     return {
       rendering: api.status().rendering,
       image: shadow.querySelector('[data-attune-component-smuggle="visual-frame"]')?.src.startsWith('data:image/png;base64,'),
+      interactionTwin: Boolean(shadow.querySelector('[data-attune-component-smuggle="frame"]')),
+      interactionTwinInvisible: shadow.querySelector('[data-attune-component-smuggle="frame"]')?.style.opacity === '0',
+      interactionTwinPassive: shadow.querySelector('[data-attune-component-smuggle="frame"]')?.style.pointerEvents === 'none',
+      pixelsReceivePointers: viewport.style.pointerEvents === 'auto',
       fullSize: Math.round(viewport.getBoundingClientRect().width) === 800
         && Math.round(viewport.getBoundingClientRect().height) === 120
         && !viewport.style.transform.includes('scale'),
-      relayPreserved: shadow.querySelector('[data-attune-component-smuggle="input-relay"]')?.__attuneIdentity === 'preserved',
+      relayPreserved: portalShadow.querySelector('[data-attune-component-smuggle="input-relay"]')?.__attuneIdentity === 'preserved',
       destinationWheelAllowed,
       actions: api.drainActions(),
     };
@@ -661,11 +780,205 @@ async function run() {
   const visualActionTypes = visualState.actions.map((action) => action.type).join(',');
   const visualWheel = visualState.actions.find((action) => action.type === 'visual-wheel');
   if (visualState.rendering !== 'source-capture' || !visualState.image || !visualState.fullSize || !visualState.relayPreserved
+    || !visualState.interactionTwin || !visualState.interactionTwinInvisible || !visualState.interactionTwinPassive
+    || !visualState.pixelsReceivePointers
     || visualState.destinationWheelAllowed
     || visualActionTypes !== 'visual-hover,visual-click,visual-wheel,visual-key,visual-edit,visual-hover'
     || visualWheel?.deltaX !== 32 || visualWheel?.deltaY !== 48
     || !(visualState.actions[0]?.position?.xRatio > 0) || visualState.actions.at(-1)?.position !== null) {
     throw new Error(`Source-rendered capture did not preserve its input relay: ${JSON.stringify(visualState)}`);
+  }
+
+  await wait(45);
+  const retainedRelayState = await targetWindow.webContents.executeJavaScript(`(() => {
+    const portals = document.querySelector('attune-component-smuggle-portals');
+    const relay = portals.shadowRoot.querySelector('[data-attune-component-smuggle="input-relay"]');
+    const status = window.__attuneComponentSmuggleTarget.status();
+    return {
+      relayFocused: document.activeElement === portals && portals.shadowRoot.activeElement === relay,
+      documentActive: document.activeElement?.tagName,
+      portalActive: portals.shadowRoot.activeElement?.tagName,
+      remoteInputActive: status.remoteInputActive,
+      remoteInputFocused: status.remoteInputFocused,
+      marker: document.documentElement.getAttribute('data-attune-smuggle-input-active'),
+    };
+  })()`);
+  if (!retainedRelayState.relayFocused || !retainedRelayState.remoteInputActive
+    || !retainedRelayState.remoteInputFocused || retainedRelayState.marker !== 'true') {
+    throw new Error(`The destination app stole focus back from the visual input relay: ${JSON.stringify(retainedRelayState)}`);
+  }
+
+  targetWindow.webContents.debugger.attach('1.3');
+  let rawRemoteActions;
+  let rawRemoteRelayFocused;
+  let interactionTwinFocused;
+  let coveredEditorValue;
+  try {
+    const coveredEditorPoint = await targetWindow.webContents.executeJavaScript(`(() => {
+      const cover = document.querySelector('attune-component-smuggle').shadowRoot.querySelector('[data-fixture-editor-cover]');
+      const bounds = cover.getBoundingClientRect();
+      return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    })()`);
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: coveredEditorPoint.x, y: coveredEditorPoint.y,
+      button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse',
+    });
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: coveredEditorPoint.x, y: coveredEditorPoint.y,
+      button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse',
+    });
+    await wait(45);
+    const rawRemoteFocus = await targetWindow.webContents.executeJavaScript(`(() => {
+      const shadow = document.querySelector('attune-component-smuggle').shadowRoot;
+      const portals = document.querySelector('attune-component-smuggle-portals');
+      return {
+        relay: document.activeElement === portals
+          && portals.shadowRoot.activeElement?.getAttribute('data-attune-component-smuggle') === 'input-relay',
+        twin: shadow.activeElement?.getAttribute('aria-label') === 'Covered editor',
+      };
+    })()`);
+    rawRemoteRelayFocused = rawRemoteFocus.relay;
+    interactionTwinFocused = rawRemoteFocus.twin;
+    await targetWindow.webContents.debugger.sendCommand('Input.insertText', { text: 'z' });
+    await wait(20);
+    coveredEditorValue = await targetWindow.webContents.executeJavaScript(`(() => {
+      const shadow = document.querySelector('attune-component-smuggle').shadowRoot;
+      return shadow.querySelector('[aria-label="Covered editor"]')?.value;
+    })()`);
+    rawRemoteActions = await targetWindow.webContents.executeJavaScript(
+      'window.__attuneComponentSmuggleTarget.drainActions()',
+    );
+  } finally {
+    targetWindow.webContents.debugger.detach();
+  }
+  const rawRemoteClick = rawRemoteActions.find((action) => action.type === 'visual-click');
+  const rawRemoteInput = rawRemoteActions.find((action) => action.type === 'visual-edit');
+  if (!rawRemoteRelayFocused || interactionTwinFocused || !rawRemoteClick?.trusted
+    || !rawRemoteInput?.trusted || rawRemoteInput.data !== 'z' || coveredEditorValue !== 'Seed'
+    || rawRemoteActions.some((action) => action.type === 'click' || action.type === 'input')) {
+    throw new Error(`Source-rendered input used the DOM twin instead of raw remote input: ${JSON.stringify({ rawRemoteRelayFocused, interactionTwinFocused, coveredEditorValue, rawRemoteActions })}`);
+  }
+
+  sourceWindow.webContents.debugger.attach('1.3');
+  let rawSourceResult;
+  let editContextResult;
+  let nestedEditContextResult;
+  try {
+    const sourcePoint = await sourceWindow.webContents.executeJavaScript(
+      `window.__attuneComponentSmuggleSource.capturePoint(${JSON.stringify(rawRemoteClick.position)})`,
+    );
+    await sourceWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: sourcePoint.x, y: sourcePoint.y,
+      button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse',
+    });
+    await sourceWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: sourcePoint.x, y: sourcePoint.y,
+      button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse',
+    });
+    await sourceWindow.webContents.debugger.sendCommand('Input.insertText', { text: rawRemoteInput.data });
+    rawSourceResult = await sourceWindow.webContents.executeJavaScript(`(() => {
+      const editor = document.querySelector('[aria-label="Covered editor"]');
+      const root = document.querySelector('[data-attune-host-roles~="fixture.source"]')?.getBoundingClientRect();
+      const cover = document.querySelector('[data-fixture-editor-cover]')?.getBoundingClientRect();
+      return {
+        focused: document.activeElement === editor,
+        value: editor.value,
+        sourcePoint: ${JSON.stringify(sourcePoint)},
+        remotePosition: ${JSON.stringify(rawRemoteClick.position)},
+        hit: document.elementFromPoint(${JSON.stringify(sourcePoint.x)}, ${JSON.stringify(sourcePoint.y)})?.getAttribute?.('data-fixture-editor-cover') !== null,
+        root: root && { x: root.x, y: root.y, width: root.width, height: root.height },
+        cover: cover && { x: cover.x, y: cover.y, width: cover.width, height: cover.height },
+      };
+    })()`);
+    const editContextSetup = await sourceWindow.webContents.executeJavaScript(`(() => {
+      const host = document.createElement('div');
+      host.id = 'fixture-edit-context';
+      host.tabIndex = 0;
+      host.setAttribute('role', 'textbox');
+      host.editContext = new EditContext({ text: 'Seed', selectionStart: 4, selectionEnd: 4 });
+      document.querySelector('[data-attune-host-roles~="fixture.source"]').append(host);
+      host.focus({ preventScroll: true });
+      return window.__attuneComponentSmuggleSource.focusActiveEditable();
+    })()`);
+    await sourceWindow.webContents.debugger.sendCommand('Input.insertText', { text: 'x' });
+    editContextResult = await sourceWindow.webContents.executeJavaScript(`(() => {
+      const host = document.getElementById('fixture-edit-context');
+      return {
+        recognized: ${JSON.stringify(editContextSetup)},
+        focused: document.activeElement === host,
+        text: host.editContext.text,
+      };
+    })()`);
+    const nestedEditContextSetup = await sourceWindow.webContents.executeJavaScript(`(() => {
+      const frame = document.createElement('iframe');
+      frame.id = 'fixture-nested-edit-context-frame';
+      frame.style.cssText = 'position:absolute;left:0;top:-10000px;width:625px;height:1px';
+      document.body.append(frame);
+      const host = frame.contentDocument.createElement('div');
+      host.tabIndex = 0;
+      host.setAttribute('role', 'textbox');
+      host.setAttribute('contenteditable', 'true');
+      host.editContext = new EditContext({ text: 'Nested', selectionStart: 6, selectionEnd: 6 });
+      frame.contentDocument.body.append(host);
+      host.focus({ preventScroll: true });
+      return {
+        topActiveIsFrame: document.activeElement === frame,
+        focused: window.__attuneComponentSmuggleSource.focusActiveEditable(),
+      };
+    })()`);
+    await sourceWindow.webContents.debugger.sendCommand('Input.insertText', { text: 'y' });
+    nestedEditContextResult = await sourceWindow.webContents.executeJavaScript(`(() => {
+      const frame = document.getElementById('fixture-nested-edit-context-frame');
+      const host = frame.contentDocument.activeElement;
+      return {
+        setup: ${JSON.stringify(nestedEditContextSetup)},
+        innerFocused: host?.getAttribute('role') === 'textbox',
+        text: host?.editContext?.text,
+      };
+    })()`);
+  } finally {
+    await sourceWindow.webContents.executeJavaScript(`(() => {
+      document.getElementById('fixture-edit-context')?.remove();
+      document.getElementById('fixture-nested-edit-context-frame')?.remove();
+      document.querySelector('[aria-label="Covered editor"]').value = 'Seed';
+      window.__attuneComponentSmuggleSource.drain();
+    })()`);
+    sourceWindow.webContents.debugger.detach();
+  }
+  if (!rawSourceResult.focused || rawSourceResult.value !== 'zSeed') {
+    throw new Error(`Raw input did not reach the source's actual focused control: ${JSON.stringify(rawSourceResult)}`);
+  }
+  if (!editContextResult.recognized?.ok || !editContextResult.recognized?.editContext
+    || !editContextResult.focused || editContextResult.text !== 'Seedx') {
+    throw new Error(`Raw input did not recognize a Chromium EditContext host: ${JSON.stringify(editContextResult)}`);
+  }
+  if (!nestedEditContextResult.setup?.topActiveIsFrame || !nestedEditContextResult.setup?.focused?.ok
+    || !nestedEditContextResult.setup?.focused?.nestedDocument
+    || !nestedEditContextResult.setup?.focused?.editContext || !nestedEditContextResult.innerFocused
+    || nestedEditContextResult.text !== 'Nestedy') {
+    throw new Error(`Raw input did not reach an editable inside a focused iframe: ${JSON.stringify(nestedEditContextResult)}`);
+  }
+
+  targetWindow.webContents.debugger.attach('1.3');
+  let trustedTypingActions;
+  try {
+    await targetWindow.webContents.executeJavaScript(`(() => {
+      const relay = document.querySelector('attune-component-smuggle-portals').shadowRoot
+        .querySelector('[data-attune-component-smuggle="input-relay"]');
+      relay.focus();
+      return relay === document.querySelector('attune-component-smuggle-portals').shadowRoot.activeElement;
+    })()`);
+    await targetWindow.webContents.debugger.sendCommand('Input.insertText', { text: 'z' });
+    await wait(20);
+    trustedTypingActions = await targetWindow.webContents.executeJavaScript(
+      'window.__attuneComponentSmuggleTarget.drainActions()',
+    );
+  } finally {
+    targetWindow.webContents.debugger.detach();
+  }
+  const trustedTyping = trustedTypingActions.find((action) => action.type === 'visual-edit');
+  if (!trustedTyping?.trusted || trustedTyping.data !== 'z' || trustedTyping.inputType !== 'insertText') {
+    throw new Error(`Trusted text input did not reach the visual relay: ${JSON.stringify(trustedTypingActions)}`);
   }
 
   const resizePickerResultPromise = targetWindow.webContents.executeJavaScript(

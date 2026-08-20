@@ -70,17 +70,28 @@ source. The source remains visible and authoritative in its original app.
 Bring a different Attune app to the front, press `Option+Command+A` again, and
 move across the highlighted destination component to choose placement. Its
 top, bottom, left, and right zones reserve an internal lane within the destination's
-existing bounds; the center uses the normal inside placement. The transplant stays at
-its source size, and the destination becomes the scroll boundary when both
-full-size panes cannot fit.
+existing bounds; the center uses the normal inside placement. Option-click the center
+to replace the destination component instead; stopping the smuggle restores it.
+The transplant stays at its source size, and the destination becomes the scroll
+boundary when both full-size panes cannot fit.
 
-The transplanted view relays hover, clicks, typing, keyboard shortcuts, and
-scroll gestures to the source while displaying the source app's rendered
-output. To resize that complete view, enter selection mode in the destination
-app and drag any edge or corner handle; pointer coordinates remain mapped to
-the original source component. Its close control also stays hidden during
-normal use. In selection mode, the `×` control appears on the transplant and
-closes both ends when clicked.
+The transplanted view defaults to a live ScreenCaptureKit stream of the source
+component while the source app remains authoritative. Attune requests 30 frames
+per second and discards stale frames whenever encoding or delivery falls behind,
+then relays hover, clicks, typing, keyboard shortcuts, and scroll gestures back
+to the source. Icons, canvas, video, and other source-rendered surfaces therefore
+arrive exactly as the source compositor drew them.
+
+If the native stream cannot start, Attune falls back to its live DOM twin. That
+path mirrors source structure, computed styles, form state, focus, selection,
+scrolling, menus, and popovers using stable node identities and frame-batched
+incremental patches; source-local icon fonts are embedded in the destination.
+Canvas, video, and other non-DOM surfaces remain capture-backed visual islands
+inside that fallback twin. To resize the complete view, enter selection mode in
+the destination app and drag any edge or corner handle; pointer
+coordinates remain mapped to the original source component. Its close control
+also stays hidden during normal use. In selection mode, the `×` control appears
+on the transplant and closes both ends when clicked.
 
 While picking, Attune freezes the visible frame, pauses CSS motion, and blocks
 host input. Existing semantic roles are copied directly. Unmapped selections

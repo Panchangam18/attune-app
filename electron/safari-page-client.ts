@@ -88,13 +88,17 @@ export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
     return packet.value;
   }
 
-  async click(x: number, y: number): Promise<void> {
+  private async clickAtPointExpression(pointExpression: string): Promise<void> {
     await this.evaluate(`(() => {
-      const element = document.elementFromPoint(${Number(x)}, ${Number(y)});
+      const point = ${pointExpression};
+      if (!point) return false;
+      const x = Number(point.x);
+      const y = Number(point.y);
+      const element = document.elementFromPoint(x, y);
       if (!element) return false;
       const options = {
         bubbles: true, composed: true, cancelable: true,
-        clientX: ${Number(x)}, clientY: ${Number(y)}, button: 0, buttons: 1,
+        clientX: x, clientY: y, button: 0, buttons: 1,
       };
       element.dispatchEvent(new PointerEvent('pointerdown', options));
       element.dispatchEvent(new MouseEvent('mousedown', options));
@@ -105,10 +109,24 @@ export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
     })()`);
   }
 
-  async move(x: number, y: number): Promise<void> {
+  async click(x: number, y: number): Promise<void> {
+    await this.clickAtPointExpression(`({ x: ${Number(x)}, y: ${Number(y)} })`);
+  }
+
+  async clickAtComponentPosition(position?: { xRatio?: number; yRatio?: number }): Promise<void> {
+    await this.clickAtPointExpression(
+      `globalThis.__attuneComponentSmuggleSource?.capturePoint?.(${JSON.stringify(position || null)}) || null`,
+    );
+  }
+
+  private async moveAtPointExpression(pointExpression: string): Promise<void> {
     await this.evaluate(`(() => {
-      const next = ${Number(x)} >= 0 && ${Number(y)} >= 0
-        ? document.elementFromPoint(${Number(x)}, ${Number(y)})
+      const point = ${pointExpression};
+      if (!point) return false;
+      const x = Number(point.x);
+      const y = Number(point.y);
+      const next = x >= 0 && y >= 0
+        ? document.elementFromPoint(x, y)
         : null;
       const previous = globalThis.__attuneSmuggleHoverElement || null;
       const PointerEventConstructor = globalThis.PointerEvent || globalThis.MouseEvent;
@@ -116,7 +134,7 @@ export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
         if (!element) return;
         element.dispatchEvent(new Constructor(name, {
           bubbles, composed: true, cancelable: false, relatedTarget,
-          clientX: ${Number(x)}, clientY: ${Number(y)}, button: 0, buttons: 0,
+          clientX: x, clientY: y, button: 0, buttons: 0,
         }));
       };
       if (previous !== next) {
@@ -138,6 +156,16 @@ export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
     })()`);
   }
 
+  async move(x: number, y: number): Promise<void> {
+    await this.moveAtPointExpression(`({ x: ${Number(x)}, y: ${Number(y)} })`);
+  }
+
+  async moveAtComponentPosition(position?: { xRatio?: number; yRatio?: number } | null): Promise<void> {
+    await this.moveAtPointExpression(
+      `globalThis.__attuneComponentSmuggleSource?.hoverPoint?.(${JSON.stringify(position || null)}) || null`,
+    );
+  }
+
   async wheel(
     x: number,
     y: number,
@@ -145,9 +173,34 @@ export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
     deltaY: number,
     modifiers: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean } = {},
   ): Promise<void> {
+    await this.wheelAtPointExpression(
+      `({ x: ${Number(x)}, y: ${Number(y)} })`, deltaX, deltaY, modifiers,
+    );
+  }
+
+  async wheelAtComponentPosition(
+    position: { xRatio?: number; yRatio?: number },
+    deltaX: number,
+    deltaY: number,
+    modifiers: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean } = {},
+  ): Promise<void> {
+    await this.wheelAtPointExpression(
+      `globalThis.__attuneComponentSmuggleSource?.hoverPoint?.(${JSON.stringify(position || null)}) || null`,
+      deltaX, deltaY, modifiers,
+    );
+  }
+
+  private async wheelAtPointExpression(
+    pointExpression: string,
+    deltaX: number,
+    deltaY: number,
+    modifiers: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean } = {},
+  ): Promise<void> {
     await this.evaluate(`(() => {
-      const x = ${Number(x)};
-      const y = ${Number(y)};
+      const point = ${pointExpression};
+      if (!point) return false;
+      const x = Number(point.x);
+      const y = Number(point.y);
       const deltaX = ${Number(deltaX)};
       const deltaY = ${Number(deltaY)};
       const target = x >= 0 && y >= 0 ? document.elementFromPoint(x, y) : null;
@@ -181,8 +234,22 @@ export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
   }
 
   async insertText(value: string): Promise<void> {
-    await this.evaluate(`(() => {
-      const element = document.activeElement;
+    await this.insertTextAtElementExpression('document.activeElement', value);
+  }
+
+  async insertTextInPrimaryEditable(value: string): Promise<boolean> {
+    return this.insertTextAtElementExpression(
+      `(() => {
+        const focused = globalThis.__attuneComponentSmuggleSource?.focusPrimaryEditable?.();
+        return focused?.ok ? document.activeElement : null;
+      })()`,
+      value,
+    );
+  }
+
+  private async insertTextAtElementExpression(elementExpression: string, value: string): Promise<boolean> {
+    return Boolean(await this.evaluate(`(() => {
+      const element = ${elementExpression};
       if (!element) return false;
       const text = ${JSON.stringify(value)};
       if (typeof element.setRangeText === 'function' && 'selectionStart' in element) {
@@ -194,7 +261,7 @@ export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
       }
       if (element.isContentEditable) return document.execCommand('insertText', false, text);
       return false;
-    })()`);
+    })()`));
   }
 
   async pressKey(

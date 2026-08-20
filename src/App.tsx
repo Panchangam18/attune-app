@@ -203,7 +203,7 @@ export function App() {
             <div className="setting-row picker-shortcut-row">
               <span className="picker-shortcut-copy">
                 Pick an element
-                <small>Click to copy a reference. Option-click to smuggle; choose an internal left, center, or right lane in the destination component.</small>
+                <small>Click to copy a reference. Option-click to smuggle; choose an edge or center placement in the destination, or Option-click its center to replace it.</small>
               </span>
               <kbd>⌥⌘A</kbd>
             </div>

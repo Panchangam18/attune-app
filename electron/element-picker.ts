@@ -4,7 +4,7 @@ export const ELEMENT_SELECTION_TTL_MS = 24 * 60 * 60 * 1000;
 export const ELEMENT_SMUGGLE_ANCHOR_ATTRIBUTE = 'data-attune-smuggle-anchor';
 
 export type ElementPickerIntent = 'reference' | 'smuggle-source' | 'smuggle-target';
-export type ElementSmugglePlacement = 'inside' | 'top' | 'bottom' | 'left' | 'right';
+export type ElementSmugglePlacement = 'inside' | 'replace' | 'top' | 'bottom' | 'left' | 'right';
 
 export interface ElementPickerOptions {
   mode?: 'reference' | 'smuggle-target';
@@ -86,7 +86,7 @@ export function isElementPickerResult(value: unknown): value is ElementPickerRes
   const selection = candidate as Partial<ElementPickerSelection>;
   return Array.isArray(selection.roles)
     && (selection.intent === 'reference' || selection.intent === 'smuggle-source' || selection.intent === 'smuggle-target')
-    && (selection.placement === undefined || selection.placement === 'inside' || selection.placement === 'top' || selection.placement === 'bottom' || selection.placement === 'left' || selection.placement === 'right')
+    && (selection.placement === undefined || selection.placement === 'inside' || selection.placement === 'replace' || selection.placement === 'top' || selection.placement === 'bottom' || selection.placement === 'left' || selection.placement === 'right')
     && typeof selection.selector === 'string'
     && Boolean(selection.fingerprint)
     && typeof selection.fingerprint?.tag === 'string'
@@ -166,6 +166,7 @@ function runElementPicker(
     let chain: any[] = [];
     let chainIndex = 0;
     let lastPoint = { x: 0, y: 0 };
+    let replaceModifierActive = false;
     const root = doc.documentElement;
     const previousPickerActiveValue = root.getAttribute(pickerActiveAttribute);
     root.setAttribute(pickerActiveAttribute, 'true');
@@ -290,7 +291,11 @@ function runElementPicker(
       return { result, preferredIndex: preferredIndex >= 0 ? preferredIndex : 0 };
     };
     const currentElement = () => chain[chainIndex] || pointerElement;
-    const placementFor = (element: any, point = lastPoint): ElementSmugglePlacement => {
+    const placementFor = (
+      element: any,
+      point = lastPoint,
+      replaceRequested = replaceModifierActive,
+    ): ElementSmugglePlacement => {
       if (pickerOptions.mode !== 'smuggle-target') return 'inside';
       const bounds = element?.getBoundingClientRect?.();
       if (!bounds || bounds.width <= 0 || bounds.height <= 0) return 'inside';
@@ -300,7 +305,7 @@ function runElementPicker(
       const horizontalRatio = (Number(point?.x) - bounds.left) / bounds.width;
       if (horizontalRatio <= 0.3) return 'left';
       if (horizontalRatio >= 0.7) return 'right';
-      return 'inside';
+      return replaceRequested ? 'replace' : 'inside';
     };
 
     const positionOverlay = () => {
@@ -326,20 +331,29 @@ function runElementPicker(
             ? 'Place in LEFT side of highlighted component'
           : placement === 'right'
             ? 'Place in RIGHT side of highlighted component'
-            : 'Insert INSIDE highlighted component'
+            : placement === 'replace'
+              ? 'REPLACE highlighted component'
+              : 'Insert INSIDE highlighted component · Option-click to REPLACE'
         : 'Click to copy · Option-click highlighted component to smuggle';
       if (pickerOptions.mode === 'smuggle-target' && placement !== 'inside') {
         placementIndicator.style.setProperty('display', 'block', 'important');
-        if (placement === 'top' || placement === 'bottom') {
-          placementIndicator.style.left = `${Math.max(0, bounds.left)}px`;
-          placementIndicator.style.top = `${Math.max(0, Math.min(runtime.innerHeight - 6, placement === 'top' ? bounds.top - 3 : bounds.bottom - 3))}px`;
-          placementIndicator.style.width = `${Math.max(8, Math.min(bounds.width, runtime.innerWidth - Math.max(0, bounds.left)))}px`;
-          placementIndicator.style.height = '6px';
+        placementIndicator.style.setProperty('background', placement === 'replace' ? 'rgb(243 214 111 / 32%)' : '#f3d66f', 'important');
+        placementIndicator.style.setProperty('border-radius', placement === 'replace' ? '6px' : '999px', 'important');
+        if (placement === 'replace') {
+          placementIndicator.style.setProperty('left', `${Math.max(0, bounds.left)}px`, 'important');
+          placementIndicator.style.setProperty('top', `${Math.max(0, bounds.top)}px`, 'important');
+          placementIndicator.style.setProperty('width', `${Math.max(8, Math.min(bounds.width, runtime.innerWidth - Math.max(0, bounds.left)))}px`, 'important');
+          placementIndicator.style.setProperty('height', `${Math.max(8, Math.min(bounds.height, runtime.innerHeight - Math.max(0, bounds.top)))}px`, 'important');
+        } else if (placement === 'top' || placement === 'bottom') {
+          placementIndicator.style.setProperty('left', `${Math.max(0, bounds.left)}px`, 'important');
+          placementIndicator.style.setProperty('top', `${Math.max(0, Math.min(runtime.innerHeight - 6, placement === 'top' ? bounds.top - 3 : bounds.bottom - 3))}px`, 'important');
+          placementIndicator.style.setProperty('width', `${Math.max(8, Math.min(bounds.width, runtime.innerWidth - Math.max(0, bounds.left)))}px`, 'important');
+          placementIndicator.style.setProperty('height', '6px', 'important');
         } else {
-          placementIndicator.style.left = `${Math.max(0, Math.min(runtime.innerWidth - 6, placement === 'left' ? bounds.left - 3 : bounds.right - 3))}px`;
-          placementIndicator.style.top = `${Math.max(0, bounds.top)}px`;
-          placementIndicator.style.width = '6px';
-          placementIndicator.style.height = `${Math.max(8, Math.min(bounds.height, runtime.innerHeight - Math.max(0, bounds.top)))}px`;
+          placementIndicator.style.setProperty('left', `${Math.max(0, Math.min(runtime.innerWidth - 6, placement === 'left' ? bounds.left - 3 : bounds.right - 3))}px`, 'important');
+          placementIndicator.style.setProperty('top', `${Math.max(0, bounds.top)}px`, 'important');
+          placementIndicator.style.setProperty('width', '6px', 'important');
+          placementIndicator.style.setProperty('height', `${Math.max(8, Math.min(bounds.height, runtime.innerHeight - Math.max(0, bounds.top)))}px`, 'important');
         }
       } else {
         placementIndicator.style.setProperty('display', 'none', 'important');
@@ -475,6 +489,7 @@ function runElementPicker(
       win.removeEventListener('pointermove', onPointerMove, true);
       win.removeEventListener('click', onClick, true);
       win.removeEventListener('keydown', onKeyDown, true);
+      win.removeEventListener('keyup', onKeyUp, true);
       for (const eventName of blockedEventNames) win.removeEventListener(eventName, blockHostEvent, true);
       win.removeEventListener('resize', positionOverlay, true);
       win.removeEventListener('scroll', positionOverlay, true);
@@ -520,6 +535,7 @@ function runElementPicker(
         || doc.elementFromPoint(event.clientX, event.clientY);
       if (!raw || isPickerNode(raw)) return;
       lastPoint = { x: event.clientX, y: event.clientY };
+      replaceModifierActive = Boolean(event.altKey);
       if (raw !== pointerElement) {
         pointerElement = raw;
         const next = buildChain(raw);
@@ -554,7 +570,9 @@ function runElementPicker(
       const selected = currentElement();
       if (!selected || isPickerNode(selected)) return;
       lastPoint = { x: Number(event.clientX) || lastPoint.x, y: Number(event.clientY) || lastPoint.y };
-      const placement = intent === 'smuggle-target' ? placementFor(selected, lastPoint) : 'inside';
+      const placement = intent === 'smuggle-target'
+        ? placementFor(selected, lastPoint, Boolean(event.altKey))
+        : 'inside';
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();
@@ -567,7 +585,7 @@ function runElementPicker(
       label.textContent = intent === 'smuggle-source'
         ? 'Source selected — choose a destination…'
         : intent === 'smuggle-target'
-          ? `${placement === 'inside' ? 'Inside' : placement === 'top' ? 'Top' : placement === 'bottom' ? 'Bottom' : placement === 'left' ? 'Left' : 'Right'} destination selected — starting smuggle…`
+          ? `${placement === 'inside' ? 'Inside' : placement === 'replace' ? 'Replace' : placement === 'top' ? 'Top' : placement === 'bottom' ? 'Bottom' : placement === 'left' ? 'Left' : 'Right'} destination selected — starting smuggle…`
           : 'Selected — copying reference…';
       runtime.setTimeout(() => { if (label.isConnected) cancel('copy-timeout'); }, 5000);
     }
@@ -585,6 +603,10 @@ function runElementPicker(
       return true;
     }
     function onKeyDown(event: any) {
+      if (event.key === 'Alt' && pickerOptions.mode === 'smuggle-target') {
+        replaceModifierActive = true;
+        positionOverlay();
+      }
       const command = event.key === 'Escape'
         ? 'cancel'
         : event.key === 'ArrowUp' ? 'up' : event.key === 'ArrowDown' ? 'down' : null;
@@ -592,6 +614,14 @@ function runElementPicker(
       event.stopPropagation();
       event.stopImmediatePropagation?.();
       if (command) applyPickerCommand(command);
+    }
+    function onKeyUp(event: any) {
+      if (event.key !== 'Alt' || pickerOptions.mode !== 'smuggle-target') return;
+      replaceModifierActive = false;
+      positionOverlay();
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
     }
 
     const blockedEventNames = [
@@ -613,6 +643,7 @@ function runElementPicker(
     win.addEventListener('pointermove', onPointerMove, true);
     win.addEventListener('click', onClick, true);
     win.addEventListener('keydown', onKeyDown, true);
+    win.addEventListener('keyup', onKeyUp, true);
     for (const eventName of blockedEventNames) {
       win.addEventListener(eventName, blockHostEvent, { capture: true, passive: false });
     }

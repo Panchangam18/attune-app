@@ -245,6 +245,33 @@ async function run() {
     document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
     delete window.__attuneSmuggleAnchors[${JSON.stringify(bottomTargetToken)}];
   })()`);
+
+  const replaceTargetToken = 'fixture-smuggle-target-replace';
+  const replaceTargetResultPromise = window.webContents.executeJavaScript(
+    buildElementPickerExpression('Codex', null, { mode: 'smuggle-target', anchorToken: replaceTargetToken }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('button');
+    const bounds = button.getBoundingClientRect();
+    const x = bounds.x + bounds.width / 2;
+    const y = bounds.y + bounds.height / 2;
+    button.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, composed: true, altKey: true, clientX: x, clientY: y,
+    }));
+    button.dispatchEvent(new MouseEvent('click', {
+      bubbles: true, composed: true, cancelable: true, altKey: true, clientX: x, clientY: y,
+    }));
+  })()`);
+  const replaceTargetResult = JSON.parse(await replaceTargetResultPromise);
+  if (replaceTargetResult.intent !== 'smuggle-target' || replaceTargetResult.placement !== 'replace') {
+    throw new Error(`Option-clicking destination center did not select replace: ${JSON.stringify(replaceTargetResult)}`);
+  }
+  await window.webContents.executeJavaScript(`(() => {
+    window.__attuneElementPickerCleanup?.('fixture');
+    document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
+    delete window.__attuneSmuggleAnchors[${JSON.stringify(replaceTargetToken)}];
+  })()`);
   window.destroy();
 }
 

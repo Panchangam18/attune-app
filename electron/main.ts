@@ -47,13 +47,24 @@ import {
   supportedButNotAttachedPickerNotice,
 } from './element-picker-shortcut.js';
 import {
+  CdpPageClient,
   ComponentSmuggleBridge,
   componentSmuggleAnchor,
   componentSmuggleGlobalCaptureRectangle,
   type ComponentSmuggleCaptureRegion,
+  type ComponentSmuggleEndpoint,
   type ComponentSmuggleKeyChord,
   type ComponentSmuggleSpec,
 } from './component-smuggler.js';
+import {
+  buildCodexLiveSlotAnchorExpression,
+  isCodexLiveVisualizationTarget,
+  readPendingComponentSmuggleRequests,
+  removeComponentSmuggleBrokerHeartbeat,
+  restorePendingComponentSmuggleRequest,
+  writeComponentSmuggleBrokerHeartbeat,
+  type LiveComponentSmuggleRequest,
+} from './component-smuggle-requests.js';
 import {
   SafariAppleEventsPageClient,
   type SafariPageReference,
@@ -283,7 +294,6 @@ Refresh Attune App after adding or editing an attunement.
 const CHATGPT_TO_CODEX_CLIPBOARD_SIGNAL = '__ATTUNE_CHATGPT_TO_CODEX_V1__:';
 const CHATGPT_CLAUDE_MODELS_ATTUNEMENT_ID = 'chatgpt-claude-models';
 const CHATGPT_TO_CODEX_ATTUNEMENT_ID = 'chatgpt-to-codex';
-
 const ATTUNEMENT_RUNTIME_CLEANUP_CSS = `/* @attune-script
 (() => {
   window.__attuneCodexGitActionsCleanup?.();
@@ -310,11 +320,14 @@ let activeElementPickerTarget: ElementPickerTarget | null = null;
 let elementPickerNavigationQueue = Promise.resolve();
 let pendingComponentSmuggle: PendingComponentSmuggle | null = null;
 let activeComponentSmuggle: ComponentSmuggleBridge | null = null;
+let componentSmuggleBrokerTimer: NodeJS.Timeout | null = null;
+let componentSmuggleBrokerRunning = false;
 const activeElementPickerNavigationAccelerators = new Set<string>();
 const scaffoldWatchers: FSWatcher[] = [];
 const wrappingAppIds = new Set<string>();
 const lastWrapAtByAppId = new Map<string, number>();
 const iconDataUrlByAppPath = new Map<string, Promise<string | null>>();
+const componentSmuggleBrokerErrorAtByRequest = new Map<string, number>();
 
 configureUserDataPath();
 
@@ -336,6 +349,7 @@ app.whenReady().then(() => {
   registerElementPickerShortcut();
   startAutoWrapMonitor();
   startLinearTodosBridge();
+  startComponentSmuggleBroker();
   startChatGptClipboardBridge();
   startBrowserSlashMonitor();
   reconnectSafariChatGptTabsOnStartup();
@@ -360,6 +374,8 @@ app.on('before-quit', () => {
   if (safariSlashInjectionTimer) clearTimeout(safariSlashInjectionTimer);
   if (chromeSlashRefreshTimer) clearTimeout(chromeSlashRefreshTimer);
   if (chatGptClipboardTimer) clearInterval(chatGptClipboardTimer);
+  if (componentSmuggleBrokerTimer) clearInterval(componentSmuggleBrokerTimer);
+  removeComponentSmuggleBrokerHeartbeat(app.getPath('home'));
   if (scaffoldRefreshTimer) clearTimeout(scaffoldRefreshTimer);
   globalShortcut.unregister(ELEMENT_PICKER_ACCELERATOR);
   unregisterElementPickerNavigationShortcuts();
@@ -377,6 +393,124 @@ function configureUserDataPath(): void {
 function startLinearTodosBridge(): void {
   linearTodosBridgeTimer ??= setInterval(() => void refreshLinearTodosBridge(), 2000);
   void refreshLinearTodosBridge();
+}
+
+function startComponentSmuggleBroker(): void {
+  const homePath = app.getPath('home');
+  writeComponentSmuggleBrokerHeartbeat(homePath);
+  componentSmuggleBrokerTimer ??= setInterval(() => {
+    writeComponentSmuggleBrokerHeartbeat(homePath);
+    void processComponentSmuggleRequests(homePath);
+  }, 500);
+  componentSmuggleBrokerTimer.unref();
+  void processComponentSmuggleRequests(homePath);
+}
+
+async function processComponentSmuggleRequests(homePath: string): Promise<void> {
+  if (componentSmuggleBrokerRunning) return;
+  componentSmuggleBrokerRunning = true;
+  try {
+    const pending = readPendingComponentSmuggleRequests(homePath);
+    for (const item of pending) {
+      const resolvedTarget = await resolveCodexLiveComponentTarget(item.request);
+      if (!resolvedTarget) continue;
+      const { endpoint: target, executionContextId } = resolvedTarget;
+      const targetClient = new CdpPageClient(
+        target.webSocketDebuggerUrl,
+        `${target.appName} visualization target`,
+        executionContextId,
+      );
+      const targetVisualClient = new CdpPageClient(
+        target.webSocketDebuggerUrl,
+        `${target.appName} visualization target visual`,
+        executionContextId,
+      );
+      const bridge = new ComponentSmuggleBridge(
+        item.request.source,
+        target,
+        (reason, error) => {
+          if (activeComponentSmuggle === bridge) activeComponentSmuggle = null;
+          if (reason === 'error') {
+            restorePendingComponentSmuggleRequest(item.path, item.request);
+            console.warn('[attune] live conversation component stopped:', error?.message || 'renderer disconnected');
+          }
+        },
+        chord => forwardComponentSmuggleKeyChord(item.request.source.appPid, chord),
+        item.request.source.safariPage
+          ? undefined
+          : (region, onFrame) => startComponentSmuggleWindowStream(item.request.source.appPid, region, onFrame),
+        {
+          source: item.request.source.safariPage
+            ? new SafariAppleEventsPageClient(
+              item.request.source.safariPage,
+              chord => forwardComponentSmuggleKeyChord(item.request.source.appPid, chord),
+            )
+            : undefined,
+          target: targetClient,
+          targetVisual: targetVisualClient,
+        },
+      );
+      await activeComponentSmuggle?.stop();
+      try {
+        await bridge.start();
+      } catch (error) {
+        await bridge.stop(true);
+        const message = error instanceof Error ? error.message : String(error);
+        const now = Date.now();
+        const lastErrorAt = componentSmuggleBrokerErrorAtByRequest.get(item.request.requestId) ?? 0;
+        if (now - lastErrorAt >= 5_000) {
+          componentSmuggleBrokerErrorAtByRequest.set(item.request.requestId, now);
+          console.warn(`[attune] live component request ${item.request.requestId} is waiting: ${message}`);
+        }
+        continue;
+      }
+      activeComponentSmuggle = bridge;
+      componentSmuggleBrokerErrorAtByRequest.delete(item.request.requestId);
+      rmSync(item.path, { force: true });
+      console.info(`[attune] live component connected: ${item.request.source.appName} → Codex`);
+      break;
+    }
+  } finally {
+    componentSmuggleBrokerRunning = false;
+  }
+}
+
+async function resolveCodexLiveComponentTarget(
+  request: LiveComponentSmuggleRequest,
+): Promise<{ endpoint: ComponentSmuggleEndpoint; executionContextId: number } | null> {
+  const sessionModule = await loadAttuneModule<SessionModule>('session.js');
+  const session = sessionModule.getSession(request.target.appId);
+  if (!session || session.status !== 'attached') return null;
+  let targets: Array<{ type?: string; url?: string; webSocketDebuggerUrl?: string }> = [];
+  try {
+    const response = await fetch(`http://127.0.0.1:${session.port}/json/list`, {
+      signal: AbortSignal.timeout(1_000),
+    });
+    if (!response.ok) return null;
+    targets = await response.json() as typeof targets;
+  } catch {
+    return null;
+  }
+  for (const target of targets.filter(isCodexLiveVisualizationTarget)) {
+    const token = randomUUID();
+    const resolved = await evaluatePageContextJson(
+      target.webSocketDebuggerUrl!,
+      buildCodexLiveSlotAnchorExpression(request.target.slotId, token),
+      1_500,
+    );
+    if (!resolved) continue;
+    return {
+      executionContextId: resolved.executionContextId,
+      endpoint: {
+        appId: request.target.appId,
+        appName: request.target.appName,
+        ...(session.appPid ? { appPid: session.appPid } : {}),
+        webSocketDebuggerUrl: target.webSocketDebuggerUrl!,
+        anchor: resolved.value as ComponentSmuggleEndpoint['anchor'],
+      },
+    };
+  }
+  return null;
 }
 
 function installApplicationMenu(): void {
@@ -528,6 +662,7 @@ async function startElementPicker(
       const bridge = new ComponentSmuggleBridge(
         {
           ...pendingSource.target,
+          pageTitle: pendingSource.selection.pageTitle,
           anchor: componentSmuggleAnchor(pendingSource.selection, pendingSource.anchorToken),
         },
         {
@@ -565,7 +700,9 @@ async function startElementPicker(
           ? 'in the right side of'
           : rawResult.placement === 'top'
             ? 'at the top of'
-            : rawResult.placement === 'bottom' ? 'at the bottom of' : 'inside';
+            : rawResult.placement === 'bottom'
+              ? 'at the bottom of'
+              : rawResult.placement === 'replace' ? 'in place of' : 'inside';
       showElementPickerNotice(`Smuggling ${pendingSource.target.appName} component ${placementLabel} the selected ${target.appName} component. Enter select mode to resize it or use × to stop.`);
       return;
     }
@@ -584,7 +721,7 @@ async function startElementPicker(
         target,
         `JSON.stringify((() => { window.__attuneElementPickerComplete?.(); return true; })())`,
       );
-      showElementPickerNotice(`Source selected in ${target.appName}. In the destination, press ⌥⌘A, then click the top edge, bottom edge, left edge, center, or right edge of a component to choose placement.`);
+      showElementPickerNotice(`Source selected in ${target.appName}. In the destination, press ⌥⌘A, then click an edge for directional placement, the center for inside, or Option-click the center to replace the component.`);
       return;
     }
     clipboard.writeText(formatElementReference(receipt, receiptPath));
@@ -967,7 +1104,7 @@ async function startComponentSmuggleWindowStream(
   if (!existsSync(helperPath)) throw new Error(`window surface capture helper is missing: ${helperPath}`);
   const globalRegion = componentSmuggleGlobalCaptureRectangle(region);
   const capture = spawn(helperPath, [
-    String(appPid), String(globalRegion.x), String(globalRegion.y), String(globalRegion.width), String(globalRegion.height), '10', '0',
+    String(appPid), String(globalRegion.x), String(globalRegion.y), String(globalRegion.width), String(globalRegion.height), '30', '0',
     String(region.screenX), String(region.screenY), String(region.outerWidth), String(region.outerHeight),
     String(region.nativeWindowId || 0),
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -1553,6 +1690,95 @@ async function evaluatePageJson(
     socket.addEventListener('close', () => finish(null));
     socket.addEventListener('error', () => finish(null));
     socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression, awaitPromise, returnByValue: true } })));
+  });
+}
+
+async function evaluatePageContextJson(
+  webSocketDebuggerUrl: string,
+  expression: string,
+  timeoutMs = 1_500,
+): Promise<{ executionContextId: number; value: unknown } | null> {
+  type SocketLike = {
+    addEventListener(type: string, listener: (event: any) => void, options?: { once?: boolean }): void;
+    send(message: string): void;
+    close(): void;
+  };
+  const WebSocketConstructor = (globalThis as unknown as {
+    WebSocket?: new (url: string) => SocketLike;
+  }).WebSocket;
+  if (!WebSocketConstructor) return null;
+  return new Promise((resolve) => {
+    const socket = new WebSocketConstructor(webSocketDebuggerUrl);
+    const contextIds: number[] = [];
+    const evaluationContexts = new Map<number, number>();
+    let nextId = 2;
+    let remaining = 0;
+    let settled = false;
+    let evaluationStarted = false;
+    const finish = (value: { executionContextId: number; value: unknown } | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.close();
+      resolve(value);
+    };
+    const timeout = setTimeout(() => finish(null), timeoutMs);
+    const startEvaluations = () => {
+      if (evaluationStarted || settled) return;
+      evaluationStarted = true;
+      const uniqueContextIds = [...new Set(contextIds)];
+      remaining = uniqueContextIds.length;
+      if (remaining === 0) {
+        finish(null);
+        return;
+      }
+      for (const executionContextId of uniqueContextIds) {
+        const id = nextId++;
+        evaluationContexts.set(id, executionContextId);
+        socket.send(JSON.stringify({
+          id,
+          method: 'Runtime.evaluate',
+          params: { expression, contextId: executionContextId, returnByValue: true },
+        }));
+      }
+    };
+    socket.addEventListener('message', (event) => {
+      let message: {
+        id?: number;
+        method?: string;
+        params?: { context?: { id?: number; auxData?: { isDefault?: boolean } } };
+        result?: { result?: { value?: string } };
+      };
+      try { message = JSON.parse(String(event.data)); } catch { return; }
+      if (message.method === 'Runtime.executionContextCreated') {
+        const context = message.params?.context;
+        if (context?.auxData?.isDefault === true && Number.isSafeInteger(context.id)) {
+          contextIds.push(context.id!);
+        }
+        return;
+      }
+      if (message.id === 1) {
+        setTimeout(startEvaluations, 25);
+        return;
+      }
+      if (!message.id || !evaluationContexts.has(message.id)) return;
+      const executionContextId = evaluationContexts.get(message.id)!;
+      evaluationContexts.delete(message.id);
+      remaining -= 1;
+      try {
+        const value = JSON.parse(message.result?.result?.value ?? 'null');
+        if (value) {
+          finish({ executionContextId, value });
+          return;
+        }
+      } catch {}
+      if (remaining === 0) finish(null);
+    });
+    socket.addEventListener('close', () => finish(null));
+    socket.addEventListener('error', () => finish(null));
+    socket.addEventListener('open', () => {
+      socket.send(JSON.stringify({ id: 1, method: 'Runtime.enable' }));
+    }, { once: true });
   });
 }
 
