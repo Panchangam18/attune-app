@@ -60,9 +60,10 @@ test('builds a self-contained picker expression with the global shortcut afforda
   assert.match(expression, /#d8c88f/);
   assert.match(expression, /112 173 135/);
   assert.match(expression, /smuggle-source/);
-  assert.match(expression, /LEFT side/);
-  assert.match(expression, /RIGHT side/);
-  assert.match(expression, /Option-click to REPLACE/);
+  assert.match(expression, /Place LEFT/);
+  assert.match(expression, /Place RIGHT/);
+  assert.match(expression, /⌥ click: INSIDE/);
+  assert.match(expression, /KeyW: 'top'/);
   assert.doesNotMatch(expression, /0 0 0 [13]px/);
   assert.match(expression, /Codex \\"Desktop\\"/);
 });

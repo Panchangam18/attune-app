@@ -145,6 +145,7 @@ async function run() {
           <main contenteditable="true" style="width:300px;height:80px;flex:0 0 auto" data-attune-host-roles="fixture.target" data-attune-smuggle-anchor="target-token">
             <div data-fixture-target-content style="width:120px;height:40px">Target content</div>
           </main>
+          <aside style="width:180px;height:80px" data-attune-host-roles="fixture.target.two">Second target</aside>
         </div>
         <script>
           document.addEventListener('pointerdown', (event) => {
@@ -188,6 +189,40 @@ async function run() {
   );
   if (!sourceInstall.ok || !targetInstall.ok) {
     throw new Error(`Install failed: ${JSON.stringify({ sourceInstall, targetInstall })}`);
+  }
+
+  const secondTargetAnchor = componentSmuggleAnchor(selection({
+    intent: 'smuggle-target',
+    roles: ['fixture.target.two'],
+    selector: '[data-attune-host-roles~="fixture.target.two"]',
+    tag: 'aside', label: '', text: 'Second target',
+    attributes: {}, ancestor: { tag: 'div', domRole: '', label: '' },
+  }), 'target-token-two');
+  const secondTargetInstall = await targetWindow.webContents.executeJavaScript(
+    buildComponentSmuggleTargetExpression(secondTargetAnchor),
+  );
+  const concurrentTargets = await targetWindow.webContents.executeJavaScript(`({
+    installed: ${JSON.stringify(Boolean(secondTargetInstall.ok))},
+    runtimeCount: Object.keys(window.__attuneComponentSmuggleTargets || {}).length,
+    hostCount: document.querySelectorAll('attune-component-smuggle').length,
+    firstConnected: window.__attuneComponentSmuggleTargets?.['target-token']?.status?.().connected,
+    secondConnected: window.__attuneComponentSmuggleTargets?.['target-token-two']?.status?.().connected,
+  })`);
+  if (!concurrentTargets.installed || concurrentTargets.runtimeCount !== 2 || concurrentTargets.hostCount !== 2
+    || !concurrentTargets.firstConnected || !concurrentTargets.secondConnected) {
+    throw new Error(`Concurrent target runtimes did not coexist: ${JSON.stringify(concurrentTargets)}`);
+  }
+  await targetWindow.webContents.executeJavaScript(`(() => {
+    window.__attuneComponentSmuggleTargets['target-token-two'].cleanup();
+    window.__attuneComponentSmuggleTarget = window.__attuneComponentSmuggleTargets['target-token'];
+  })()`);
+  const firstTargetSurvived = await targetWindow.webContents.executeJavaScript(`({
+    runtimeCount: Object.keys(window.__attuneComponentSmuggleTargets || {}).length,
+    hostCount: document.querySelectorAll('attune-component-smuggle').length,
+    connected: window.__attuneComponentSmuggleTargets?.['target-token']?.status?.().connected,
+  })`);
+  if (firstTargetSurvived.runtimeCount !== 1 || firstTargetSurvived.hostCount !== 1 || !firstTargetSurvived.connected) {
+    throw new Error(`Cleaning one target removed its sibling: ${JSON.stringify(firstTargetSurvived)}`);
   }
 
   const pump = async () => {
@@ -1079,13 +1114,40 @@ async function run() {
   }
 
   const normalCloseState = await targetWindow.webContents.executeJavaScript(`(() => {
-    const close = document.querySelector('attune-component-smuggle').shadowRoot.querySelector('[aria-label="Stop component smuggling"]');
+    const host = document.querySelector('attune-component-smuggle');
+    host.dispatchEvent(new PointerEvent('pointerleave', { composed: true }));
+    const close = host.shadowRoot.querySelector('[aria-label="Stop component smuggling"]');
     const styles = getComputedStyle(close);
     return { visibility: styles.visibility, opacity: styles.opacity, pointerEvents: styles.pointerEvents, tabIndex: close.tabIndex };
   })()`);
-  if (normalCloseState.visibility !== 'hidden' || normalCloseState.opacity !== '0'
+  if (normalCloseState.visibility !== 'hidden'
     || normalCloseState.pointerEvents !== 'none' || normalCloseState.tabIndex !== -1) {
     throw new Error(`Close control was distracting outside picker mode: ${JSON.stringify(normalCloseState)}`);
+  }
+  const hoverCloseState = await targetWindow.webContents.executeJavaScript(`(() => {
+    const host = document.querySelector('attune-component-smuggle');
+    const close = host.shadowRoot.querySelector('[aria-label="Stop component smuggling"]');
+    host.dispatchEvent(new PointerEvent('pointerenter', { composed: true }));
+    const shown = getComputedStyle(close);
+    const visible = {
+      visibility: shown.visibility, opacity: shown.opacity,
+      pointerEvents: shown.pointerEvents, tabIndex: close.tabIndex,
+    };
+    host.dispatchEvent(new PointerEvent('pointerleave', { composed: true }));
+    const hidden = getComputedStyle(close);
+    return {
+      visible,
+      hidden: {
+        visibility: hidden.visibility, opacity: hidden.opacity,
+        pointerEvents: hidden.pointerEvents, tabIndex: close.tabIndex,
+      },
+    };
+  })()`);
+  if (hoverCloseState.visible.visibility !== 'hidden'
+    || hoverCloseState.visible.pointerEvents !== 'none' || hoverCloseState.visible.tabIndex !== -1
+    || hoverCloseState.hidden.visibility !== 'hidden'
+    || hoverCloseState.hidden.pointerEvents !== 'none' || hoverCloseState.hidden.tabIndex !== -1) {
+    throw new Error(`Close control appeared outside picker mode: ${JSON.stringify(hoverCloseState)}`);
   }
   const closePickerResultPromise = targetWindow.webContents.executeJavaScript(
     buildElementPickerExpression('Fixture target'),

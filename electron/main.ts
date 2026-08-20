@@ -28,6 +28,7 @@ import {
 import { installCatalogAttunements, resolveCatalogRoot, seedEditableTheme } from './catalog.js';
 import { selectRendererDevServerUrl } from './renderer-source.js';
 import { getAgentIntegrations, setAgentIntegration, syncManagedAgentIntegrations } from './agent-integrations.js';
+import { AppDiscoveryService, type AppDiscoveryEntry } from './app-discovery.js';
 import {
   CLAUDE_GPT_MODELS_ATTUNEMENT_ID,
   configureClaudeGptModels,
@@ -319,7 +320,6 @@ let elementPickerRunning = false;
 let activeElementPickerTarget: ElementPickerTarget | null = null;
 let elementPickerNavigationQueue = Promise.resolve();
 let pendingComponentSmuggle: PendingComponentSmuggle | null = null;
-let activeComponentSmuggle: ComponentSmuggleBridge | null = null;
 let componentSmuggleBrokerTimer: NodeJS.Timeout | null = null;
 let componentSmuggleBrokerRunning = false;
 const activeElementPickerNavigationAccelerators = new Set<string>();
@@ -328,6 +328,8 @@ const wrappingAppIds = new Set<string>();
 const lastWrapAtByAppId = new Map<string, number>();
 const iconDataUrlByAppPath = new Map<string, Promise<string | null>>();
 const componentSmuggleBrokerErrorAtByRequest = new Map<string, number>();
+const activeComponentSmuggles = new Set<ComponentSmuggleBridge>();
+const appDiscoveryService = new AppDiscoveryService();
 
 configureUserDataPath();
 
@@ -380,7 +382,9 @@ app.on('before-quit', () => {
   globalShortcut.unregister(ELEMENT_PICKER_ACCELERATOR);
   unregisterElementPickerNavigationShortcuts();
   if (pendingComponentSmuggle) clearTimeout(pendingComponentSmuggle.timeout);
-  void activeComponentSmuggle?.stop();
+  for (const bridge of activeComponentSmuggles) void bridge.stop();
+  activeComponentSmuggles.clear();
+  appDiscoveryService.close();
   for (const watcher of scaffoldWatchers.splice(0)) watcher.close();
 });
 
@@ -429,7 +433,7 @@ async function processComponentSmuggleRequests(homePath: string): Promise<void> 
         item.request.source,
         target,
         (reason, error) => {
-          if (activeComponentSmuggle === bridge) activeComponentSmuggle = null;
+          activeComponentSmuggles.delete(bridge);
           if (reason === 'error') {
             restorePendingComponentSmuggleRequest(item.path, item.request);
             console.warn('[attune] live conversation component stopped:', error?.message || 'renderer disconnected');
@@ -438,7 +442,11 @@ async function processComponentSmuggleRequests(homePath: string): Promise<void> 
         chord => forwardComponentSmuggleKeyChord(item.request.source.appPid, chord),
         item.request.source.safariPage
           ? undefined
-          : (region, onFrame) => startComponentSmuggleWindowStream(item.request.source.appPid, region, onFrame),
+          : (region, onFrame) => startComponentSmuggleWindowStream(
+            item.request.source.appPid,
+            region,
+            onFrame,
+          ),
         {
           source: item.request.source.safariPage
             ? new SafariAppleEventsPageClient(
@@ -448,12 +456,15 @@ async function processComponentSmuggleRequests(homePath: string): Promise<void> 
             : undefined,
           target: targetClient,
           targetVisual: targetVisualClient,
+          runtimeMaintenance: !item.request.source.safariPage
+            || process.env.ATTUNE_COMPONENT_SMUGGLE_SAFARI_MAINTENANCE_ENABLED !== '0',
         },
       );
-      await activeComponentSmuggle?.stop();
+      activeComponentSmuggles.add(bridge);
       try {
         await bridge.start();
       } catch (error) {
+        activeComponentSmuggles.delete(bridge);
         await bridge.stop(true);
         const message = error instanceof Error ? error.message : String(error);
         const now = Date.now();
@@ -464,7 +475,6 @@ async function processComponentSmuggleRequests(homePath: string): Promise<void> 
         }
         continue;
       }
-      activeComponentSmuggle = bridge;
       componentSmuggleBrokerErrorAtByRequest.delete(item.request.requestId);
       rmSync(item.path, { force: true });
       console.info(`[attune] live component connected: ${item.request.source.appName} → Codex`);
@@ -670,11 +680,15 @@ async function startElementPicker(
           anchor: componentSmuggleAnchor(rawResult, anchorToken),
         },
         (reason, error) => {
-          if (activeComponentSmuggle === bridge) activeComponentSmuggle = null;
+          activeComponentSmuggles.delete(bridge);
           if (reason === 'error') showElementPickerNotice(`Component smuggling stopped: ${error?.message || 'renderer disconnected'}`);
         },
         (chord) => forwardComponentSmuggleKeyChord(pendingSource.target.appPid, chord),
-        (region, onFrame) => startComponentSmuggleWindowStream(pendingSource.target.appPid, region, onFrame),
+        (region, onFrame) => startComponentSmuggleWindowStream(
+          pendingSource.target.appPid,
+          region,
+          onFrame,
+        ),
         {
           source: pendingSource.target.safariPage
             ? new SafariAppleEventsPageClient(
@@ -682,11 +696,17 @@ async function startElementPicker(
               (chord) => forwardComponentSmuggleKeyChord(pendingSource.target.appPid, chord),
             )
             : undefined,
+          runtimeMaintenance: !pendingSource.target.safariPage
+            || process.env.ATTUNE_COMPONENT_SMUGGLE_SAFARI_MAINTENANCE_ENABLED === '1',
         },
       );
-      await activeComponentSmuggle?.stop();
-      await bridge.start();
-      activeComponentSmuggle = bridge;
+      activeComponentSmuggles.add(bridge);
+      try {
+        await bridge.start();
+      } catch (error) {
+        activeComponentSmuggles.delete(bridge);
+        throw error;
+      }
       clearTimeout(pendingSource.timeout);
       pendingComponentSmuggle = null;
       saveComponentSmuggleSpec(pendingSource, target, rawResult, anchorToken);
@@ -703,7 +723,7 @@ async function startElementPicker(
             : rawResult.placement === 'bottom'
               ? 'at the bottom of'
               : rawResult.placement === 'replace' ? 'in place of' : 'inside';
-      showElementPickerNotice(`Smuggling ${pendingSource.target.appName} component ${placementLabel} the selected ${target.appName} component. Enter select mode to resize it or use × to stop.`);
+      showElementPickerNotice(`Smuggling ${pendingSource.target.appName} component ${placementLabel} the selected ${target.appName} component. In select mode, point at the smuggle and use × or Backspace/Delete to remove it.`);
       return;
     }
 
@@ -721,7 +741,7 @@ async function startElementPicker(
         target,
         `JSON.stringify((() => { window.__attuneElementPickerComplete?.(); return true; })())`,
       );
-      showElementPickerNotice(`Source selected in ${target.appName}. In the destination, press ⌥⌘A, then click an edge for directional placement, the center for inside, or Option-click the center to replace the component.`);
+      showElementPickerNotice(`Source selected in ${target.appName}. In the destination, press ⌥⌘A: click to replace, Option-click for inside, or use W/A/S/D for above/left/below/right.`);
       return;
     }
     clipboard.writeText(formatElementReference(receipt, receiptPath));
@@ -1096,7 +1116,7 @@ async function forwardComponentSmuggleKeyChord(
 async function startComponentSmuggleWindowStream(
   appPid: number | undefined,
   region: ComponentSmuggleCaptureRegion,
-  onFrame: (pngBase64: string) => void,
+  onFrame: (frame: string) => void,
 ): Promise<() => void> {
   if (process.platform !== 'darwin') throw new Error('window surface capture currently requires macOS');
   if (!Number.isSafeInteger(appPid) || Number(appPid) <= 0) throw new Error('source app process is unavailable');
@@ -1108,17 +1128,22 @@ async function startComponentSmuggleWindowStream(
     String(region.screenX), String(region.screenY), String(region.outerWidth), String(region.outerHeight),
     String(region.nativeWindowId || 0),
   ], { stdio: ['ignore', 'pipe', 'pipe'] });
-  capture.stdout.setEncoding('utf8');
   capture.stderr.setEncoding('utf8');
   let stopped = false;
-  let stdout = '';
-  capture.stdout.on('data', (chunk: string) => {
-    stdout += chunk;
-    const lines = stdout.split(/\r?\n/);
-    stdout = lines.pop() || '';
-    for (const line of lines) {
-      const frame = line.trim();
-      if (frame.length >= 100 && /^[A-Za-z0-9+/=]+$/.test(frame)) onFrame(frame);
+  let binaryStdout: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  capture.stdout.on('data', (chunk: string | Buffer) => {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, 'utf8');
+    binaryStdout = binaryStdout.length ? Buffer.concat([binaryStdout, data]) : data;
+    while (binaryStdout.length >= 4) {
+      const frameLength = binaryStdout.readUInt32BE(0);
+      if (frameLength < 100 || frameLength > 64 * 1024 * 1024) {
+        capture.kill();
+        return;
+      }
+      if (binaryStdout.length < 4 + frameLength) return;
+      const frame = binaryStdout.subarray(4, 4 + frameLength);
+      binaryStdout = binaryStdout.subarray(4 + frameLength);
+      onFrame(frame.toString('base64'));
     }
   });
   await new Promise<void>((resolveReady, reject) => {
@@ -1427,6 +1452,7 @@ async function refreshLinearTodosBridge(): Promise<void> {
     const expression = `JSON.stringify((() => { const seen = new Set(); const list = document.querySelector('[data-list-wrapper]'); const stateFor = (link) => { if (!list) return ''; let state = ''; for (const row of list.querySelectorAll('[data-list-row]')) { if (row === link || row.contains(link)) break; const group = row.getAttribute('data-list-key') || ''; if (group.startsWith('GROUP_')) state = group.slice(6).replace(/_/g, ' '); } return state; }; return { isIssuePage: location.pathname.includes('/issue/'), issues: [...document.querySelectorAll('a[href*="/issue/"], a[href*="/team/"]')].map((link) => { const text = (link.innerText || link.textContent || link.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim(); const href = link.href || ''; const key = text.match(/\\b[A-Z][A-Z0-9]+-\\d+\\b/)?.[0] || href.match(/\\/issue\\/([A-Z][A-Z0-9]+-\\d+)/)?.[1] || ''; const title = text.includes(key) ? text.slice(text.indexOf(key) + key.length).replace(/\\s+(Created|Jul|Jan|Feb|Mar|Apr|May|Jun|Aug|Sep|Oct|Nov|Dec)\\b.*$/i, '').trim() : decodeURIComponent(href.split('/').filter(Boolean).at(-1) || '').replace(/-/g, ' '); return { key, title, href, workflowState: stateFor(link) }; }).filter((issue) => issue.key && issue.title && issue.title.length > 2).filter((issue) => !seen.has(issue.key) && seen.add(issue.key)).slice(0, 50) }; })())`;
     const snapshot = await evaluatePageJson(target.webSocketDebuggerUrl, expression) as { isIssuePage?: boolean; issues?: unknown } | null;
     if (!snapshot || !Array.isArray(snapshot.issues)) return;
+    const discoveredApps = await scanForSupportedAppsInBackground();
     const bridgePath = join(app.getPath('home'), '.attune', 'workspace-bridge.json');
     let store: Record<string, unknown> = {};
     try { store = JSON.parse(readFileSync(bridgePath, 'utf8')) as Record<string, unknown>; } catch {}
@@ -1434,8 +1460,8 @@ async function refreshLinearTodosBridge(): Promise<void> {
       ? store[LINEAR_TODOS_BRIDGE_KEY]
       : { updatedAt: new Date().toISOString(), payload: { issues: snapshot.issues } };
     store[LINEAR_TODOS_BRIDGE_KEY] = next;
-    const action = await readLinearTodoActionFromApp(sessionModule, 'Codex')
-      ?? await readLinearTodoActionFromApp(sessionModule, 'Cursor');
+    const action = await readLinearTodoActionFromApp(sessionModule, 'Codex', discoveredApps)
+      ?? await readLinearTodoActionFromApp(sessionModule, 'Cursor', discoveredApps);
     if (action) {
       if (action.type === 'details') {
         const details = await readLinearTodoDetails(target.webSocketDebuggerUrl, action.key, action.href);
@@ -1460,9 +1486,9 @@ async function refreshLinearTodosBridge(): Promise<void> {
     mkdirSync(dirname(bridgePath), { recursive: true });
     writeFileSync(bridgePath, JSON.stringify(store, null, 2));
     await Promise.all([
-      pushLinearTodosToApp(sessionModule, 'Codex', next, store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] ?? null, store['linear-todos-details'] ?? null),
-      pushLinearTodosToApp(sessionModule, 'Cursor', next, store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] ?? null, store['linear-todos-details'] ?? null),
-      pushWorkspaceBridgeValueToApp(sessionModule, 'Slack', LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY, store[LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY] ?? null),
+      pushLinearTodosToApp(sessionModule, 'Codex', next, store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] ?? null, store['linear-todos-details'] ?? null, discoveredApps),
+      pushLinearTodosToApp(sessionModule, 'Cursor', next, store[LINEAR_TODOS_COMPLETION_BRIDGE_KEY] ?? null, store['linear-todos-details'] ?? null, discoveredApps),
+      pushWorkspaceBridgeValueToApp(sessionModule, 'Slack', LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY, store[LINEAR_COMPLETED_SLACK_DM_BRIDGE_KEY] ?? null, discoveredApps),
     ]);
   } catch {}
 }
@@ -1474,19 +1500,28 @@ async function readLinearCompletedSlackDmEvent(webSocketDebuggerUrl: string): Pr
     : null;
 }
 
-async function getAttachedSessionForAppName(sessionModule: SessionModule, appName: string): Promise<SessionRecord | null> {
-  const scanModule = await loadAttuneModule<ScanModule>('scan.js');
-  const apps = scanModule.scanForSupportedApps();
+async function getAttachedSessionForAppName(
+  sessionModule: SessionModule,
+  appName: string,
+  apps: AppDiscoveryEntry[],
+): Promise<SessionRecord | null> {
   const appInfo = apps.find((candidate) => candidate.name === appName)
-    ?? (appName === 'Codex' ? apps.find((candidate) => scanModule.getAppId(candidate) === 'com.openai.codex') : undefined);
-  const appId = appInfo ? scanModule.getAppId(appInfo) : appName === 'Codex' ? 'com.openai.codex' : null;
+    ?? (appName === 'Codex' ? apps.find((candidate) => candidate.appId === 'com.openai.codex') : undefined);
+  const appId = appInfo?.appId ?? (appName === 'Codex' ? 'com.openai.codex' : null);
   if (!appId) return null;
   const session = sessionModule.getSession(appId);
   return session?.status === 'attached' ? session : null;
 }
 
-async function pushLinearTodosToApp(sessionModule: SessionModule, appName: string, todos: unknown, completion: unknown, details: unknown): Promise<void> {
-  const session = await getAttachedSessionForAppName(sessionModule, appName);
+async function pushLinearTodosToApp(
+  sessionModule: SessionModule,
+  appName: string,
+  todos: unknown,
+  completion: unknown,
+  details: unknown,
+  apps: AppDiscoveryEntry[],
+): Promise<void> {
+  const session = await getAttachedSessionForAppName(sessionModule, appName, apps);
   if (!session || session.status !== 'attached') return;
   const targets = await fetch(`http://127.0.0.1:${session.port}/json`).then((response) => response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
   const expression = `(() => { window.__attuneWorkspaceBridge = { ...(window.__attuneWorkspaceBridge || {}), 'linear-todos': ${JSON.stringify(todos)}, 'linear-todos-completion': ${JSON.stringify(completion)}, 'linear-todos-details': ${JSON.stringify(details)} }; return JSON.stringify(true); })()`;
@@ -1495,8 +1530,14 @@ async function pushLinearTodosToApp(sessionModule: SessionModule, appName: strin
     .map((target) => evaluatePageJson(target.webSocketDebuggerUrl!, expression)));
 }
 
-async function pushWorkspaceBridgeValueToApp(sessionModule: SessionModule, appName: string, key: string, value: unknown): Promise<void> {
-  const session = await getAttachedSessionForAppName(sessionModule, appName);
+async function pushWorkspaceBridgeValueToApp(
+  sessionModule: SessionModule,
+  appName: string,
+  key: string,
+  value: unknown,
+  apps: AppDiscoveryEntry[],
+): Promise<void> {
+  const session = await getAttachedSessionForAppName(sessionModule, appName, apps);
   if (!session || session.status !== 'attached') return;
   const targets = await fetch(`http://127.0.0.1:${session.port}/json`).then((response) => response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
   const expression = `(() => { window.__attuneWorkspaceBridge = { ...(window.__attuneWorkspaceBridge || {}), [${JSON.stringify(key)}]: ${JSON.stringify(value)} }; return JSON.stringify(true); })()`;
@@ -1505,8 +1546,12 @@ async function pushWorkspaceBridgeValueToApp(sessionModule: SessionModule, appNa
     .map((target) => evaluatePageJson(target.webSocketDebuggerUrl!, expression)));
 }
 
-async function readLinearTodoActionFromApp(sessionModule: SessionModule, appName: string): Promise<{ id: string; key: string; href?: string; type?: string; value?: string } | null> {
-  const session = await getAttachedSessionForAppName(sessionModule, appName);
+async function readLinearTodoActionFromApp(
+  sessionModule: SessionModule,
+  appName: string,
+  apps: AppDiscoveryEntry[],
+): Promise<{ id: string; key: string; href?: string; type?: string; value?: string } | null> {
+  const session = await getAttachedSessionForAppName(sessionModule, appName, apps);
   if (!session || session.status !== 'attached') return null;
   const targets = await fetch(`http://127.0.0.1:${session.port}/json`).then((response) => response.json()) as Array<{ type?: string; webSocketDebuggerUrl?: string }>;
   for (const target of targets.filter((item) => item.type === 'page' && item.webSocketDebuggerUrl)) {
@@ -2771,12 +2816,12 @@ async function runAutoWrapPass(): Promise<void> {
   if (!environment.runtimeBuilt) return;
 
   try {
-    const [scanModule, sessionModule] = await Promise.all([
-      loadAttuneModule<ScanModule>('scan.js'),
+    const [discoveredApps, sessionModule] = await Promise.all([
+      scanForSupportedAppsInBackground(),
       loadAttuneModule<SessionModule>('session.js'),
     ]);
-    const apps = scanModule.scanForSupportedApps()
-      .map((appInfo) => ({ appInfo, appId: scanModule.getAppId(appInfo) }))
+    const apps = discoveredApps
+      .map((appInfo) => ({ appInfo, appId: appInfo.appId, executablePath: appInfo.executablePath }))
       .filter((target) => styledAppIds.has(target.appId))
       .filter((target) => !isClaudeDesktop(target.appInfo)
         || isClaudeGptModelsEnabled(profile, target.appId, target.appInfo));
@@ -2808,18 +2853,27 @@ async function runAutoWrapPass(): Promise<void> {
         }
       }
 
-      const executablePath = scanModule.getAppExecutablePath(target.appInfo);
-      if (!await isProcessRunning(executablePath)) continue;
+      if (!await isProcessRunning(target.executablePath)) continue;
 
       wrappingAppIds.add(target.appId);
       lastWrapAtByAppId.set(target.appId, now);
-      void wrapNormalLaunch(target.appInfo, target.appId, executablePath).finally(() => {
+      void wrapNormalLaunch(target.appInfo, target.appId, target.executablePath).finally(() => {
         wrappingAppIds.delete(target.appId);
       });
     }
   } catch (error) {
     console.error('[attune] auto-wrap pass failed', error);
   }
+}
+
+async function scanForSupportedAppsInBackground(): Promise<AppDiscoveryEntry[]> {
+  const environment = getEnvironment();
+  if (!environment.runtimeBuilt) {
+    throw new Error(`Attune runtime is not built. Expected ${environment.cliPath}.`);
+  }
+  const modulePath = join(environment.attuneRoot, 'dist', 'scan.js');
+  if (!existsSync(modulePath)) throw new Error(`Missing Attune module: ${modulePath}`);
+  return appDiscoveryService.scan(modulePath);
 }
 
 async function wrapNormalLaunch(appInfo: DiscoveredApp, appId: string, executablePath: string): Promise<void> {

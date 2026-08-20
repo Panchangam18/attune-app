@@ -173,14 +173,17 @@ async function run() {
   await window.webContents.executeJavaScript(`(() => {
     const button = document.querySelector('button');
     const bounds = button.getBoundingClientRect();
-    const x = bounds.right - 2;
+    const x = bounds.x + bounds.width / 2;
     const y = bounds.y + bounds.height / 2;
     button.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, composed: true, clientX: x, clientY: y }));
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'd', code: 'KeyD', bubbles: true, cancelable: true,
+    }));
     button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y }));
   })()`);
   const targetResult = JSON.parse(await targetResultPromise);
   if (targetResult.intent !== 'smuggle-target' || targetResult.placement !== 'right') {
-    throw new Error(`Destination edge did not select right placement: ${JSON.stringify(targetResult)}`);
+    throw new Error(`D did not select right placement: ${JSON.stringify(targetResult)}`);
   }
   const targetAnchored = await window.webContents.executeJavaScript(`
     window.__attuneSmuggleAnchors?.[${JSON.stringify(targetToken)}] === document.querySelector('button')
@@ -201,13 +204,16 @@ async function run() {
     const button = document.querySelector('button');
     const bounds = button.getBoundingClientRect();
     const x = bounds.x + bounds.width / 2;
-    const y = bounds.top + 2;
+    const y = bounds.y + bounds.height / 2;
     button.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, composed: true, clientX: x, clientY: y }));
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'w', code: 'KeyW', bubbles: true, cancelable: true,
+    }));
     button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y }));
   })()`);
   const topTargetResult = JSON.parse(await topTargetResultPromise);
   if (topTargetResult.intent !== 'smuggle-target' || topTargetResult.placement !== 'top') {
-    throw new Error(`Destination top edge did not select top placement: ${JSON.stringify(topTargetResult)}`);
+    throw new Error(`W did not select top placement: ${JSON.stringify(topTargetResult)}`);
   }
   const topTargetAnchored = await window.webContents.executeJavaScript(`
     window.__attuneSmuggleAnchors?.[${JSON.stringify(topTargetToken)}] === document.querySelector('button')
@@ -228,13 +234,16 @@ async function run() {
     const button = document.querySelector('button');
     const bounds = button.getBoundingClientRect();
     const x = bounds.x + bounds.width / 2;
-    const y = bounds.bottom - 2;
+    const y = bounds.y + bounds.height / 2;
     button.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, composed: true, clientX: x, clientY: y }));
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 's', code: 'KeyS', bubbles: true, cancelable: true,
+    }));
     button.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y }));
   })()`);
   const bottomTargetResult = JSON.parse(await bottomTargetResultPromise);
   if (bottomTargetResult.intent !== 'smuggle-target' || bottomTargetResult.placement !== 'bottom') {
-    throw new Error(`Destination bottom edge did not select bottom placement: ${JSON.stringify(bottomTargetResult)}`);
+    throw new Error(`S did not select bottom placement: ${JSON.stringify(bottomTargetResult)}`);
   }
   const bottomTargetAnchored = await window.webContents.executeJavaScript(`
     window.__attuneSmuggleAnchors?.[${JSON.stringify(bottomTargetToken)}] === document.querySelector('button')
@@ -257,21 +266,95 @@ async function run() {
     const x = bounds.x + bounds.width / 2;
     const y = bounds.y + bounds.height / 2;
     button.dispatchEvent(new PointerEvent('pointermove', {
-      bubbles: true, composed: true, altKey: true, clientX: x, clientY: y,
+      bubbles: true, composed: true, clientX: x, clientY: y,
+    }));
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'a', code: 'KeyA', bubbles: true, cancelable: true,
+    }));
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'a', code: 'KeyA', bubbles: true, cancelable: true,
     }));
     button.dispatchEvent(new MouseEvent('click', {
-      bubbles: true, composed: true, cancelable: true, altKey: true, clientX: x, clientY: y,
+      bubbles: true, composed: true, cancelable: true, clientX: x, clientY: y,
     }));
   })()`);
   const replaceTargetResult = JSON.parse(await replaceTargetResultPromise);
   if (replaceTargetResult.intent !== 'smuggle-target' || replaceTargetResult.placement !== 'replace') {
-    throw new Error(`Option-clicking destination center did not select replace: ${JSON.stringify(replaceTargetResult)}`);
+    throw new Error(`Pressing the same side key twice did not return to replace: ${JSON.stringify(replaceTargetResult)}`);
   }
   await window.webContents.executeJavaScript(`(() => {
     window.__attuneElementPickerCleanup?.('fixture');
     document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
     delete window.__attuneSmuggleAnchors[${JSON.stringify(replaceTargetToken)}];
   })()`);
+
+  const insideTargetToken = 'fixture-smuggle-target-inside';
+  const insideTargetResultPromise = window.webContents.executeJavaScript(
+    buildElementPickerExpression('Codex', null, { mode: 'smuggle-target', anchorToken: insideTargetToken }),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await window.webContents.executeJavaScript(`(() => {
+    const button = document.querySelector('button');
+    const bounds = button.getBoundingClientRect();
+    const x = bounds.x + bounds.width / 2;
+    const y = bounds.y + bounds.height / 2;
+    button.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, composed: true, altKey: true, clientX: x, clientY: y,
+    }));
+    button.dispatchEvent(new MouseEvent('click', {
+      bubbles: true, composed: true, cancelable: true, altKey: true, clientX: x, clientY: y,
+    }));
+  })()`);
+  const insideTargetResult = JSON.parse(await insideTargetResultPromise);
+  if (insideTargetResult.intent !== 'smuggle-target' || insideTargetResult.placement !== 'inside') {
+    throw new Error(`Option-click did not select inside placement: ${JSON.stringify(insideTargetResult)}`);
+  }
+  await window.webContents.executeJavaScript(`(() => {
+    window.__attuneElementPickerCleanup?.('fixture');
+    document.querySelector('button').removeAttribute('data-attune-smuggle-anchor');
+    delete window.__attuneSmuggleAnchors[${JSON.stringify(insideTargetToken)}];
+  })()`);
+
+  const deleteSmuggleResultPromise = window.webContents.executeJavaScript(
+    buildElementPickerExpression('Codex'),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const deleteSmuggleState = await window.webContents.executeJavaScript(`(() => {
+    const smuggle = document.createElement('attune-component-smuggle');
+    smuggle.setAttribute('data-attune-component-smuggle', 'host');
+    smuggle.style.cssText = 'display:block;width:220px;height:90px';
+    document.body.append(smuggle);
+    window.smuggleCloseRequests = 0;
+    window.__attuneComponentSmuggleTarget = {
+      requestClose() {
+        window.smuggleCloseRequests += 1;
+        smuggle.remove();
+        return true;
+      },
+      isResizing() { return false; },
+    };
+    const bounds = smuggle.getBoundingClientRect();
+    smuggle.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true, composed: true,
+      clientX: bounds.left + bounds.width / 2,
+      clientY: bounds.top + bounds.height / 2,
+    }));
+    const label = document.querySelector('[data-attune-element-picker="label"]').textContent;
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Backspace', code: 'Backspace', bubbles: true, cancelable: true,
+    }));
+    return {
+      label,
+      closeRequests: window.smuggleCloseRequests,
+      connected: smuggle.isConnected,
+    };
+  })()`);
+  const deleteSmuggleResult = JSON.parse(await deleteSmuggleResultPromise);
+  if (deleteSmuggleResult.status !== 'cancelled'
+    || deleteSmuggleState.closeRequests !== 1 || deleteSmuggleState.connected
+    || !deleteSmuggleState.label.includes('Backspace/Delete: REMOVE')) {
+    throw new Error(`Backspace did not remove the highlighted smuggle: ${JSON.stringify({ deleteSmuggleResult, deleteSmuggleState })}`);
+  }
   window.destroy();
 }
 

@@ -35,9 +35,13 @@ func candidateScore(_ candidate: CGRect, _ expected: CGRect) -> CGFloat {
 final class RegionStreamOutput: NSObject, SCStreamOutput {
   private let context = CIContext(options: [.cacheIntermediates: false])
   private let encodeQueue = DispatchQueue(label: "attune.window-region-stream.encode", qos: .userInteractive)
+  private let writeQueue = DispatchQueue(label: "attune.window-region-stream.write", qos: .userInteractive)
   private let lock = NSLock()
   private let frameLimit: Int
   private var encoding = false
+  private var pendingPixelBuffer: CVPixelBuffer?
+  private var writing = false
+  private var pendingWrite: Data?
   private var emitted = 0
   private var finished = false
 
@@ -58,32 +62,107 @@ final class RegionStreamOutput: NSObject, SCStreamOutput {
   ) {
     guard outputType == .screen,
           sampleBuffer.isValid,
+          let attachments = CMSampleBufferGetSampleAttachmentsArray(
+            sampleBuffer,
+            createIfNecessary: false
+          ) as? [[SCStreamFrameInfo: Any]],
+          let frameInfo = attachments.first,
+          let statusRawValue = frameInfo[SCStreamFrameInfo.status] as? Int,
+          let frameStatus = SCFrameStatus(rawValue: statusRawValue) else { return }
+    guard frameStatus == .complete,
           let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
     lock.lock()
     if encoding || finished {
+      if encoding && !finished {
+        pendingPixelBuffer = pixelBuffer
+      }
       lock.unlock()
       return
     }
     encoding = true
     lock.unlock()
 
-    // Keep ScreenCaptureKit's delivery queue unblocked. Retain one fresh frame
-    // for encoding and drop intermediates while the encoder is busy so latency
-    // cannot grow into a queued backlog.
+    // Keep ScreenCaptureKit's delivery queue unblocked. Encoding and transport
+    // have independent latest-frame queues: a slow stdout consumer must never
+    // hold the encoder gate closed or feed back into capture delivery.
     encodeQueue.async { [self, pixelBuffer] in
+      drainEncodes(startingWith: pixelBuffer)
+    }
+  }
+
+  private func drainEncodes(startingWith firstPixelBuffer: CVPixelBuffer) {
+    var current: CVPixelBuffer? = firstPixelBuffer
+    while let pixelBuffer = current {
+      var encodedData: Data?
       autoreleasepool {
         let image = CIImage(cvPixelBuffer: pixelBuffer)
         if let rendered = context.createCGImage(image, from: image.extent) {
-          FileHandle.standardOutput.write(encodeFrame(rendered).base64EncodedData())
-          FileHandle.standardOutput.write(Data([0x0A]))
+          encodedData = encodeFrame(rendered)
         }
+      }
+      if let encodedData {
+        enqueueWrite(encodedData)
       }
 
       lock.lock()
+      if finished {
+        pendingPixelBuffer = nil
+        encoding = false
+        current = nil
+      } else if let nextPixelBuffer = pendingPixelBuffer {
+        pendingPixelBuffer = nil
+        current = nextPixelBuffer
+      } else {
+        encoding = false
+        current = nil
+      }
+      lock.unlock()
+    }
+  }
+
+  private func enqueueWrite(_ data: Data) {
+    lock.lock()
+    if finished {
+      lock.unlock()
+      return
+    }
+    if writing {
+      pendingWrite = data
+      lock.unlock()
+      return
+    }
+    writing = true
+    lock.unlock()
+
+    writeQueue.async { [self] in
+      drainWrites(startingWith: data)
+    }
+  }
+
+  private func drainWrites(startingWith firstData: Data) {
+    var current: Data? = firstData
+    while let data = current {
+      var length = UInt32(data.count).bigEndian
+      var packet = Data(bytes: &length, count: MemoryLayout<UInt32>.size)
+      packet.append(data)
+      FileHandle.standardOutput.write(packet)
+
+      lock.lock()
       emitted += 1
-      if frameLimit > 0 && emitted >= frameLimit { finished = true }
-      encoding = false
+      if frameLimit > 0 && emitted >= frameLimit {
+        finished = true
+        pendingPixelBuffer = nil
+        pendingWrite = nil
+        writing = false
+        current = nil
+      } else if let nextData = pendingWrite {
+        pendingWrite = nil
+        current = nextData
+      } else {
+        writing = false
+        current = nil
+      }
       lock.unlock()
     }
   }
@@ -138,28 +217,28 @@ struct WindowRegionStream {
       guard let window else { fail("no capturable window for pid \(ownerPID)") }
 
       let requestedBounds = CGRect(x: x, y: y, width: width, height: height)
-      guard let display = content.displays.first(where: { $0.frame.intersects(requestedBounds) }) else {
-        fail("no display contains the requested region")
-      }
-      let intersection = requestedBounds.intersection(display.frame).intersection(window.frame)
+      let intersection = requestedBounds.intersection(window.frame)
       guard !intersection.isNull && intersection.width > 0 && intersection.height > 0 else {
         fail("requested region is outside the source window")
       }
 
-      let filter = SCContentFilter(display: display, including: [window])
+      // A display-scoped filter stops receiving fresh pixels when a fullscreen
+      // source moves onto an inactive macOS Space. Capture the selected native
+      // window independently of the active desktop so the stream stays live.
+      let filter = SCContentFilter(desktopIndependentWindow: window)
       let scale = CGFloat(filter.pointPixelScale)
       let framesPerSecond = min(60, max(1, requestedFPS))
       let configuration = SCStreamConfiguration()
       configuration.sourceRect = CGRect(
-        x: intersection.minX - display.frame.minX,
-        y: intersection.minY - display.frame.minY,
+        x: intersection.minX - window.frame.minX,
+        y: intersection.minY - window.frame.minY,
         width: intersection.width,
         height: intersection.height
       )
       configuration.width = max(1, Int(intersection.width * scale))
       configuration.height = max(1, Int(intersection.height * scale))
       configuration.showsCursor = false
-      configuration.ignoreShadowsDisplay = true
+      configuration.ignoreShadowsSingleWindow = true
       configuration.captureResolution = .best
       configuration.pixelFormat = kCVPixelFormatType_32BGRA
       configuration.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(framesPerSecond.rounded()))

@@ -55,9 +55,11 @@ export interface ComponentSmuggleCaptureRegion {
   visualKind?: string;
 }
 
+export type ComponentSmuggleVisualStreamFrame = string;
+
 export type ComponentSmuggleFrameStreamStarter = (
   region: ComponentSmuggleCaptureRegion,
-  onFrame: (pngBase64: string) => void,
+  onFrame: (frame: ComponentSmuggleVisualStreamFrame) => void,
 ) => Promise<() => void | Promise<void>>;
 
 export function componentSmuggleGlobalCaptureRectangle(region: ComponentSmuggleCaptureRegion) {
@@ -115,7 +117,9 @@ export async function componentSmuggleEmbeddedFontCss(fontFaces: any[]): Promise
 
 export interface ComponentSmugglePageClient {
   readonly recommendedPumpIntervalMs?: number;
+  readonly pollSourceMutations?: boolean;
   connect(): Promise<void>;
+  ensurePageActive?(): Promise<void>;
   evaluate(expression: string, timeoutMs?: number): Promise<any>;
   click(x: number, y: number): Promise<void>;
   clickAtComponentPosition?(position?: { xRatio?: number; yRatio?: number }): Promise<void>;
@@ -184,7 +188,8 @@ export function buildComponentSmuggleTargetExpression(anchor: ComponentSmuggleAn
 function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = false) {
   const runtime = globalThis as any;
   const doc = runtime.document;
-  runtime.__attuneComponentSmuggleSource?.cleanup?.();
+  const sourceRuntimes = runtime.__attuneComponentSmuggleSources ||= Object.create(null);
+  sourceRuntimes[anchor.token]?.cleanup?.();
 
   const compact = (value: unknown, limit = 160) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
   const labelFor = (element: any) => compact(
@@ -1084,9 +1089,10 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
     runtime.removeEventListener('resize', captureResize, true);
     try { root?.removeAttribute?.('data-attune-smuggle-anchor'); } catch {}
     if (runtime.__attuneSmuggleAnchors) delete runtime.__attuneSmuggleAnchors[anchor.token];
-    delete runtime.__attuneComponentSmuggleSource;
+    if (sourceRuntimes[anchor.token] === api) delete sourceRuntimes[anchor.token];
+    if (runtime.__attuneComponentSmuggleSource === api) delete runtime.__attuneComponentSmuggleSource;
   };
-  runtime.__attuneComponentSmuggleSource = {
+  const api = {
     drain: () => outbox.splice(0),
     applyActions,
     capturePoint,
@@ -1121,6 +1127,8 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
       roles: compact(root?.getAttribute?.('data-attune-host-roles'), 300).split(/\s+/).filter(Boolean),
     }),
   };
+  sourceRuntimes[anchor.token] = api;
+  runtime.__attuneComponentSmuggleSource = api;
   if (!visualOnly) snapshot();
   return {
     ok: true,
@@ -1134,7 +1142,8 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
 function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   const runtime = globalThis as any;
   const doc = runtime.document;
-  runtime.__attuneComponentSmuggleTarget?.cleanup?.();
+  const targetRuntimes = runtime.__attuneComponentSmuggleTargets ||= Object.create(null);
+  targetRuntimes[anchor.token]?.cleanup?.();
 
   const compact = (value: unknown, limit = 160) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
   const labelFor = (element: any) => compact(
@@ -1237,18 +1246,19 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     border: '0', outline: '0', resize: 'none', opacity: '0', color: 'transparent',
     background: 'transparent', caretColor: 'transparent', overflow: 'hidden', pointerEvents: 'none',
   });
-  visualViewport.appendChild(visualImage);
+  visualViewport.append(visualImage);
   const close = doc.createElement('button');
   close.type = 'button';
   close.setAttribute('aria-label', 'Stop component smuggling');
+  close.setAttribute('title', 'Remove smuggled component');
   close.setAttribute('aria-hidden', 'true');
   close.tabIndex = -1;
   close.textContent = '×';
   Object.assign(close.style, {
     position: 'absolute', top: '-8px', right: '-8px', zIndex: '2147483647',
-    width: '22px', height: '22px', padding: '0', border: '1px solid rgba(255,255,255,.28)',
+    width: '26px', height: '26px', padding: '0', border: '1px solid rgba(255,255,255,.34)',
     borderRadius: '999px', background: 'rgb(28,29,33)', color: 'white',
-    font: '16px/20px system-ui,sans-serif', cursor: 'pointer', pointerEvents: 'none',
+    font: '18px/24px system-ui,sans-serif', cursor: 'pointer', pointerEvents: 'none',
     opacity: '0', visibility: 'hidden', transition: 'opacity 120ms ease',
     WebkitAppRegion: 'no-drag',
   });
@@ -1308,17 +1318,17 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   let selectionModeActive = false;
   let positionResizeLayer = () => {};
   const updateCloseVisibility = () => {
-    const visible = doc.documentElement.getAttribute(pickerActiveAttribute) === 'true';
-    selectionModeActive = visible;
-    close.style.opacity = visible ? '1' : '0';
-    close.style.visibility = visible ? 'visible' : 'hidden';
-    close.style.pointerEvents = visible ? 'auto' : 'none';
-    close.tabIndex = visible ? 0 : -1;
-    close.setAttribute('aria-hidden', visible ? 'false' : 'true');
-    resizeLayer.style.opacity = visible ? '1' : '0';
-    resizeLayer.style.visibility = visible ? 'visible' : 'hidden';
-    portalHost.style.zIndex = visible ? '2147483647' : '2147483646';
-    for (const handle of resizeHandles.values()) handle.style.pointerEvents = visible ? 'auto' : 'none';
+    selectionModeActive = doc.documentElement.getAttribute(pickerActiveAttribute) === 'true';
+    const closeVisible = selectionModeActive;
+    close.style.opacity = closeVisible ? '1' : '0';
+    close.style.visibility = closeVisible ? 'visible' : 'hidden';
+    close.style.pointerEvents = closeVisible ? 'auto' : 'none';
+    close.tabIndex = closeVisible ? 0 : -1;
+    close.setAttribute('aria-hidden', closeVisible ? 'false' : 'true');
+    resizeLayer.style.opacity = selectionModeActive ? '1' : '0';
+    resizeLayer.style.visibility = selectionModeActive ? 'visible' : 'hidden';
+    portalHost.style.zIndex = selectionModeActive ? '2147483647' : '2147483646';
+    for (const handle of resizeHandles.values()) handle.style.pointerEvents = selectionModeActive ? 'auto' : 'none';
     positionResizeLayer();
   };
   const selectionModeObserver = new runtime.MutationObserver(updateCloseVisibility);
@@ -2519,9 +2529,10 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     fontStyle.remove();
     try { mount?.removeAttribute?.('data-attune-smuggle-anchor'); } catch {}
     if (runtime.__attuneSmuggleAnchors) delete runtime.__attuneSmuggleAnchors[anchor.token];
-    delete runtime.__attuneComponentSmuggleTarget;
+    if (targetRuntimes[anchor.token] === api) delete targetRuntimes[anchor.token];
+    if (runtime.__attuneComponentSmuggleTarget === api) delete runtime.__attuneComponentSmuggleTarget;
   };
-  runtime.__attuneComponentSmuggleTarget = {
+  const api = {
     apply,
     applyVisual,
     applyVisualIsland,
@@ -2539,7 +2550,9 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
       acknowledgedActionRevision: lastAcknowledgedActionRevision,
       pendingActionCount: actions.length,
       satelliteCount: currentSatellites.length,
-      rendering: currentVisualFrame ? 'source-capture' : visualIslandFrames.size ? 'hybrid' : 'dom-twin',
+      rendering: currentVisualFrame
+        ? 'source-capture'
+        : visualIslandFrames.size ? 'hybrid' : 'dom-twin',
       visualIslandCount: visualIslandFrames.size,
       visualSequence: currentVisualSequence,
       sourceSize: sourceSize(),
@@ -2556,6 +2569,8 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
       roles: compact(mount?.getAttribute?.('data-attune-host-roles'), 300).split(/\s+/).filter(Boolean),
     }),
   };
+  targetRuntimes[anchor.token] = api;
+  runtime.__attuneComponentSmuggleTarget = api;
   return { ok: true, connected: host.isConnected, placement };
 }
 
@@ -2656,6 +2671,15 @@ export class CdpPageClient implements ComponentSmugglePageClient {
     const remote = result?.result;
     if (remote?.description?.startsWith('Uncaught')) throw new Error(`${this.label}: ${remote.description}`);
     return remote?.value;
+  }
+
+  async ensurePageActive(): Promise<void> {
+    // Chromium can freeze a renderer after its fullscreen window moves to an
+    // inactive macOS Space. This does not foreground the page or switch Spaces;
+    // it only restores the renderer's web lifecycle so remote input is handled.
+    try {
+      await this.send('Page.setWebLifecycleState', { state: 'active' }, 2000);
+    } catch {}
   }
 
   async click(x: number, y: number): Promise<void> {
@@ -2779,12 +2803,13 @@ export class ComponentSmuggleBridge {
   private pumpRequested = false;
   private stopped = false;
   private firstSnapshotLogged = false;
+  private initialSourceDrainCompleted = false;
   private lastSatelliteCount = -1;
   private lastRuntimeCheckAt = 0;
   private runtimeMaintenanceRunning = false;
   private visualSequence = 0;
   private visualFrameApplying = false;
-  private pendingVisualFrame: { data: string; region: ComponentSmuggleCaptureRegion } | null = null;
+  private pendingVisualFrame: { frame: ComponentSmuggleVisualStreamFrame; region: ComponentSmuggleCaptureRegion } | null = null;
   private visualCaptureKey = '';
   private visualCaptureGeneration = 0;
   private stopVisualFrameStream: (() => void | Promise<void>) | null = null;
@@ -2806,6 +2831,7 @@ export class ComponentSmuggleBridge {
   private lastVisualStatsAt = 0;
   private lastVisualInteractionPosition: { xRatio?: number; yRatio?: number } | null = null;
   private readonly adaptiveCaptureEnabled: boolean;
+  private readonly runtimeMaintenanceEnabled: boolean;
   private renderMode: 'dom-twin' | 'hybrid' | 'visual' = 'dom-twin';
   private hybridCaptureRunning = false;
   private hybridCaptureRequested = false;
@@ -2823,9 +2849,11 @@ export class ComponentSmuggleBridge {
       target?: ComponentSmugglePageClient;
       targetVisual?: ComponentSmugglePageClient;
       adaptiveCapture?: boolean;
+      runtimeMaintenance?: boolean;
     } = {},
   ) {
     this.adaptiveCaptureEnabled = pageClients.adaptiveCapture !== false;
+    this.runtimeMaintenanceEnabled = pageClients.runtimeMaintenance !== false;
     const hasVisualStream = Boolean(startFrameStream);
     this.sourceClient = pageClients.source
       ?? new CdpPageClient(source.webSocketDebuggerUrl, `${source.appName} source`);
@@ -2844,6 +2872,14 @@ export class ComponentSmuggleBridge {
         : this.targetClient);
   }
 
+  private sourceRuntimeReference(): string {
+    return `globalThis.__attuneComponentSmuggleSources?.[${JSON.stringify(this.source.anchor.token)}]`;
+  }
+
+  private targetRuntimeReference(): string {
+    return `globalThis.__attuneComponentSmuggleTargets?.[${JSON.stringify(this.target.anchor.token)}]`;
+  }
+
   async start(): Promise<void> {
     this.log('starting', {
       sourceApp: this.source.appName,
@@ -2860,6 +2896,10 @@ export class ComponentSmuggleBridge {
       this.targetClient,
       this.targetVisualClient,
     ])].map((client) => client.connect()));
+    await Promise.all([
+      this.sourceClient.ensurePageActive?.(),
+      this.targetClient.ensurePageActive?.(),
+    ]);
     let [sourceResult, targetResult] = await Promise.all([
       this.sourceClient.evaluate(buildComponentSmuggleSourceExpression(
         this.source.anchor,
@@ -2925,14 +2965,29 @@ export class ComponentSmuggleBridge {
     void this.pump();
   }
 
+  private isTransientRendererPause(error: Error): boolean {
+    // Chromium can temporarily stop servicing Runtime.evaluate while an
+    // occluded/fullscreen renderer is suspended. The CDP socket and both page
+    // runtimes are still valid in that case, so tearing down the smuggle turns
+    // an ordinary app switch into permanent component removal.
+    return /\btimed out\b/i.test(error.message);
+  }
+
   private requestRuntimeMaintenance(): void {
     const now = Date.now();
-    if (this.stopped || this.runtimeMaintenanceRunning || now - this.lastRuntimeCheckAt < 1000) return;
+    if (!this.runtimeMaintenanceEnabled
+      || this.stopped
+      || this.runtimeMaintenanceRunning
+      || now - this.lastRuntimeCheckAt < 1000) return;
     this.lastRuntimeCheckAt = now;
     this.runtimeMaintenanceRunning = true;
     void this.reinstallMissingRuntime().catch(async (error) => {
       if (this.stopped) return;
       const normalized = error instanceof Error ? error : new Error(String(error));
+      if (this.isTransientRendererPause(normalized)) {
+        this.log('maintenance-deferred', { message: normalized.message });
+        return;
+      }
       this.log('maintenance-error', { message: normalized.message });
       await this.stop(true);
       this.onStop?.('error', normalized);
@@ -2942,9 +2997,13 @@ export class ComponentSmuggleBridge {
   }
 
   private async reinstallMissingRuntime(): Promise<void> {
+    await Promise.all([
+      this.sourceClient.ensurePageActive?.(),
+      this.targetClient.ensurePageActive?.(),
+    ]);
     let [sourceStatus, targetStatus] = await Promise.all([
-      this.sourceClient.evaluate('globalThis.__attuneComponentSmuggleSource?.status?.() || null'),
-      this.targetClient.evaluate('globalThis.__attuneComponentSmuggleTarget?.status?.() || null'),
+      this.sourceClient.evaluate(`${this.sourceRuntimeReference()}?.status?.() || null`),
+      this.targetClient.evaluate(`${this.targetRuntimeReference()}?.status?.() || null`),
     ]);
     let reinstalled = false;
     if (!sourceStatus) {
@@ -3012,7 +3071,7 @@ export class ComponentSmuggleBridge {
       const fontCss = await componentSmuggleEmbeddedFontCss(sourceResult?.fontFaces || []);
       if (fontCss) {
         await this.targetClient.evaluate(
-          `globalThis.__attuneComponentSmuggleTarget?.installFontFaces?.(${JSON.stringify(fontCss)}) || null`,
+          `${this.targetRuntimeReference()}?.installFontFaces?.(${JSON.stringify(fontCss)}) || null`,
         );
         this.log('fonts-installed', { bytes: fontCss.length, faces: sourceResult?.fontFaces?.length || 0 });
       }
@@ -3047,7 +3106,7 @@ export class ComponentSmuggleBridge {
     let continuousVisuals = false;
     try {
       const regions = await this.sourceVisualClient.evaluate(
-        'globalThis.__attuneComponentSmuggleSource?.captureVisualRegions?.() || []',
+        `${this.sourceRuntimeReference()}?.captureVisualRegions?.() || []`,
       ) as ComponentSmuggleCaptureRegion[];
       const activeIslandIds = new Set<string>();
       for (const region of regions || []) {
@@ -3066,7 +3125,7 @@ export class ComponentSmuggleBridge {
         this.hybridFrames.set(islandId, frameKey);
         this.visualSequence += 1;
         await this.targetVisualClient.evaluate(
-          `globalThis.__attuneComponentSmuggleTarget?.applyVisualIsland?.(${JSON.stringify({
+          `${this.targetRuntimeReference()}?.applyVisualIsland?.(${JSON.stringify({
             sequence: this.visualSequence,
             islandId,
             visualKind: region.visualKind,
@@ -3117,7 +3176,7 @@ export class ComponentSmuggleBridge {
       do {
         this.adaptiveCaptureRequested = false;
         const region = await this.sourceVisualClient.evaluate(
-          'globalThis.__attuneComponentSmuggleSource?.captureRegion?.() || null',
+          `${this.sourceRuntimeReference()}?.captureRegion?.() || null`,
         ) as ComponentSmuggleCaptureRegion | null;
         if (!region?.width || !region?.height) break;
         const data = await this.sourceVisualClient.captureComponentFrame!(region);
@@ -3180,7 +3239,7 @@ export class ComponentSmuggleBridge {
     if (!this.usesVisualCapture()) return;
     if (this.stopped) return;
     const region = await this.sourceClient.evaluate(
-      'globalThis.__attuneComponentSmuggleSource?.captureRegion?.() || null',
+      `${this.sourceRuntimeReference()}?.captureRegion?.() || null`,
     ) as ComponentSmuggleCaptureRegion | null;
     if (!region?.width || !region?.height) return;
     if (!this.startFrameStream) return;
@@ -3192,15 +3251,15 @@ export class ComponentSmuggleBridge {
     if (!force && captureKey === this.visualCaptureKey && this.stopVisualFrameStream) return;
     const previousStop = this.stopVisualFrameStream;
     const nextGeneration = this.visualCaptureGeneration + 1;
-    let candidateFrame = '';
+    let candidateFrame: ComponentSmuggleVisualStreamFrame | null = null;
     try {
-      const stop = await this.startFrameStream(region, (data) => {
+      const stop = await this.startFrameStream(region, (frame) => {
         if (this.visualCaptureGeneration === nextGeneration) {
-          this.enqueueVisualFrame(data, region);
+          this.enqueueVisualFrame(frame, region);
         } else {
           // The helper can emit its initial screenshot before its ready signal.
           // Retain only the freshest candidate until this stream is committed.
-          candidateFrame = data;
+          candidateFrame = frame;
         }
       });
       if (this.stopped) {
@@ -3216,6 +3275,7 @@ export class ComponentSmuggleBridge {
       if (candidateFrame) this.enqueueVisualFrame(candidateFrame, region);
       if (previousStop && previousStop !== stop) await previousStop();
       this.log('visual-stream-started', {
+        encoding: 'jpeg',
         width: Math.round(region.width),
         height: Math.round(region.height),
       });
@@ -3229,17 +3289,17 @@ export class ComponentSmuggleBridge {
     }
   }
 
-  private enqueueVisualFrame(data: string, region: ComponentSmuggleCaptureRegion): void {
-    if (this.stopped || !data) return;
+  private enqueueVisualFrame(frame: ComponentSmuggleVisualStreamFrame, region: ComponentSmuggleCaptureRegion): void {
+    if (this.stopped || !frame) return;
     const now = Date.now();
     if (!this.visualStatsStartedAt) {
       this.visualStatsStartedAt = now;
       this.lastVisualStatsAt = now;
     }
     this.visualFramesReceived += 1;
-    this.visualBytesReceived += Math.ceil(data.length * 0.75);
+    this.visualBytesReceived += Math.ceil(frame.length * 0.75);
     if (this.pendingVisualFrame) this.visualFramesDropped += 1;
-    this.pendingVisualFrame = { data, region };
+    this.pendingVisualFrame = { frame, region };
     if (!this.visualFrameApplying) void this.flushVisualFrames();
     if (now - this.lastVisualStatsAt >= 5000) {
       const elapsedSeconds = Math.max(0.001, (now - this.visualStatsStartedAt) / 1000);
@@ -3258,14 +3318,17 @@ export class ComponentSmuggleBridge {
   private async flushVisualFrames(): Promise<void> {
     if (this.visualFrameApplying || this.stopped) return;
     this.visualFrameApplying = true;
+    let inFlightFrame: { frame: ComponentSmuggleVisualStreamFrame; region: ComponentSmuggleCaptureRegion } | null = null;
+    let retryDelayMs = 0;
     try {
       while (!this.stopped && this.pendingVisualFrame) {
-        const { data, region } = this.pendingVisualFrame;
+        inFlightFrame = this.pendingVisualFrame;
+        const { frame: streamFrame, region } = inFlightFrame;
         this.pendingVisualFrame = null;
         this.visualSequence += 1;
         const frame = {
           sequence: this.visualSequence,
-          data,
+          data: streamFrame,
           dispatchedAt: Date.now(),
           width: region.width,
           height: region.height,
@@ -3275,17 +3338,34 @@ export class ComponentSmuggleBridge {
           offsetY: region.offsetY,
         };
         await this.targetVisualClient.evaluate(
-          `globalThis.__attuneComponentSmuggleTarget?.applyVisual?.(${JSON.stringify(frame)}) || false`,
+          `${this.targetRuntimeReference()}?.applyVisual?.(${JSON.stringify(frame)}) || false`,
         );
         this.visualFramesApplied += 1;
+        inFlightFrame = null;
       }
     } catch (error) {
       if (!this.stopped) {
-        this.log('visual-stream-frame-error', { message: error instanceof Error ? error.message : String(error) });
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        if (this.isTransientRendererPause(normalized)) {
+          // Retain the frame if no fresher stream frame arrived during the
+          // timeout. It will be shown as soon as the destination wakes again.
+          if (inFlightFrame && !this.pendingVisualFrame) this.pendingVisualFrame = inFlightFrame;
+          retryDelayMs = 250;
+          this.log('visual-stream-frame-deferred', { message: normalized.message });
+        } else {
+          this.log('visual-stream-frame-error', { message: normalized.message });
+        }
       }
     } finally {
       this.visualFrameApplying = false;
-      if (!this.stopped && this.pendingVisualFrame) void this.flushVisualFrames();
+      if (!this.stopped && this.pendingVisualFrame) {
+        if (retryDelayMs) {
+          const retryTimer = setTimeout(() => void this.flushVisualFrames(), retryDelayMs);
+          retryTimer.unref?.();
+        } else {
+          void this.flushVisualFrames();
+        }
+      }
     }
   }
 
@@ -3302,7 +3382,7 @@ export class ComponentSmuggleBridge {
       // milliseconds. Keep them off the input lane so a growing composer or
       // newly opened popup never stalls the next key event.
       this.requestRuntimeMaintenance();
-      const actions = await this.targetClient.evaluate('globalThis.__attuneComponentSmuggleTarget?.drainActions?.() || []');
+      const actions = await this.targetClient.evaluate(`${this.targetRuntimeReference()}?.drainActions?.() || []`);
       if (actions?.length) {
         const actionCounts = actions.reduce((counts: Record<string, number>, action: { type?: string }) => {
           const type = String(action?.type || 'unknown');
@@ -3338,7 +3418,7 @@ export class ComponentSmuggleBridge {
             await this.sourceClient.clickAtComponentPosition(action.position || undefined);
           } else {
             const point = await this.sourceClient.evaluate(
-              `globalThis.__attuneComponentSmuggleSource?.capturePoint?.(${JSON.stringify(action.position || null)}) || null`,
+              `${this.sourceRuntimeReference()}?.capturePoint?.(${JSON.stringify(action.position || null)}) || null`,
             );
             if (point) await this.sourceClient.click(point.x, point.y);
           }
@@ -3347,7 +3427,7 @@ export class ComponentSmuggleBridge {
             await this.sourceClient.moveAtComponentPosition(action.position || null);
           } else {
             const point = await this.sourceClient.evaluate(
-              `globalThis.__attuneComponentSmuggleSource?.hoverPoint?.(${JSON.stringify(action.position || null)}) || null`,
+              `${this.sourceRuntimeReference()}?.hoverPoint?.(${JSON.stringify(action.position || null)}) || null`,
             );
             if (point) await this.sourceClient.move(point.x, point.y);
           }
@@ -3358,22 +3438,22 @@ export class ComponentSmuggleBridge {
             );
           } else {
             const point = await this.sourceClient.evaluate(
-              `globalThis.__attuneComponentSmuggleSource?.hoverPoint?.(${JSON.stringify(action.position || null)}) || null`,
+              `${this.sourceRuntimeReference()}?.hoverPoint?.(${JSON.stringify(action.position || null)}) || null`,
             );
             if (point) await this.sourceClient.wheel(point.x, point.y, action.deltaX, action.deltaY, action);
           }
         } else if (action.type === 'hover') {
           const point = sourceReference
             ? await this.sourceClient.evaluate(
-              `globalThis.__attuneComponentSmuggleSource?.clickPoint?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.position || null)}, false) || null`,
+              `${this.sourceRuntimeReference()}?.clickPoint?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.position || null)}, false) || null`,
             )
             : await this.sourceClient.evaluate(
-              'globalThis.__attuneComponentSmuggleSource?.hoverPoint?.(null) || null',
+              `${this.sourceRuntimeReference()}?.hoverPoint?.(null) || null`,
             );
           if (point) await this.sourceClient.move(point.x, point.y);
         } else if (action.type === 'wheel') {
           const point = await this.sourceClient.evaluate(
-            `globalThis.__attuneComponentSmuggleSource?.clickPoint?.(${JSON.stringify(sourceReference || [])}, ${JSON.stringify(action.position || null)}, false) || null`,
+            `${this.sourceRuntimeReference()}?.clickPoint?.(${JSON.stringify(sourceReference || [])}, ${JSON.stringify(action.position || null)}, false) || null`,
           );
           if (point) await this.sourceClient.wheel(point.x, point.y, action.deltaX, action.deltaY, action);
         } else if (action.type === 'visual-edit' && action.trusted) {
@@ -3402,13 +3482,13 @@ export class ComponentSmuggleBridge {
           }
         } else if (action.type === 'click') {
           const point = await this.sourceClient.evaluate(
-            `globalThis.__attuneComponentSmuggleSource?.clickPoint?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.position || null)}) || null`,
+            `${this.sourceRuntimeReference()}?.clickPoint?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.position || null)}) || null`,
           );
           if (point) await this.sourceClient.click(point.x, point.y);
           if (action.editable && action.selectionAfter) {
             const editableReference = action.editableNodeId || action.editablePath || sourceReference;
             await this.sourceClient.evaluate(
-              `globalThis.__attuneComponentSmuggleSource?.focusPath?.(${JSON.stringify(editableReference)}, ${JSON.stringify(action.selectionAfter)}) || null`,
+              `${this.sourceRuntimeReference()}?.focusPath?.(${JSON.stringify(editableReference)}, ${JSON.stringify(action.selectionAfter)}) || null`,
             );
           }
         } else if (action.type === 'input' && action.trusted && action.inputType) {
@@ -3417,7 +3497,7 @@ export class ComponentSmuggleBridge {
         } else if (action.type === 'shortcut' && action.trusted && action.editable) {
           try {
             await this.sourceClient.evaluate(
-              `globalThis.__attuneComponentSmuggleSource?.focusPath?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.selectionBefore || null)}) || null`,
+              `${this.sourceRuntimeReference()}?.focusPath?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.selectionBefore || null)}) || null`,
             );
             if (!this.forwardKeyChord) throw new Error('native key forwarding is unavailable');
             const result = await this.forwardKeyChord(action);
@@ -3430,7 +3510,7 @@ export class ComponentSmuggleBridge {
           const navigationKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown', 'Tab', 'Escape']);
           if (navigationKeys.has(action.key)) {
             await this.sourceClient.evaluate(
-              `globalThis.__attuneComponentSmuggleSource?.focusPath?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.selectionBefore || null)}) || null`,
+              `${this.sourceRuntimeReference()}?.focusPath?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.selectionBefore || null)}) || null`,
             );
             await this.sourceClient.pressKey(action.key, action.code, action);
           }
@@ -3440,7 +3520,7 @@ export class ComponentSmuggleBridge {
       }
       if (replayable.length) {
         await this.sourceClient.evaluate(
-          `globalThis.__attuneComponentSmuggleSource?.applyActions?.(${JSON.stringify(replayable)})`,
+          `${this.sourceRuntimeReference()}?.applyActions?.(${JSON.stringify(replayable)})`,
         );
       }
       if (actions?.length && (this.usesAdaptiveComponentCapture() || this.usesHybridVisualCapture())) {
@@ -3450,15 +3530,27 @@ export class ComponentSmuggleBridge {
         (latest: number, action: { revision?: number }) => Math.max(latest, Number(action?.revision) || 0),
         0,
       );
-      if (latestActionRevision) {
+      if (latestActionRevision && (
+        this.sourceClient.pollSourceMutations !== false || replayable.length > 0
+      )) {
         await this.sourceClient.evaluate(
-          `globalThis.__attuneComponentSmuggleSource?.settleActions?.(${latestActionRevision}) || null`,
+          `${this.sourceRuntimeReference()}?.settleActions?.(${latestActionRevision}) || null`,
         );
       }
       // In visual mode the stream remains authoritative for pixels, while the
       // synchronized DOM twin stays invisible and supplies precise hit-testing,
       // native focus, selection, and text editing.
-      const packets = await this.sourceClient.evaluate('globalThis.__attuneComponentSmuggleSource?.drain?.() || []');
+      // Safari's control plane spawns osascript for every evaluation. Polling
+      // its invisible metadata twin at display cadence interrupts the source
+      // page and creates a repeating gap in the independent native stream.
+      // Take the initial snapshot, then leave the visual stream completely
+      // free of Safari Apple Events traffic between explicit input commands.
+      const shouldPollSourceMutations = this.sourceClient.pollSourceMutations !== false
+        || !this.initialSourceDrainCompleted;
+      const packets = shouldPollSourceMutations
+        ? await this.sourceClient.evaluate(`${this.sourceRuntimeReference()}?.drain?.() || []`)
+        : [];
+      if (shouldPollSourceMutations) this.initialSourceDrainCompleted = true;
       if (packets?.length) {
         const latestDiagnostics = packets[packets.length - 1]?.diagnostics || {};
         if (!this.firstSnapshotLogged) {
@@ -3472,11 +3564,19 @@ export class ComponentSmuggleBridge {
         }
       }
       if (packets?.length) {
-        await this.targetClient.evaluate(`globalThis.__attuneComponentSmuggleTarget?.apply?.(${JSON.stringify(packets)})`);
+        await this.targetClient.evaluate(`${this.targetRuntimeReference()}?.apply?.(${JSON.stringify(packets)})`);
       }
     } catch (error) {
       if (this.stopped) return;
       const normalized = error instanceof Error ? error : new Error(String(error));
+      if (this.isTransientRendererPause(normalized)) {
+        // Drop the accumulated immediate wake-up request. The normal polling
+        // timer or the next CDP binding signal will retry after Chromium wakes,
+        // without busy-looping against a suspended renderer.
+        this.pumpRequested = false;
+        this.log('pump-deferred', { message: normalized.message });
+        return;
+      }
       this.log('error', { message: normalized.message });
       await this.stop(true);
       this.onStop?.('error', normalized);
@@ -3510,7 +3610,7 @@ export class ComponentSmuggleBridge {
   private async focusSourceVisualEditable(): Promise<any> {
     const position = JSON.stringify(this.lastVisualInteractionPosition);
     return this.sourceClient.evaluate(`(() => {
-      const source = globalThis.__attuneComponentSmuggleSource;
+      const source = ${this.sourceRuntimeReference()};
       const active = source?.focusActiveEditable?.();
       if (active?.ok) return active;
       const positioned = source?.focusEditableAt?.(${position});
@@ -3520,7 +3620,7 @@ export class ComponentSmuggleBridge {
 
   private async replayNativeEdit(action: any): Promise<boolean> {
     const focused = await this.sourceClient.evaluate(
-      `globalThis.__attuneComponentSmuggleSource?.focusPath?.(${JSON.stringify(action.nodeId || action.path)}, ${JSON.stringify(action.selectionBefore || null)}) || null`,
+      `${this.sourceRuntimeReference()}?.focusPath?.(${JSON.stringify(action.nodeId || action.path)}, ${JSON.stringify(action.selectionBefore || null)}) || null`,
     );
     if (!focused?.ok) return false;
     const inputType = String(action.inputType || '');
@@ -3561,8 +3661,8 @@ export class ComponentSmuggleBridge {
     if (stopFrameStream) await stopFrameStream();
     if (cleanup) {
       await Promise.allSettled([
-        this.sourceClient.evaluate('globalThis.__attuneComponentSmuggleSource?.cleanup?.()'),
-        this.targetClient.evaluate('globalThis.__attuneComponentSmuggleTarget?.cleanup?.()'),
+        this.sourceClient.evaluate(`${this.sourceRuntimeReference()}?.cleanup?.()`),
+        this.targetClient.evaluate(`${this.targetRuntimeReference()}?.cleanup?.()`),
       ]);
     }
     this.sourceClient.close();

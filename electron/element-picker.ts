@@ -163,10 +163,12 @@ function runElementPicker(
     let settled = false;
     let listenersActive = true;
     let pointerElement: any = null;
+    let pointerSmuggleHost: any = null;
     let chain: any[] = [];
     let chainIndex = 0;
     let lastPoint = { x: 0, y: 0 };
-    let replaceModifierActive = false;
+    let insideModifierActive = false;
+    let placementOverride: ElementSmugglePlacement | null = null;
     const root = doc.documentElement;
     const previousPickerActiveValue = root.getAttribute(pickerActiveAttribute);
     root.setAttribute(pickerActiveAttribute, 'true');
@@ -262,6 +264,12 @@ function runElementPicker(
     const isSmuggleResizeInteraction = (event: any) => (
       isSmuggleResizeHandle(event) || Boolean(win.__attuneComponentSmuggleTarget?.isResizing?.())
     );
+    const smuggleHostIn = (items: any[]) => items.find((item: any) => (
+      item?.getAttribute?.('data-attune-component-smuggle') === 'host'
+    )) || null;
+    const isSmuggleHost = (element: any) => (
+      element?.getAttribute?.('data-attune-component-smuggle') === 'host'
+    );
     const rolesFor = (element: any) => clean(element?.getAttribute?.('data-attune-host-roles'), 300).split(/\s+/).filter(Boolean);
     const accessibleLabel = (element: any) => clean(
       element?.getAttribute?.('aria-label')
@@ -292,20 +300,12 @@ function runElementPicker(
     };
     const currentElement = () => chain[chainIndex] || pointerElement;
     const placementFor = (
-      element: any,
-      point = lastPoint,
-      replaceRequested = replaceModifierActive,
+      _element: any,
+      insideRequested = insideModifierActive,
     ): ElementSmugglePlacement => {
       if (pickerOptions.mode !== 'smuggle-target') return 'inside';
-      const bounds = element?.getBoundingClientRect?.();
-      if (!bounds || bounds.width <= 0 || bounds.height <= 0) return 'inside';
-      const verticalRatio = (Number(point?.y) - bounds.top) / bounds.height;
-      if (verticalRatio <= 0.3) return 'top';
-      if (verticalRatio >= 0.7) return 'bottom';
-      const horizontalRatio = (Number(point?.x) - bounds.left) / bounds.width;
-      if (horizontalRatio <= 0.3) return 'left';
-      if (horizontalRatio >= 0.7) return 'right';
-      return replaceRequested ? 'replace' : 'inside';
+      if (insideRequested) return 'inside';
+      return placementOverride || 'replace';
     };
 
     const positionOverlay = () => {
@@ -322,20 +322,22 @@ function runElementPicker(
       const tag = element.tagName?.toLowerCase?.() || 'element';
       const name = accessibleLabel(element) || clean(element.innerText || element.textContent, 64);
       const placement = placementFor(element);
-      const modeLabel = pickerOptions.mode === 'smuggle-target'
+      const modeLabel = isSmuggleHost(element)
+        ? 'Smuggled component · × or Backspace/Delete: REMOVE'
+        : pickerOptions.mode === 'smuggle-target'
         ? placement === 'top'
-          ? 'Place in TOP of highlighted component'
+          ? 'Place ABOVE highlighted component · W again: REPLACE'
           : placement === 'bottom'
-            ? 'Place in BOTTOM of highlighted component'
+            ? 'Place BELOW highlighted component · S again: REPLACE'
           : placement === 'left'
-            ? 'Place in LEFT side of highlighted component'
+            ? 'Place LEFT of highlighted component · A again: REPLACE'
           : placement === 'right'
-            ? 'Place in RIGHT side of highlighted component'
+            ? 'Place RIGHT of highlighted component · D again: REPLACE'
             : placement === 'replace'
-              ? 'REPLACE highlighted component'
-              : 'Insert INSIDE highlighted component · Option-click to REPLACE'
+              ? 'REPLACE highlighted component · ⌥ click: INSIDE · W/A/S/D: sides'
+              : 'Insert INSIDE highlighted component'
         : 'Click to copy · Option-click highlighted component to smuggle';
-      if (pickerOptions.mode === 'smuggle-target' && placement !== 'inside') {
+      if (!isSmuggleHost(element) && pickerOptions.mode === 'smuggle-target' && placement !== 'inside') {
         placementIndicator.style.setProperty('display', 'block', 'important');
         placementIndicator.style.setProperty('background', placement === 'replace' ? 'rgb(243 214 111 / 32%)' : '#f3d66f', 'important');
         placementIndicator.style.setProperty('border-radius', placement === 'replace' ? '6px' : '999px', 'important');
@@ -531,11 +533,14 @@ function runElementPicker(
       if (isSmuggleResizeInteraction(event)) return;
       event.stopPropagation();
       event.stopImmediatePropagation?.();
-      const raw = (event.composedPath?.() || []).find((item: any) => item instanceof runtime.Element && !isPickerNode(item))
+      const eventPath = event.composedPath?.() || [];
+      pointerSmuggleHost = smuggleHostIn(eventPath);
+      const raw = pointerSmuggleHost
+        || eventPath.find((item: any) => item instanceof runtime.Element && !isPickerNode(item))
         || doc.elementFromPoint(event.clientX, event.clientY);
       if (!raw || isPickerNode(raw)) return;
       lastPoint = { x: event.clientX, y: event.clientY };
-      replaceModifierActive = Boolean(event.altKey);
+      insideModifierActive = Boolean(event.altKey);
       if (raw !== pointerElement) {
         pointerElement = raw;
         const next = buildChain(raw);
@@ -562,6 +567,12 @@ function runElementPicker(
         cancel('smuggle-close');
         return;
       }
+      if (pointerSmuggleHost?.isConnected) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        return;
+      }
       const intent = pickerOptions.mode === 'smuggle-target'
         ? 'smuggle-target'
         : event.altKey ? 'smuggle-source' : 'reference';
@@ -571,7 +582,7 @@ function runElementPicker(
       if (!selected || isPickerNode(selected)) return;
       lastPoint = { x: Number(event.clientX) || lastPoint.x, y: Number(event.clientY) || lastPoint.y };
       const placement = intent === 'smuggle-target'
-        ? placementFor(selected, lastPoint, Boolean(event.altKey))
+        ? placementFor(selected, Boolean(event.altKey))
         : 'inside';
       event.preventDefault();
       event.stopPropagation();
@@ -603,8 +614,31 @@ function runElementPicker(
       return true;
     }
     function onKeyDown(event: any) {
+      const removeSmuggle = (event.key === 'Backspace' || event.key === 'Delete')
+        && pointerSmuggleHost?.isConnected
+        && !event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey;
+      if (removeSmuggle) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        if (win.__attuneComponentSmuggleTarget?.requestClose?.(Boolean(event.isTrusted))) {
+          cancel('smuggle-delete');
+        }
+        return;
+      }
       if (event.key === 'Alt' && pickerOptions.mode === 'smuggle-target') {
-        replaceModifierActive = true;
+        insideModifierActive = true;
+        positionOverlay();
+      }
+      const placementByCode: Record<string, ElementSmugglePlacement> = {
+        KeyW: 'top', KeyA: 'left', KeyS: 'bottom', KeyD: 'right',
+      };
+      const requestedPlacement = pickerOptions.mode === 'smuggle-target'
+        && !event.altKey && !event.metaKey && !event.ctrlKey
+        ? placementByCode[String(event.code || '')]
+        : null;
+      if (requestedPlacement && !event.repeat) {
+        placementOverride = placementOverride === requestedPlacement ? null : requestedPlacement;
         positionOverlay();
       }
       const command = event.key === 'Escape'
@@ -617,7 +651,7 @@ function runElementPicker(
     }
     function onKeyUp(event: any) {
       if (event.key !== 'Alt' || pickerOptions.mode !== 'smuggle-target') return;
-      replaceModifierActive = false;
+      insideModifierActive = false;
       positionOverlay();
       event.preventDefault();
       event.stopPropagation();

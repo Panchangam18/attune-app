@@ -45,6 +45,7 @@ function runAppleScript(script: string, timeoutMs: number): Promise<string> {
  */
 export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
   readonly recommendedPumpIntervalMs = 220;
+  readonly pollSourceMutations = false;
 
   constructor(
     private readonly page: SafariPageReference,

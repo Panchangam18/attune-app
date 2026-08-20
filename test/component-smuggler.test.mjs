@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,11 +35,14 @@ const selection = {
 
 test('builds self-contained source and target smuggling runtimes', () => {
   const anchor = componentSmuggleAnchor(selection, 'fixture-token');
+  const targetExpression = buildComponentSmuggleTargetExpression(anchor);
   assert.equal(anchor.token, 'fixture-token');
   assert.doesNotThrow(() => new Function(`return ${buildComponentSmuggleSourceExpression(anchor)}`));
-  assert.doesNotThrow(() => new Function(`return ${buildComponentSmuggleTargetExpression(anchor)}`));
+  assert.doesNotThrow(() => new Function(`return ${targetExpression}`));
   assert.match(buildComponentSmuggleSourceExpression(anchor), /MutationObserver/);
-  assert.match(buildComponentSmuggleTargetExpression(anchor), /attachShadow/);
+  assert.match(targetExpression, /attachShadow/);
+  assert.doesNotMatch(targetExpression, /VideoDecoder|applyEncodedVisual|h264/i);
+  assert.match(targetExpression, /__attuneComponentSmuggleTargets/);
   assert.equal(componentSmuggleAnchor({ ...selection, placement: 'replace' }, 'replace-token').placement, 'replace');
 });
 
@@ -69,6 +72,52 @@ test('maps browser viewport coordinates through native browser chrome', () => {
   });
 });
 
+test('captures a native window independently of the active macOS Space', async () => {
+  const helper = await readFile(new URL('../electron/helpers/window-region-stream.swift', import.meta.url), 'utf8');
+  assert.match(helper, /SCContentFilter\(desktopIndependentWindow: window\)/);
+  assert.match(helper, /intersection\.minX - window\.frame\.minX/);
+  assert.match(helper, /intersection\.minY - window\.frame\.minY/);
+  assert.match(helper, /let frameStatus = SCFrameStatus\(rawValue: statusRawValue\)/);
+  assert.match(helper, /guard frameStatus == \.complete/);
+  assert.match(helper, /writeQueue/);
+  assert.match(helper, /pendingWrite/);
+  assert.doesNotMatch(helper, /base64EncodedData/);
+  assert.doesNotMatch(helper, /SCContentFilter\(display: display, including: \[window\]\)/);
+});
+
+test('uses the JPEG stream directly through both production bridge adapters', async () => {
+  const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const forwardingAdapters = main.match(
+    /\(region, onFrame\) => startComponentSmuggleWindowStream\([\s\S]*?onFrame,\s*\)/g,
+  ) || [];
+  assert.equal(forwardingAdapters.length, 2);
+  assert.doesNotMatch(main, /H264|H264_ENABLED|window-region-h264/i);
+});
+
+test('keeps existing smuggle bridges alive when another one starts', async () => {
+  const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  assert.match(main, /const activeComponentSmuggles = new Set<ComponentSmuggleBridge>\(\)/);
+  assert.match(main, /activeComponentSmuggles\.add\(bridge\)/);
+  assert.match(main, /activeComponentSmuggles\.delete\(bridge\)/);
+  assert.doesNotMatch(main, /await activeComponentSmuggle\?\.stop\(\)/);
+});
+
+test('keeps recurring app discovery off the component-smuggle event loop', async () => {
+  const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  assert.match(
+    main,
+    /async function refreshLinearTodosBridge\(\): Promise<void> \{[\s\S]*?scanForSupportedAppsInBackground\(\)/,
+  );
+  assert.match(
+    main,
+    /async function runAutoWrapPass\(\): Promise<void> \{[\s\S]*?scanForSupportedAppsInBackground\(\)/,
+  );
+  assert.doesNotMatch(
+    main,
+    /async function (?:refreshLinearTodosBridge|runAutoWrapPass)\(\): Promise<void> \{[\s\S]{0,1200}?scanModule\.scanForSupportedApps\(\)/,
+  );
+});
+
 test('embeds bounded local icon fonts for the destination renderer', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'attune-smuggle-font-'));
   const path = join(directory, 'icons.woff2');
@@ -94,16 +143,19 @@ test('keeps a passive DOM metadata twin under the native source stream', async (
   let sourceDrains = 0;
   let targetApplies = 0;
   let nativeStarts = 0;
+  let sourceActiveAssertions = 0;
   const sourceClient = {
+    pollSourceMutations: false,
     async connect() {},
+    async ensurePageActive() { sourceActiveAssertions += 1; },
     async evaluate(expression) {
       if (expression.includes('captureRegion?.')) return {
         x: 0, y: 0, width: 300, height: 80, rootWidth: 300, rootHeight: 80,
         offsetX: 0, offsetY: 0, screenX: 0, screenY: 0, outerWidth: 300,
         outerHeight: 80, innerWidth: 300, innerHeight: 80, contentOffsetX: 0, contentOffsetY: 0,
       };
-      if (expression.includes('__attuneComponentSmuggleSource?.status')) return { connected: true, visualIslandCount: 0 };
-      if (expression.includes('__attuneComponentSmuggleSource?.drain?.')) {
+      if (expression.includes('?.status')) return { connected: true, visualIslandCount: 0 };
+      if (expression.includes('?.drain?.')) {
         sourceDrains += 1;
         return [{ type: 'snapshot', version: 1, tree: null }];
       }
@@ -114,9 +166,9 @@ test('keeps a passive DOM metadata twin under the native source stream', async (
   const targetClient = {
     async connect() {},
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleTarget?.status')) return { connected: true };
-      if (expression.includes('__attuneComponentSmuggleTarget?.drainActions')) return [];
-      if (expression.includes('__attuneComponentSmuggleTarget?.apply?.')) targetApplies += 1;
+      if (expression.includes('?.status')) return { connected: true };
+      if (expression.includes('?.drainActions')) return [];
+      if (expression.includes('?.apply?.')) targetApplies += 1;
       return { ok: true, connected: true };
     },
     async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
@@ -131,10 +183,100 @@ test('keeps a passive DOM metadata twin under the native source stream', async (
     { source: sourceClient, target: targetClient },
   );
   await bridge.start();
+  await new Promise((resolve) => setTimeout(resolve, 80));
   await bridge.stop();
   assert.equal(nativeStarts, 1);
+  assert.ok(sourceActiveAssertions >= 1);
   assert.equal(sourceDrains, 1);
   assert.equal(targetApplies, 1);
+});
+
+test('keeps a native smuggle alive while the destination renderer is temporarily paused', async () => {
+  const anchor = componentSmuggleAnchor(selection, 'paused-destination-token');
+  let drainAttempts = 0;
+  let emittedFrame;
+  let frameApplyAttempts = 0;
+  let frameApplies = 0;
+  let streamStops = 0;
+  let errorStops = 0;
+  let targetActiveAssertions = 0;
+  const sourceClient = {
+    async connect() {},
+    async ensurePageActive() {},
+    async evaluate(expression) {
+      if (expression.includes('captureRegion?.')) return {
+        x: 0, y: 0, width: 300, height: 80, rootWidth: 300, rootHeight: 80,
+        offsetX: 0, offsetY: 0, screenX: 0, screenY: 0, outerWidth: 300,
+        outerHeight: 80, innerWidth: 300, innerHeight: 80, contentOffsetX: 0, contentOffsetY: 0,
+      };
+      if (expression.includes('?.status')) {
+        return { connected: true, visualIslandCount: 0 };
+      }
+      if (expression.includes('?.drain?.')) return [];
+      return { ok: true, connected: true, visualIslandCount: 0 };
+    },
+    async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
+  };
+  const targetClient = {
+    recommendedPumpIntervalMs: 16,
+    async connect() {},
+    async ensurePageActive() { targetActiveAssertions += 1; },
+    async evaluate(expression) {
+      if (expression.includes('?.status')) return { connected: true };
+      if (expression.includes('?.drainActions')) {
+        drainAttempts += 1;
+        if (drainAttempts === 1) throw new Error('Fixture target Runtime.evaluate timed out after 20000ms');
+        return [];
+      }
+      return { ok: true, connected: true };
+    },
+    async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
+  };
+  const targetVisualClient = {
+    async connect() {},
+    async evaluate(expression) {
+      if (!expression.includes('?.applyVisual?.')) return true;
+      frameApplyAttempts += 1;
+      if (frameApplyAttempts === 1) {
+        throw new Error('Fixture target visual Runtime.evaluate timed out after 20000ms');
+      }
+      frameApplies += 1;
+      return true;
+    },
+    async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
+  };
+  const endpoint = { appId: 'fixture', appName: 'Fixture', webSocketDebuggerUrl: 'ws://fixture', anchor };
+  const bridge = new ComponentSmuggleBridge(
+    endpoint,
+    endpoint,
+    () => { errorStops += 1; },
+    undefined,
+    async (_region, onFrame) => {
+      emittedFrame = onFrame;
+      return () => { streamStops += 1; };
+    },
+    { source: sourceClient, target: targetClient, targetVisual: targetVisualClient },
+  );
+
+  await bridge.start();
+  const pumpDeadline = Date.now() + 250;
+  while (drainAttempts < 2 && Date.now() < pumpDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+  emittedFrame('frame-after-renderer-pause');
+  const frameDeadline = Date.now() + 750;
+  while (frameApplies < 1 && Date.now() < frameDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+  }
+
+  assert.ok(drainAttempts >= 2);
+  assert.equal(frameApplyAttempts, 2);
+  assert.equal(frameApplies, 1);
+  assert.equal(errorStops, 0);
+  assert.equal(streamStops, 0);
+  assert.ok(targetActiveAssertions >= 1);
+  await bridge.stop();
+  assert.equal(streamStops, 1);
 });
 
 test('falls back to the DOM twin when the native source stream cannot start', async () => {
@@ -152,8 +294,8 @@ test('falls back to the DOM twin when the native source stream cannot start', as
         outerHeight: 80, innerWidth: 300, innerHeight: 80, contentOffsetX: 0, contentOffsetY: 0,
       };
       if (expression.includes('function runComponentSmuggleSource')) sourceInstalls += 1;
-      if (expression.includes('__attuneComponentSmuggleSource?.status')) return { connected: true, visualIslandCount: 0 };
-      if (expression.includes('__attuneComponentSmuggleSource?.drain?.')) {
+      if (expression.includes('?.status')) return { connected: true, visualIslandCount: 0 };
+      if (expression.includes('?.drain?.')) {
         sourceDrains += 1;
         return [{ type: 'snapshot', version: 1, tree: null }];
       }
@@ -164,9 +306,9 @@ test('falls back to the DOM twin when the native source stream cannot start', as
   const targetClient = {
     async connect() {},
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleTarget?.status')) return { connected: true };
-      if (expression.includes('__attuneComponentSmuggleTarget?.drainActions')) return [];
-      if (expression.includes('__attuneComponentSmuggleTarget?.apply?.')) targetApplies += 1;
+      if (expression.includes('?.status')) return { connected: true };
+      if (expression.includes('?.drainActions')) return [];
+      if (expression.includes('?.apply?.')) targetApplies += 1;
       return { ok: true, connected: true };
     },
     async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
@@ -208,9 +350,9 @@ test('forwards visual hover and wheel gestures to the source renderer', async ()
         offsetX: 0, offsetY: 0, screenX: 0, screenY: 0, outerWidth: 100,
         outerHeight: 40, innerWidth: 100, innerHeight: 40, contentOffsetX: 0, contentOffsetY: 0,
       };
-      if (expression.includes('__attuneComponentSmuggleSource?.status')) return { connected: true, visualIslandCount: 1 };
-      if (expression.includes('__attuneComponentSmuggleSource?.drain?.')) { sourceDrains += 1; return []; }
-      if (expression.includes('__attuneComponentSmuggleSource?.settleActions')) { sourceSettles += 1; return { version: 1 }; }
+      if (expression.includes('?.status')) return { connected: true, visualIslandCount: 1 };
+      if (expression.includes('?.drain?.')) { sourceDrains += 1; return []; }
+      if (expression.includes('?.settleActions')) { sourceSettles += 1; return { version: 1 }; }
       return { ok: true, connected: true, visualIslandCount: 1 };
     },
     async click() {},
@@ -223,8 +365,8 @@ test('forwards visual hover and wheel gestures to the source renderer', async ()
   const targetClient = {
     async connect() {},
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleTarget?.status')) return { connected: true };
-      if (expression.includes('__attuneComponentSmuggleTarget?.drainActions')) {
+      if (expression.includes('?.status')) return { connected: true };
+      if (expression.includes('?.drainActions')) {
         if (drained) return [];
         drained = true;
         return [
@@ -282,7 +424,7 @@ test('wakes the visual input relay as soon as the target signals an action', asy
       }
       if (expression.includes('captureRegion?.')) return region;
       if (expression.includes('capturePoint?.')) return { x: 25, y: 30 };
-      if (expression.includes('__attuneComponentSmuggleSource?.status')) return { connected: true, visualIslandCount: 1 };
+      if (expression.includes('?.status')) return { connected: true, visualIslandCount: 1 };
       if (expression.includes('focusPrimaryEditable')) {
         focusExpressions.push(expression);
         return { ok: true };
@@ -296,9 +438,9 @@ test('wakes the visual input relay as soon as the target signals an action', asy
   const targetClient = {
     async connect() {},
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleTarget?.status')) return { connected: true };
-      if (expression.includes('__attuneComponentSmuggleTarget?.drainActions')) return queuedActions.splice(0);
-      if (expression.includes('__attuneComponentSmuggleTarget?.applyVisual')) targetControlApplies += 1;
+      if (expression.includes('?.status')) return { connected: true };
+      if (expression.includes('?.drainActions')) return queuedActions.splice(0);
+      if (expression.includes('?.applyVisual')) targetControlApplies += 1;
       return { ok: true, connected: true };
     },
     async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
@@ -310,7 +452,7 @@ test('wakes the visual input relay as soon as the target signals an action', asy
   const targetVisualClient = {
     ...targetClient,
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleTarget?.applyVisual')) targetVisualApplies += 1;
+      if (expression.includes('?.applyVisual')) targetVisualApplies += 1;
       return true;
     },
     async subscribeActionSignal() { return () => {}; },
@@ -368,7 +510,7 @@ test('captures only visual islands inside a DOM twin', async () => {
   const sourceClient = {
     async connect() {},
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleSource?.status')) return { connected: true, visualIslandCount: 1 };
+      if (expression.includes('?.status')) return { connected: true, visualIslandCount: 1 };
       return { ok: true, connected: true, visualIslandCount: 1 };
     },
     async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
@@ -394,8 +536,8 @@ test('captures only visual islands inside a DOM twin', async () => {
   const targetClient = {
     async connect() {},
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleTarget?.status')) return { connected: true };
-      if (expression.includes('__attuneComponentSmuggleTarget?.drainActions')) return [];
+      if (expression.includes('?.status')) return { connected: true };
+      if (expression.includes('?.drainActions')) return [];
       return { ok: true, connected: true };
     },
     async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
@@ -403,7 +545,7 @@ test('captures only visual islands inside a DOM twin', async () => {
   const targetVisualClient = {
     ...targetClient,
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleTarget?.applyVisualIsland')) visualApplies += 1;
+      if (expression.includes('?.applyVisualIsland')) visualApplies += 1;
       return true;
     },
   };
@@ -451,7 +593,7 @@ test('keeps the previous visual stream when a resized replacement cannot start',
         offsetX: 0, offsetY: 0, screenX: 0, screenY: 0, outerWidth: width,
         outerHeight: 40, innerWidth: width, innerHeight: 40, contentOffsetX: 0, contentOffsetY: 0,
       };
-      if (expression.includes('__attuneComponentSmuggleSource?.status')) return { connected: true, visualIslandCount: 1 };
+      if (expression.includes('?.status')) return { connected: true, visualIslandCount: 1 };
       return { ok: true, connected: true, visualIslandCount: 1 };
     },
     async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
@@ -459,8 +601,8 @@ test('keeps the previous visual stream when a resized replacement cannot start',
   const targetClient = {
     async connect() {},
     async evaluate(expression) {
-      if (expression.includes('__attuneComponentSmuggleTarget?.status')) return { connected: true };
-      if (expression.includes('__attuneComponentSmuggleTarget?.drainActions')) return [];
+      if (expression.includes('?.status')) return { connected: true };
+      if (expression.includes('?.drainActions')) return [];
       return { ok: true, connected: true };
     },
     async click() {}, async move() {}, async wheel() {}, async insertText() {}, async pressKey() {}, close() {},
