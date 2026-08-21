@@ -2332,6 +2332,7 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
       startY: Number(event.clientY) || 0,
       width: bounds.width,
       height: bounds.height,
+      aspectRatio: bounds.width / Math.max(1, bounds.height),
       offsetX: customViewOffset.x,
       offsetY: customViewOffset.y,
     };
@@ -2350,8 +2351,21 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     if (resizeState.direction.includes('w')) width = resizeState.width - deltaX;
     if (resizeState.direction.includes('s')) height = resizeState.height + deltaY;
     if (resizeState.direction.includes('n')) height = resizeState.height - deltaY;
-    width = Math.max(48, Math.min(8192, width));
-    height = Math.max(32, Math.min(8192, height));
+    const lockAspectRatio = Boolean(event.shiftKey) && resizeState.direction.length === 2;
+    if (lockAspectRatio) {
+      const ratio = Math.max(0.001, Number(resizeState.aspectRatio) || 1);
+      const widthChange = Math.abs(width - resizeState.width);
+      const heightChangeAsWidth = Math.abs(height - resizeState.height) * ratio;
+      if (widthChange >= heightChangeAsWidth) height = width / ratio;
+      else width = height * ratio;
+      const minimumWidth = Math.max(48, 32 * ratio);
+      const maximumWidth = Math.min(8192, 8192 * ratio);
+      width = Math.max(minimumWidth, Math.min(maximumWidth, width));
+      height = width / ratio;
+    } else {
+      width = Math.max(48, Math.min(8192, width));
+      height = Math.max(32, Math.min(8192, height));
+    }
     customViewOffset = {
       x: resizeState.offsetX + (resizeState.direction.includes('w') ? resizeState.width - width : 0),
       y: resizeState.offsetY + (resizeState.direction.includes('n') ? resizeState.height - height : 0),

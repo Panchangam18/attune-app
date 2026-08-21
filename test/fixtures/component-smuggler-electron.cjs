@@ -1167,6 +1167,40 @@ async function run() {
     throw new Error(`Select-mode custom resize failed: ${JSON.stringify(resizedState)}`);
   }
 
+  const proportionalResizeSetup = await targetWindow.webContents.executeJavaScript(`(() => {
+    const api = window.__attuneComponentSmuggleTarget;
+    api.resetSize();
+    const bounds = document.querySelector('attune-component-smuggle').getBoundingClientRect();
+    return { point: { x: bounds.left, y: bounds.top }, ratio: bounds.width / bounds.height };
+  })()`);
+  targetWindow.webContents.debugger.attach('1.3');
+  try {
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: proportionalResizeSetup.point.x, y: proportionalResizeSetup.point.y,
+      button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse', modifiers: 8,
+    });
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: proportionalResizeSetup.point.x + 100, y: proportionalResizeSetup.point.y + 10,
+      button: 'left', buttons: 1, pointerType: 'mouse', modifiers: 8,
+    });
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: proportionalResizeSetup.point.x + 100, y: proportionalResizeSetup.point.y + 10,
+      button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse', modifiers: 8,
+    });
+  } finally {
+    targetWindow.webContents.debugger.detach();
+  }
+  const proportionalResizeState = await targetWindow.webContents.executeJavaScript('window.__attuneComponentSmuggleTarget.status()');
+  const proportionalRatio = proportionalResizeState.viewSize.width / proportionalResizeState.viewSize.height;
+  if (Math.abs(proportionalRatio - proportionalResizeSetup.ratio) > 0.001
+    || Math.round(proportionalResizeState.viewSize.width) !== 700
+    || Math.round(proportionalResizeState.viewSize.height) !== 105
+    || Math.round(proportionalResizeState.viewOffset.x) !== 100
+    || Math.round(proportionalResizeState.viewOffset.y) !== 15
+    || proportionalResizeState.isManipulating) {
+    throw new Error(`Shift-corner resize did not preserve the aspect ratio: ${JSON.stringify({ proportionalResizeSetup, proportionalResizeState })}`);
+  }
+
   const panAndDragSetup = await targetWindow.webContents.executeJavaScript(`(() => {
     const api = window.__attuneComponentSmuggleTarget;
     api.resetSize();
