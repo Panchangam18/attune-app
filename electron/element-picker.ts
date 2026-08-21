@@ -261,8 +261,20 @@ function runElementPicker(
     const isSmuggleResizeHandle = (event: any) => (event.composedPath?.() || []).some((item: any) => (
       item?.hasAttribute?.('data-attune-smuggle-resize-handle')
     ));
+    const isSmuggleDragHandle = (event: any) => {
+      const host = (event.composedPath?.() || []).find((item: any) => (
+        item?.hasAttribute?.('data-attune-smuggle-drag-handle')
+      ));
+      return Boolean(host && smuggleRuntimeFor(host)?.canDrag?.());
+    };
+    const isSmuggleManipulationActive = () => (
+      Object.values(win.__attuneComponentSmuggleTargets || {}).some((api: any) => api?.isManipulating?.())
+      || Boolean(win.__attuneComponentSmuggleTarget?.isManipulating?.())
+    );
     const isSmuggleResizeInteraction = (event: any) => (
-      isSmuggleResizeHandle(event) || Boolean(win.__attuneComponentSmuggleTarget?.isResizing?.())
+      isSmuggleResizeHandle(event)
+      || isSmuggleManipulationActive()
+      || (event.type === 'pointerdown' && isSmuggleDragHandle(event))
     );
     const smuggleHostIn = (items: any[]) => items.find((item: any) => (
       item?.getAttribute?.('data-attune-component-smuggle') === 'host'
@@ -270,6 +282,12 @@ function runElementPicker(
     const isSmuggleHost = (element: any) => (
       element?.getAttribute?.('data-attune-component-smuggle') === 'host'
     );
+    const smuggleRuntimeFor = (host: any) => {
+      const token = host?.getAttribute?.('data-attune-component-smuggle-token');
+      return (token && win.__attuneComponentSmuggleTargets?.[token])
+        || win.__attuneComponentSmuggleTarget
+        || null;
+    };
     const rolesFor = (element: any) => clean(element?.getAttribute?.('data-attune-host-roles'), 300).split(/\s+/).filter(Boolean);
     const accessibleLabel = (element: any) => clean(
       element?.getAttribute?.('aria-label')
@@ -560,7 +578,8 @@ function runElementPicker(
       const smuggleClose = eventPath.find((item: any) => (
         item?.getAttribute?.('aria-label') === 'Stop component smuggling'
       ));
-      if (smuggleClose && win.__attuneComponentSmuggleTarget?.requestClose?.(Boolean(event.isTrusted))) {
+      const clickedSmuggleHost = smuggleHostIn(eventPath);
+      if (smuggleClose && smuggleRuntimeFor(clickedSmuggleHost)?.requestClose?.(Boolean(event.isTrusted))) {
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
@@ -621,7 +640,7 @@ function runElementPicker(
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation?.();
-        if (win.__attuneComponentSmuggleTarget?.requestClose?.(Boolean(event.isTrusted))) {
+        if (smuggleRuntimeFor(pointerSmuggleHost)?.requestClose?.(Boolean(event.isTrusted))) {
           cancel('smuggle-delete');
         }
         return;

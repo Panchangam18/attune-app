@@ -225,6 +225,38 @@ async function run() {
     throw new Error(`Cleaning one target removed its sibling: ${JSON.stringify(firstTargetSurvived)}`);
   }
 
+  const replaceViewportAnchor = componentSmuggleAnchor(selection({
+    intent: 'smuggle-target', placement: 'replace', roles: ['fixture.target.two'],
+    selector: '[data-attune-host-roles~="fixture.target.two"]',
+    tag: 'aside', label: '', text: 'Second target', attributes: {},
+    ancestor: { tag: 'div', domRole: '', label: '' },
+  }), 'target-token-replace-viewport');
+  await targetWindow.webContents.executeJavaScript(buildComponentSmuggleTargetExpression(replaceViewportAnchor));
+  const replaceViewportState = await targetWindow.webContents.executeJavaScript(`(() => {
+    const api = window.__attuneComponentSmuggleTargets['target-token-replace-viewport'];
+    api.applyVisual({ sequence: 1, data: ${JSON.stringify('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwWSJwAAAABJRU5ErkJggg==')}, width: 800, height: 120, rootWidth: 800, rootHeight: 120, offsetX: 0, offsetY: 0 });
+    const large = api.status();
+    const panned = api.scrollView(40, 30, false);
+    const afterPan = api.status();
+    api.applyVisual({ sequence: 2, data: ${JSON.stringify('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XwWSJwAAAABJRU5ErkJggg==')}, width: 100, height: 40, rootWidth: 100, rootHeight: 40, offsetX: 0, offsetY: 0 });
+    const small = api.status();
+    const hostToken = document.querySelector('[data-attune-component-smuggle-token="target-token-replace-viewport"]')?.getAttribute('data-attune-component-smuggle-token');
+    api.cleanup();
+    window.__attuneComponentSmuggleTarget = window.__attuneComponentSmuggleTargets['target-token'];
+    return { large, panned, afterPan, small, hostToken };
+  })()`);
+  if (Math.round(replaceViewportState.large.viewSize.width) !== 180
+    || Math.round(replaceViewportState.large.viewSize.height) !== 80
+    || !replaceViewportState.panned
+    || Math.round(replaceViewportState.afterPan.contentOffset.x) !== 40
+    || Math.round(replaceViewportState.afterPan.contentOffset.y) !== 30
+    || Math.round(replaceViewportState.small.viewSize.width) !== 100
+    || Math.round(replaceViewportState.small.viewSize.height) !== 40
+    || !replaceViewportState.small.canDrag
+    || replaceViewportState.hostToken !== 'target-token-replace-viewport') {
+    throw new Error(`Replacement viewport did not pan or expose empty-space movement: ${JSON.stringify(replaceViewportState)}`);
+  }
+
   const pump = async () => {
     const packets = await sourceWindow.webContents.executeJavaScript(
       'window.__attuneComponentSmuggleSource.drain()',
@@ -292,6 +324,50 @@ async function run() {
     ]) || initial.layout.visualIsland !== 'canvas') {
     throw new Error(`Initial twin was not rendered: ${JSON.stringify(initial)}`);
   }
+
+  const boundedScrollState = await sourceWindow.webContents.executeJavaScript(`(() => {
+    const root = document.querySelector('[data-attune-host-roles~="fixture.source"]');
+    const spacer = document.createElement('div');
+    spacer.style.height = '1800px';
+    document.body.appendChild(spacer);
+    const inert = document.createElement('video');
+    inert.style.cssText = 'position:absolute;left:330px;top:54px;width:90px;height:42px;z-index:20';
+    root.appendChild(inert);
+    const scroller = document.createElement('div');
+    scroller.style.cssText = 'position:absolute;left:430px;top:54px;width:100px;height:42px;overflow:auto;z-index:20';
+    scroller.innerHTML = '<div style="height:240px">Scrollable component content</div>';
+    root.appendChild(scroller);
+    window.scrollTo(0, 0);
+    const rootBounds = root.getBoundingClientRect();
+    const positionFor = (element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        xRatio: (bounds.left + bounds.width / 2 - rootBounds.left) / rootBounds.width,
+        yRatio: (bounds.top + bounds.height / 2 - rootBounds.top) / rootBounds.height,
+      };
+    };
+    const inertHandled = window.__attuneComponentSmuggleSource.scrollPoint(null, positionFor(inert), 0, 80, {});
+    const pageAfterInert = window.scrollY;
+    const componentHandled = window.__attuneComponentSmuggleSource.scrollPoint(null, positionFor(scroller), 0, 80, {});
+    const componentScrollTop = scroller.scrollTop;
+    const pageAfterComponent = window.scrollY;
+    scroller.scrollTop = scroller.scrollHeight;
+    const boundaryHandled = window.__attuneComponentSmuggleSource.scrollPoint(null, positionFor(scroller), 0, 80, {});
+    const pageAfterBoundary = window.scrollY;
+    inert.remove();
+    scroller.remove();
+    spacer.remove();
+    window.scrollTo(0, 0);
+    return { inertHandled, pageAfterInert, componentHandled, componentScrollTop, pageAfterComponent, boundaryHandled, pageAfterBoundary };
+  })()`);
+  if (boundedScrollState.inertHandled || boundedScrollState.pageAfterInert !== 0
+    || !boundedScrollState.componentHandled || boundedScrollState.componentScrollTop <= 0
+    || boundedScrollState.pageAfterComponent !== 0 || boundedScrollState.boundaryHandled
+    || boundedScrollState.pageAfterBoundary !== 0) {
+    throw new Error(`Source wheel escaped the selected component: ${JSON.stringify(boundedScrollState)}`);
+  }
+  await wait(40);
+  await sourceWindow.webContents.executeJavaScript('window.__attuneComponentSmuggleSource.drain()');
 
   const hoverBounds = await sourceWindow.webContents.executeJavaScript(`(() => {
     const bounds = document.querySelector('[aria-label="Increment"]').getBoundingClientRect();
@@ -1085,10 +1161,55 @@ async function run() {
     || !resizedState.after.customSize || resizedState.after.resizing
     || Math.round(resizedState.after.viewOffset.x) !== 160 || Math.round(resizedState.after.viewOffset.y) !== 60
     || Math.round(resizedState.viewport.width) !== 640 || Math.round(resizedState.viewport.height) !== 60
-    || Math.round(resizedState.image.width) !== 640 || Math.round(resizedState.image.height) !== 60
-    || Math.abs(resizedState.hover?.position?.xRatio - 0.25) > 0.001
-    || Math.abs(resizedState.hover?.position?.yRatio - 0.75) > 0.001) {
+    || Math.round(resizedState.image.width) !== 800 || Math.round(resizedState.image.height) !== 120
+    || Math.abs(resizedState.hover?.position?.xRatio - 0.2) > 0.001
+    || Math.abs(resizedState.hover?.position?.yRatio - 0.375) > 0.001) {
     throw new Error(`Select-mode custom resize failed: ${JSON.stringify(resizedState)}`);
+  }
+
+  const panAndDragSetup = await targetWindow.webContents.executeJavaScript(`(() => {
+    const api = window.__attuneComponentSmuggleTarget;
+    api.resetSize();
+    api.resizeTo(120, 40);
+    const host = document.querySelector('attune-component-smuggle');
+    const viewport = host.shadowRoot.querySelector('[data-attune-component-smuggle="visual-viewport"]');
+    const locallyPanned = api.scrollView(25, 30, false);
+    const afterWheel = api.status();
+    const actionsAfterWheel = api.drainActions();
+    const hostBounds = host.getBoundingClientRect();
+    return {
+      locallyPanned,
+      afterWheel,
+      actionsAfterWheel,
+      point: { x: hostBounds.left + hostBounds.width / 2, y: hostBounds.top + hostBounds.height / 2 },
+    };
+  })()`);
+  targetWindow.webContents.debugger.attach('1.3');
+  try {
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mousePressed', x: panAndDragSetup.point.x, y: panAndDragSetup.point.y,
+      button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse',
+    });
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseMoved', x: panAndDragSetup.point.x + 70, y: panAndDragSetup.point.y + 25,
+      button: 'left', buttons: 1, pointerType: 'mouse',
+    });
+    await targetWindow.webContents.debugger.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased', x: panAndDragSetup.point.x + 70, y: panAndDragSetup.point.y + 25,
+      button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse',
+    });
+  } finally {
+    targetWindow.webContents.debugger.detach();
+  }
+  const panAndDragState = await targetWindow.webContents.executeJavaScript('window.__attuneComponentSmuggleTarget.status()');
+  if (!panAndDragSetup.locallyPanned
+    || Math.round(panAndDragSetup.afterWheel.contentOffset.x) !== 25
+    || Math.round(panAndDragSetup.afterWheel.contentOffset.y) !== 30
+    || panAndDragSetup.actionsAfterWheel.some((action) => action.type === 'visual-wheel')
+    || Math.round(panAndDragState.viewOffset.x) !== 70
+    || Math.round(panAndDragState.viewOffset.y) !== 25
+    || panAndDragState.isManipulating) {
+    throw new Error(`Local pan or destination drag failed: ${JSON.stringify({ panAndDragSetup, panAndDragState })}`);
   }
   await targetWindow.webContents.executeJavaScript(`window.__attuneElementPickerCleanup('fixture-resize')`);
   const resizePickerResult = JSON.parse(await resizePickerResultPromise);

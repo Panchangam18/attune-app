@@ -322,16 +322,27 @@ async function run() {
   const deleteSmuggleState = await window.webContents.executeJavaScript(`(() => {
     const smuggle = document.createElement('attune-component-smuggle');
     smuggle.setAttribute('data-attune-component-smuggle', 'host');
+    smuggle.setAttribute('data-attune-component-smuggle-token', 'fixture-delete-token');
     smuggle.style.cssText = 'display:block;width:220px;height:90px';
     document.body.append(smuggle);
     window.smuggleCloseRequests = 0;
+    window.wrongSmuggleCloseRequests = 0;
+    window.__attuneComponentSmuggleTargets = {
+      'fixture-delete-token': {
+        requestClose() {
+          window.smuggleCloseRequests += 1;
+          smuggle.remove();
+          return true;
+        },
+        isManipulating() { return false; },
+      },
+    };
     window.__attuneComponentSmuggleTarget = {
       requestClose() {
-        window.smuggleCloseRequests += 1;
-        smuggle.remove();
+        window.wrongSmuggleCloseRequests += 1;
         return true;
       },
-      isResizing() { return false; },
+      isManipulating() { return false; },
     };
     const bounds = smuggle.getBoundingClientRect();
     smuggle.dispatchEvent(new PointerEvent('pointermove', {
@@ -346,12 +357,14 @@ async function run() {
     return {
       label,
       closeRequests: window.smuggleCloseRequests,
+      wrongCloseRequests: window.wrongSmuggleCloseRequests,
       connected: smuggle.isConnected,
     };
   })()`);
   const deleteSmuggleResult = JSON.parse(await deleteSmuggleResultPromise);
   if (deleteSmuggleResult.status !== 'cancelled'
-    || deleteSmuggleState.closeRequests !== 1 || deleteSmuggleState.connected
+    || deleteSmuggleState.closeRequests !== 1 || deleteSmuggleState.wrongCloseRequests !== 0
+    || deleteSmuggleState.connected
     || !deleteSmuggleState.label.includes('Backspace/Delete: REMOVE')) {
     throw new Error(`Backspace did not remove the highlighted smuggle: ${JSON.stringify({ deleteSmuggleResult, deleteSmuggleState })}`);
   }

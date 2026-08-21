@@ -203,7 +203,7 @@ export function App() {
             <div className="setting-row picker-shortcut-row">
               <span className="picker-shortcut-copy">
                 Pick an element
-                <small>Click to copy a reference. Option-click to smuggle; in the destination click to replace, Option-click for inside, or use W/A/S/D for sides. In select mode, remove a smuggle with × or Backspace.</small>
+                <small>Click to copy a reference. Option-click to smuggle; in the destination click to replace, Option-click for inside, or use W/A/S/D for sides. In select mode, drag or resize a smuggle, or remove it with × or Backspace.</small>
               </span>
               <kbd>⌥⌘A</kbd>
             </div>

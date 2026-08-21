@@ -333,10 +333,10 @@ test('falls back to the DOM twin when the native source stream cannot start', as
   assert.equal(targetApplies, 1);
 });
 
-test('forwards visual hover and wheel gestures to the source renderer', async () => {
+test('forwards visual hover and bounds wheel gestures to the selected source component', async () => {
   const anchor = componentSmuggleAnchor(selection, 'hover-token');
   const moves = [];
-  const wheels = [];
+  const scrollExpressions = [];
   let sourceDrains = 0;
   let sourceSettles = 0;
   let drained = false;
@@ -345,6 +345,7 @@ test('forwards visual hover and wheel gestures to the source renderer', async ()
     async evaluate(expression) {
       if (expression.includes('hoverPoint?.(null)')) return { x: -1, y: -1 };
       if (expression.includes('hoverPoint?.(')) return { x: 75, y: 20 };
+      if (expression.includes('scrollPoint?.(')) { scrollExpressions.push(expression); return true; }
       if (expression.includes('captureRegion?.')) return {
         x: 0, y: 0, width: 100, height: 40, rootWidth: 100, rootHeight: 40,
         offsetX: 0, offsetY: 0, screenX: 0, screenY: 0, outerWidth: 100,
@@ -357,7 +358,7 @@ test('forwards visual hover and wheel gestures to the source renderer', async ()
     },
     async click() {},
     async move(x, y) { moves.push({ x, y }); },
-    async wheel(x, y, deltaX, deltaY, modifiers) { wheels.push({ x, y, deltaX, deltaY, metaKey: modifiers.metaKey }); },
+    async wheel() { throw new Error('Visual wheel escaped the component-bounded source runtime.'); },
     async insertText() {},
     async pressKey() {},
     close() {},
@@ -398,7 +399,10 @@ test('forwards visual hover and wheel gestures to the source renderer', async ()
   await bridge.start();
   await bridge.stop();
   assert.deepEqual(moves, [{ x: 75, y: 20 }, { x: -1, y: -1 }]);
-  assert.deepEqual(wheels, [{ x: 75, y: 20, deltaX: 4, deltaY: 48, metaKey: true }]);
+  assert.equal(scrollExpressions.length, 1);
+  assert.match(scrollExpressions[0], /scrollPoint\?\.\(null,/);
+  assert.match(scrollExpressions[0], /, 4, 48,/);
+  assert.match(scrollExpressions[0], /"metaKey":true/);
   assert.equal(sourceDrains, 1);
   assert.equal(sourceSettles, 1);
 });
