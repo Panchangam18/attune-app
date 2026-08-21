@@ -43,6 +43,7 @@ test('builds self-contained source and target smuggling runtimes', () => {
   assert.match(targetExpression, /attachShadow/);
   assert.doesNotMatch(targetExpression, /VideoDecoder|applyEncodedVisual|h264/i);
   assert.match(targetExpression, /__attuneComponentSmuggleTargets/);
+  assert.match(targetExpression, /parkForAncestorReplacement/);
   assert.equal(componentSmuggleAnchor({ ...selection, placement: 'replace' }, 'replace-token').placement, 'replace');
 });
 
@@ -92,6 +93,20 @@ test('uses the JPEG stream directly through both production bridge adapters', as
   ) || [];
   assert.equal(forwardingAdapters.length, 2);
   assert.doesNotMatch(main, /H264|H264_ENABLED|window-region-h264/i);
+});
+
+test('activates Safari icon-button ancestors when the exact hit is an SVG leaf', async () => {
+  const safariClient = await readFile(new URL('../electron/safari-page-client.ts', import.meta.url), 'utf8');
+  assert.match(safariClient, /typeof element\.click === 'function'/);
+  assert.match(safariClient, /element\.closest\?\.\('button,a\[href\]/);
+  assert.match(safariClient, /new MouseEvent\('click'/);
+});
+
+test('copies a source DOM selection through Attune when its app is backgrounded', async () => {
+  const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  assert.match(main, /chord\.code === 'KeyC'/);
+  assert.match(main, /clipboard\.writeText\(chord\.clipboardText\)/);
+  assert.match(main, /transport: 'clipboard'/);
 });
 
 test('keeps existing smuggle bridges alive when another one starts', async () => {
@@ -191,6 +206,12 @@ test('keeps a passive DOM metadata twin under the native source stream', async (
   assert.equal(targetApplies, 1);
 });
 
+test('performs a one-shot source drain after a streamed click can open a satellite', async () => {
+  const source = await readFile(new URL('../electron/component-smuggler.ts', import.meta.url), 'utf8');
+  assert.match(source, /sourceClickMayHaveOpenedSatellite/);
+  assert.match(source, /!this\.initialSourceDrainCompleted\s*\n\s*\|\| sourceClickMayHaveOpenedSatellite/);
+});
+
 test('keeps a native smuggle alive while the destination renderer is temporarily paused', async () => {
   const anchor = componentSmuggleAnchor(selection, 'paused-destination-token');
   let drainAttempts = 0;
@@ -281,7 +302,7 @@ test('keeps a native smuggle alive while the destination renderer is temporarily
 
 test('falls back to the DOM twin when the native source stream cannot start', async () => {
   const anchor = componentSmuggleAnchor(selection, 'stream-fallback-token');
-  let sourceInstalls = 0;
+  const sourceInstalls = [];
   let sourceDrains = 0;
   let targetApplies = 0;
   let nativeStarts = 0;
@@ -293,7 +314,7 @@ test('falls back to the DOM twin when the native source stream cannot start', as
         offsetX: 0, offsetY: 0, screenX: 0, screenY: 0, outerWidth: 300,
         outerHeight: 80, innerWidth: 300, innerHeight: 80, contentOffsetX: 0, contentOffsetY: 0,
       };
-      if (expression.includes('function runComponentSmuggleSource')) sourceInstalls += 1;
+      if (expression.includes('function runComponentSmuggleSource')) sourceInstalls.push(expression);
       if (expression.includes('?.status')) return { connected: true, visualIslandCount: 0 };
       if (expression.includes('?.drain?.')) {
         sourceDrains += 1;
@@ -328,7 +349,9 @@ test('falls back to the DOM twin when the native source stream cannot start', as
   await bridge.start();
   await bridge.stop();
   assert.equal(nativeStarts, 1);
-  assert.equal(sourceInstalls, 1);
+  assert.equal(sourceInstalls.length, 2);
+  assert.match(sourceInstalls[0], /, true\)$/);
+  assert.match(sourceInstalls[1], /, false\)$/);
   assert.equal(sourceDrains, 1);
   assert.equal(targetApplies, 1);
 });
@@ -340,12 +363,25 @@ test('forwards visual hover and bounds wheel gestures to the selected source com
   let sourceDrains = 0;
   let sourceSettles = 0;
   let drained = false;
+  let sourceVisibilityWakes = 0;
+  let sourceInstalls = 0;
+  let scrollAttempts = 0;
   const sourceClient = {
     async connect() {},
     async evaluate(expression) {
+      if (expression.includes('function runComponentSmuggleSource')) {
+        sourceInstalls += 1;
+        return { ok: true, connected: true, visualIslandCount: 1 };
+      }
       if (expression.includes('hoverPoint?.(null)')) return { x: -1, y: -1 };
       if (expression.includes('hoverPoint?.(')) return { x: 75, y: 20 };
-      if (expression.includes('scrollPoint?.(')) { scrollExpressions.push(expression); return true; }
+      if (expression.includes('scrollPoint?.(')) {
+        scrollExpressions.push(expression);
+        scrollAttempts += 1;
+        return scrollAttempts === 1
+          ? { runtimePresent: false, handled: false, visibilityWakeNeeded: false }
+          : { runtimePresent: true, handled: true, visibilityWakeNeeded: true };
+      }
       if (expression.includes('captureRegion?.')) return {
         x: 0, y: 0, width: 100, height: 40, rootWidth: 100, rootHeight: 40,
         offsetX: 0, offsetY: 0, screenX: 0, screenY: 0, outerWidth: 100,
@@ -394,15 +430,21 @@ test('forwards visual hover and bounds wheel gestures to the selected source com
     undefined,
     undefined,
     async () => () => {},
-    { source: sourceClient, target: targetClient },
+    {
+      source: sourceClient,
+      target: targetClient,
+      wakeSourcePage: async () => { sourceVisibilityWakes += 1; },
+    },
   );
   await bridge.start();
   await bridge.stop();
   assert.deepEqual(moves, [{ x: 75, y: 20 }, { x: -1, y: -1 }]);
-  assert.equal(scrollExpressions.length, 1);
+  assert.equal(scrollExpressions.length, 2);
   assert.match(scrollExpressions[0], /scrollPoint\?\.\(null,/);
   assert.match(scrollExpressions[0], /, 4, 48,/);
   assert.match(scrollExpressions[0], /"metaKey":true/);
+  assert.equal(sourceInstalls, 2);
+  assert.equal(sourceVisibilityWakes, 1);
   assert.equal(sourceDrains, 1);
   assert.equal(sourceSettles, 1);
 });
@@ -416,7 +458,10 @@ test('wakes the visual input relay as soon as the target signals an action', asy
   };
   const queuedActions = [];
   const inserted = [];
+  const drags = [];
+  const collapseExpressions = [];
   const focusExpressions = [];
+  let clickAttempts = 0;
   let targetControlApplies = 0;
   let targetVisualApplies = 0;
   let signalAction = () => {};
@@ -429,12 +474,19 @@ test('wakes the visual input relay as soon as the target signals an action', asy
       if (expression.includes('captureRegion?.')) return region;
       if (expression.includes('capturePoint?.')) return { x: 25, y: 30 };
       if (expression.includes('?.status')) return { connected: true, visualIslandCount: 1 };
+      if (expression.includes('?.selectedText')) return 'copied source text';
+      if (expression.includes('?.collapseSelectionAt')) collapseExpressions.push(expression);
       if (expression.includes('focusPrimaryEditable')) {
         focusExpressions.push(expression);
         return { ok: true };
       }
       return { ok: true, connected: true, visualIslandCount: 1 };
     },
+    async clickAtComponentPosition() {
+      clickAttempts += 1;
+      throw new TypeError('fixture SVG leaf has no click method');
+    },
+    async drag(phase, x, y) { drags.push({ phase, x, y }); },
     async click() {}, async move() {}, async wheel() {},
     async insertText(value) { inserted.push(value); },
     async pressKey() {}, close() {},
@@ -464,11 +516,15 @@ test('wakes the visual input relay as soon as the target signals an action', asy
   const endpoint = {
     appId: 'fixture', appName: 'Fixture', webSocketDebuggerUrl: 'ws://fixture', anchor,
   };
+  const forwardedChords = [];
   const bridge = new ComponentSmuggleBridge(
     endpoint,
     endpoint,
     undefined,
-    undefined,
+    async (action) => {
+      forwardedChords.push(action);
+      return { ok: true };
+    },
     async (_region, onFrame) => {
       onFrame('A'.repeat(128));
       return () => {};
@@ -481,8 +537,25 @@ test('wakes the visual input relay as soon as the target signals an action', asy
     revision: 1, queuedAt: Date.now(),
   });
   queuedActions.push({
-    type: 'visual-edit', trusted: true, inputType: 'insertText', data: 'q',
+    type: 'visual-drag', phase: 'start', trusted: true, position: { xRatio: 0.1, yRatio: 0.5 },
     revision: 2, queuedAt: Date.now(),
+  });
+  queuedActions.push({
+    type: 'visual-drag', phase: 'move', trusted: true, position: { xRatio: 0.5, yRatio: 0.5 },
+    revision: 3, queuedAt: Date.now(),
+  });
+  queuedActions.push({
+    type: 'visual-drag', phase: 'end', trusted: true, position: { xRatio: 0.9, yRatio: 0.5 },
+    revision: 4, queuedAt: Date.now(),
+  });
+  queuedActions.push({
+    type: 'visual-key', trusted: true, key: 'c', code: 'KeyC', metaKey: true,
+    ctrlKey: false, altKey: false, shiftKey: false,
+    revision: 5, queuedAt: Date.now(),
+  });
+  queuedActions.push({
+    type: 'visual-edit', trusted: true, inputType: 'insertText', data: 'q',
+    revision: 6, queuedAt: Date.now(),
   });
   signalAction();
   const deadline = Date.now() + 250;
@@ -490,7 +563,17 @@ test('wakes the visual input relay as soon as the target signals an action', asy
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
   await bridge.stop();
+  assert.equal(clickAttempts, 1);
+  assert.deepEqual(drags, [
+    { phase: 'start', x: 25, y: 30 },
+    { phase: 'move', x: 25, y: 30 },
+    { phase: 'end', x: 25, y: 30 },
+  ]);
   assert.deepEqual(inserted, ['q']);
+  assert.equal(collapseExpressions.length, 1);
+  assert.equal(forwardedChords.length, 1);
+  assert.equal(forwardedChords[0].code, 'KeyC');
+  assert.equal(forwardedChords[0].clipboardText, 'copied source text');
   assert.equal(focusExpressions.some((expression) => expression.includes('focusActiveEditable?.()')), true);
   assert.equal(focusExpressions.some((expression) => (
     expression.includes('focusEditableAt?.({"xRatio":0.25,"yRatio":0.75})')

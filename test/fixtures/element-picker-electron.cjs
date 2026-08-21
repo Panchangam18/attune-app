@@ -344,11 +344,31 @@ async function run() {
       },
       isManipulating() { return false; },
     };
+    const interactive = document.createElement('textarea');
+    interactive.setAttribute('data-attune-component-smuggle', 'input-relay');
+    smuggle.appendChild(interactive);
+    window.smugglePointerDowns = 0;
+    window.smuggleKeyDowns = 0;
+    window.smuggleBeforeInputs = 0;
+    interactive.addEventListener('pointerdown', () => { window.smugglePointerDowns += 1; });
+    interactive.addEventListener('keydown', () => { window.smuggleKeyDowns += 1; });
+    interactive.addEventListener('beforeinput', () => { window.smuggleBeforeInputs += 1; });
     const bounds = smuggle.getBoundingClientRect();
     smuggle.dispatchEvent(new PointerEvent('pointermove', {
       bubbles: true, composed: true,
       clientX: bounds.left + bounds.width / 2,
       clientY: bounds.top + bounds.height / 2,
+    }));
+    interactive.focus();
+    interactive.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true, composed: true, cancelable: true,
+      clientX: bounds.left + 10, clientY: bounds.top + 10,
+    }));
+    interactive.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'x', code: 'KeyX', bubbles: true, composed: true, cancelable: true,
+    }));
+    interactive.dispatchEvent(new InputEvent('beforeinput', {
+      inputType: 'insertText', data: 'x', bubbles: true, composed: true, cancelable: true,
     }));
     const label = document.querySelector('[data-attune-element-picker="label"]').textContent;
     document.dispatchEvent(new KeyboardEvent('keydown', {
@@ -359,14 +379,60 @@ async function run() {
       closeRequests: window.smuggleCloseRequests,
       wrongCloseRequests: window.wrongSmuggleCloseRequests,
       connected: smuggle.isConnected,
+      pointerDowns: window.smugglePointerDowns,
+      keyDowns: window.smuggleKeyDowns,
+      beforeInputs: window.smuggleBeforeInputs,
     };
   })()`);
   const deleteSmuggleResult = JSON.parse(await deleteSmuggleResultPromise);
   if (deleteSmuggleResult.status !== 'cancelled'
     || deleteSmuggleState.closeRequests !== 1 || deleteSmuggleState.wrongCloseRequests !== 0
     || deleteSmuggleState.connected
+    || deleteSmuggleState.pointerDowns !== 1
+    || deleteSmuggleState.keyDowns !== 1
+    || deleteSmuggleState.beforeInputs !== 1
     || !deleteSmuggleState.label.includes('Backspace/Delete: REMOVE')) {
     throw new Error(`Backspace did not remove the highlighted smuggle: ${JSON.stringify({ deleteSmuggleResult, deleteSmuggleState })}`);
+  }
+
+  const removeAllResultPromise = window.webContents.executeJavaScript(
+    buildElementPickerExpression('Codex'),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const removeAllState = await window.webContents.executeJavaScript(`(() => {
+    const hosts = ['fixture-remove-all-one', 'fixture-remove-all-two'].map((token) => {
+      const host = document.createElement('attune-component-smuggle');
+      host.setAttribute('data-attune-component-smuggle', 'host');
+      host.setAttribute('data-attune-component-smuggle-token', token);
+      document.body.append(host);
+      return host;
+    });
+    window.removeAllCloseRequests = 0;
+    window.__attuneComponentSmuggleTargets = Object.fromEntries(hosts.map((host) => {
+      const token = host.getAttribute('data-attune-component-smuggle-token');
+      return [token, {
+        requestClose() {
+          window.removeAllCloseRequests += 1;
+          host.remove();
+          return true;
+        },
+        isManipulating() { return false; },
+      }];
+    }));
+    window.__attuneComponentSmuggleTarget = window.__attuneComponentSmuggleTargets['fixture-remove-all-two'];
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Backspace', code: 'Backspace', metaKey: true, bubbles: true, cancelable: true,
+    }));
+    return {
+      closeRequests: window.removeAllCloseRequests,
+      connected: hosts.filter((host) => host.isConnected).length,
+    };
+  })()`);
+  const removeAllResult = JSON.parse(await removeAllResultPromise);
+  if (removeAllResult.status !== 'remove-all'
+    || removeAllState.closeRequests !== 2
+    || removeAllState.connected !== 0) {
+    throw new Error(`Command-Backspace did not remove every smuggle: ${JSON.stringify({ removeAllResult, removeAllState })}`);
   }
   window.destroy();
 }

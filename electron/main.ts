@@ -458,6 +458,9 @@ async function processComponentSmuggleRequests(homePath: string): Promise<void> 
           targetVisual: targetVisualClient,
           runtimeMaintenance: !item.request.source.safariPage
             || process.env.ATTUNE_COMPONENT_SMUGGLE_SAFARI_MAINTENANCE_ENABLED !== '0',
+          wakeSourcePage: item.request.source.safariPage
+            ? () => wakeSafariComponentSmuggleSource(item.request.source.safariPage!, target.appPid)
+            : undefined,
         },
       );
       activeComponentSmuggles.add(bridge);
@@ -583,6 +586,7 @@ function registerElementPickerNavigationShortcuts(target: ElementPickerTarget): 
     ['Up', 'up'],
     ['Down', 'down'],
     ['Escape', 'cancel'],
+    ['CommandOrControl+Backspace', 'remove-all'],
   ] as const;
   for (const [accelerator, command] of commands) {
     const registered = globalShortcut.register(accelerator, () => {
@@ -591,6 +595,15 @@ function registerElementPickerNavigationShortcuts(target: ElementPickerTarget): 
         .catch(() => undefined)
         .then(async () => {
           if (!elementPickerRunning || activeElementPickerTarget !== target) return;
+          if (command === 'remove-all') {
+            const removed = await removeComponentSmugglesForTargetApp(target);
+            await evaluateElementPickerTargetJson(
+              target,
+              `JSON.stringify(Boolean(window.__attuneElementPickerCommand?.('remove-all')))`,
+            );
+            if (removed) showElementPickerNotice(`Removed ${removed} smuggled component${removed === 1 ? '' : 's'} from ${target.appName}.`);
+            return;
+          }
           await evaluateElementPickerTargetJson(
             target,
             `JSON.stringify(Boolean(window.__attuneElementPickerCommand?.(${JSON.stringify(command)})))`,
@@ -606,6 +619,18 @@ function registerElementPickerNavigationShortcuts(target: ElementPickerTarget): 
     if (registered) activeElementPickerNavigationAccelerators.add(accelerator);
     else console.warn(`[attune] unable to register element picker navigation key ${accelerator}`);
   }
+}
+
+async function removeComponentSmugglesForTargetApp(target: ElementPickerTarget): Promise<number> {
+  const matches = [...activeComponentSmuggles].filter((bridge) => (
+    bridge.target.appId === target.appId
+      || (target.appPid && bridge.target.appPid === target.appPid)
+  ));
+  await Promise.all(matches.map(async (bridge) => {
+    activeComponentSmuggles.delete(bridge);
+    await bridge.stop(true);
+  }));
+  return matches.length;
 }
 
 async function startElementPicker(
@@ -631,15 +656,29 @@ async function startElementPicker(
   let target: ElementPickerTarget | null = null;
   const anchorToken = randomUUID();
   try {
-    target = await findFocusedElementPickerTarget(preferredBrowser, preferredAppPid);
+    target = await findFocusedElementPickerTarget(preferredBrowser, preferredAppPid, preferredAppId);
     if (!target) {
       const supportedApp = await findSupportedUnattachedPickerApp(preferredAppId);
       if (supportedApp) {
-        showElementPickerNotice(supportedButNotAttachedPickerNotice(supportedApp.name));
+        const scanModule = await loadAttuneModule<ScanModule>('scan.js');
+        const appId = scanModule.getAppId(supportedApp);
+        showElementPickerNotice(`Reopening ${supportedApp.name} through Attune for component selection…`);
+        const restarted = await restartRunningAppThroughAttune(supportedApp, appId, scanModule);
+        if (restarted) {
+          const deadline = Date.now() + 12_000;
+          while (!target && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            target = await findFocusedElementPickerTarget(undefined, undefined, appId);
+          }
+        }
+        if (!target) {
+          showElementPickerNotice(supportedButNotAttachedPickerNotice(supportedApp.name));
+          return;
+        }
+      } else {
+        showElementPickerNotice('Bring an app opened through Attune to the front, then press ⌥⌘A again.');
         return;
       }
-      showElementPickerNotice('Bring an app opened through Attune to the front, then press ⌥⌘A again.');
-      return;
     }
     const pendingSource = pendingComponentSmuggle;
     if (pendingSource && pendingSource.target.webSocketDebuggerUrl === target.webSocketDebuggerUrl) {
@@ -667,6 +706,11 @@ async function startElementPicker(
       throw new Error(`Attune lost its connection to ${target.appName} before an element was selected.`);
     }
     if (rawResult.status === 'cancelled') return;
+    if (rawResult.status === 'remove-all') {
+      const removed = await removeComponentSmugglesForTargetApp(target);
+      if (removed) showElementPickerNotice(`Removed ${removed} smuggled component${removed === 1 ? '' : 's'} from ${target.appName}.`);
+      return;
+    }
 
     if (pendingSource) {
       const bridge = new ComponentSmuggleBridge(
@@ -698,6 +742,9 @@ async function startElementPicker(
             : undefined,
           runtimeMaintenance: !pendingSource.target.safariPage
             || process.env.ATTUNE_COMPONENT_SMUGGLE_SAFARI_MAINTENANCE_ENABLED === '1',
+          wakeSourcePage: pendingSource.target.safariPage
+            ? () => wakeSafariComponentSmuggleSource(pendingSource.target.safariPage!, target!.appPid)
+            : undefined,
         },
       );
       activeComponentSmuggles.add(bridge);
@@ -787,6 +834,7 @@ async function findSupportedUnattachedPickerApp(preferredAppId?: string): Promis
 async function findFocusedElementPickerTarget(
   preferredBrowser?: 'safari' | 'chrome',
   preferredAppPid?: number,
+  preferredAppId?: string,
 ): Promise<ElementPickerTarget | null> {
   if (preferredBrowser === 'safari') {
     return findFocusedSafariElementPickerTarget(true);
@@ -821,11 +869,13 @@ async function findFocusedElementPickerTarget(
     }
   }))).flat();
 
-  const eligiblePageTargets = preferredBrowser === 'chrome'
-    ? pageTargets.filter((candidate) => candidate.appId.startsWith('com.google.Chrome') || candidate.appName.toLowerCase().includes('chrome'))
-    : Number.isSafeInteger(preferredAppPid) && Number(preferredAppPid) > 0
-      ? pageTargets.filter((candidate) => candidate.appPid === preferredAppPid)
-      : pageTargets;
+  const eligiblePageTargets = preferredAppId
+    ? pageTargets.filter((candidate) => candidate.appId === preferredAppId)
+    : preferredBrowser === 'chrome'
+      ? pageTargets.filter((candidate) => candidate.appId.startsWith('com.google.Chrome') || candidate.appName.toLowerCase().includes('chrome'))
+      : Number.isSafeInteger(preferredAppPid) && Number(preferredAppPid) > 0
+        ? pageTargets.filter((candidate) => candidate.appPid === preferredAppPid)
+        : pageTargets;
   const probes = await Promise.all(eligiblePageTargets.map(async (candidate) => {
     const focus = await evaluatePageJson(
       candidate.webSocketDebuggerUrl,
@@ -1098,7 +1148,11 @@ function componentSmuggleWindowStreamPath(): string {
 async function forwardComponentSmuggleKeyChord(
   appPid: number | undefined,
   chord: ComponentSmuggleKeyChord,
-): Promise<{ transport: 'native'; code: string }> {
+): Promise<{ transport: 'native' | 'clipboard'; code: string }> {
+  if ((chord.metaKey || chord.ctrlKey) && chord.code === 'KeyC' && typeof chord.clipboardText === 'string') {
+    clipboard.writeText(chord.clipboardText);
+    return { transport: 'clipboard', code: chord.code };
+  }
   if (process.platform !== 'darwin') throw new Error('native shortcut forwarding currently requires macOS');
   if (!Number.isSafeInteger(appPid) || Number(appPid) <= 0) throw new Error('source app process is unavailable');
   const helperPath = componentSmuggleKeyForwarderPath();
@@ -1111,6 +1165,38 @@ async function forwardComponentSmuggleKeyChord(
   ].filter(Boolean).join(',');
   await exec(helperPath, [String(appPid), chord.code, modifiers], { cwd: process.cwd(), timeout: 2_000 });
   return { transport: 'native', code: chord.code };
+}
+
+async function wakeSafariComponentSmuggleSource(
+  page: SafariPageReference,
+  targetPid: number | undefined,
+): Promise<void> {
+  const fallbackTargetPid = Number.isSafeInteger(targetPid) && Number(targetPid) > 0
+    ? Number(targetPid)
+    : 0;
+  const script = `set restorePid to ${fallbackTargetPid}
+tell application "System Events"
+  try
+    set restorePid to unix id of first application process whose frontmost is true
+  end try
+end tell
+tell application "Safari"
+  if not (exists window id ${page.windowId}) then error "Safari source window is unavailable"
+  set sourceWindow to window id ${page.windowId}
+  if (count of tabs of sourceWindow) < ${page.tabIndex} then error "Safari source tab is unavailable"
+  set current tab of sourceWindow to tab ${page.tabIndex} of sourceWindow
+  set index of sourceWindow to 1
+  activate
+end tell
+delay 0.65
+if restorePid > 0 and restorePid is not ${page.appPid} then
+  tell application "System Events"
+    try
+      set frontmost of first application process whose unix id is restorePid to true
+    end try
+  end tell
+end if`;
+  await execSafariAppleScript(script, 3_000);
 }
 
 async function startComponentSmuggleWindowStream(

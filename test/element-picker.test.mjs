@@ -96,6 +96,7 @@ test('formats unmapped selections as resolver work with bounded evidence', () =>
 
 test('validates only bounded picker result shapes', () => {
   assert.equal(isElementPickerResult({ status: 'cancelled' }), true);
+  assert.equal(isElementPickerResult({ status: 'remove-all' }), true);
   assert.equal(isElementPickerResult(receipt()), true);
   assert.equal(isElementPickerResult(receipt({ placement: 'replace' })), true);
   assert.equal(isElementPickerResult(receipt({ placement: 'overwrite' })), false);

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
@@ -30,6 +31,13 @@ test('supported unattached apps get an actionable picker notice', () => {
     supportedButNotAttachedPickerNotice('Spotify'),
     'Spotify is supported but not attached. Open it through Attune, then press ⌥⌘A again.',
   );
+});
+
+test('picker recovers a supported app that was reopened without Attune', async () => {
+  const main = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  assert.match(main, /Reopening \$\{supportedApp\.name\} through Attune for component selection/);
+  assert.match(main, /restartRunningAppThroughAttune\(supportedApp, appId, scanModule\)/);
+  assert.match(main, /findFocusedElementPickerTarget\(undefined, undefined, appId\)/);
 });
 
 test('native monitor accepts bundle-aware picker test signals', { skip: process.platform !== 'darwin' }, async () => {

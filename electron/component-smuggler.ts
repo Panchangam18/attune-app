@@ -27,6 +27,7 @@ export interface ComponentSmuggleKeyChord {
   metaKey: boolean;
   shiftKey: boolean;
   repeat?: boolean;
+  clipboardText?: string;
 }
 
 export type ComponentSmuggleKeyForwarder = (chord: ComponentSmuggleKeyChord) => Promise<unknown>;
@@ -123,6 +124,7 @@ export interface ComponentSmugglePageClient {
   evaluate(expression: string, timeoutMs?: number): Promise<any>;
   click(x: number, y: number): Promise<void>;
   clickAtComponentPosition?(position?: { xRatio?: number; yRatio?: number }): Promise<void>;
+  drag?(phase: 'start' | 'move' | 'end', x: number, y: number): Promise<void>;
   move(x: number, y: number): Promise<void>;
   moveAtComponentPosition?(position?: { xRatio?: number; yRatio?: number } | null): Promise<void>;
   wheel(
@@ -175,9 +177,9 @@ export function componentSmuggleAnchor(selection: ElementPickerSelection, token:
 
 export function buildComponentSmuggleSourceExpression(
   anchor: ComponentSmuggleAnchor,
-  visualOnly = false,
+  preferBoundedVisualSource = false,
 ): string {
-  return `(${runComponentSmuggleSource.toString()})(${JSON.stringify(anchor)}, ${visualOnly})`;
+  return `(${runComponentSmuggleSource.toString()})(${JSON.stringify(anchor)}, ${preferBoundedVisualSource})`;
 }
 
 export function buildComponentSmuggleTargetExpression(anchor: ComponentSmuggleAnchor): string {
@@ -185,7 +187,7 @@ export function buildComponentSmuggleTargetExpression(anchor: ComponentSmuggleAn
 }
 
 /** Serialized into the source renderer. Keep this function self-contained. */
-function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = false) {
+function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, preferBoundedVisualSource = false) {
   const runtime = globalThis as any;
   const doc = runtime.document;
   const sourceRuntimes = runtime.__attuneComponentSmuggleSources ||= Object.create(null);
@@ -395,6 +397,31 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
 
   let root = resolveAnchor();
   if (!root) return { ok: false, reason: 'source-anchor-unresolved' };
+  const oversizedVisualRoot = () => {
+    if (!preferBoundedVisualSource || !root?.isConnected) return false;
+    const bounds = root.getBoundingClientRect?.();
+    const viewportWidth = Math.max(1, Number(runtime.innerWidth) || 1);
+    const viewportHeight = Math.max(1, Number(runtime.innerHeight) || 1);
+    return Boolean(bounds && (
+      bounds.height > Math.max(2400, viewportHeight * 2)
+      || bounds.width > Math.max(2400, viewportWidth * 2)
+    ));
+  };
+  const rootInteractionBounds = () => {
+    const bounds = root?.getBoundingClientRect?.();
+    if (!bounds || !oversizedVisualRoot()) return bounds;
+    const left = Math.max(0, Number(bounds.left) || 0);
+    const top = Math.max(0, Number(bounds.top) || 0);
+    const right = Math.min(Number(runtime.innerWidth) || 0, Number(bounds.right) || 0);
+    const bottom = Math.min(Number(runtime.innerHeight) || 0, Number(bounds.bottom) || 0);
+    return {
+      left, top, right, bottom,
+      x: left, y: top,
+      width: Math.max(0, right - left),
+      height: Math.max(0, bottom - top),
+    };
+  };
+  const domSyncDisabled = () => oversizedVisualRoot();
   const outbox: any[] = [];
   const createdExternalElements = new WeakSet();
   const baselineVisibleOverlays = new WeakSet();
@@ -413,6 +440,7 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
   }
   let lastActionAt = 0;
   let lastActionElement: any = null;
+  let visibilityWakeRequested = false;
   let satelliteRoots: any[] = [];
   let version = 0;
   let acknowledgedActionRevision = 0;
@@ -540,7 +568,7 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
     pendingElementRefreshes.clear();
     pendingTextRefreshes.clear();
     satelliteRefreshRequested = false;
-    if (disposed || visualOnly) return;
+    if (disposed || domSyncDisabled()) return;
     if (!root?.isConnected) root = resolveAnchor();
     if (!root) return;
     const budget = { count: 0, elementCount: 0, textNodeCount: 0, textLength: 0 };
@@ -574,14 +602,14 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
     signalVisualDirty();
   };
   const scheduleSnapshot = () => {
-    if (snapshotScheduled || disposed || visualOnly) return;
+    if (snapshotScheduled || disposed || domSyncDisabled()) return;
     snapshotScheduled = true;
     const enqueue = runtime.requestAnimationFrame || ((callback: any) => runtime.setTimeout(callback, 16));
     enqueue(snapshot);
   };
   const flushPatches = () => {
     patchScheduled = false;
-    if (disposed || visualOnly || snapshotScheduled) return;
+    if (disposed || domSyncDisabled() || snapshotScheduled) return;
     if (!root?.isConnected) {
       scheduleSnapshot();
       return;
@@ -619,13 +647,13 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
     signalVisualDirty();
   };
   const queuePatchFlush = () => {
-    if (patchScheduled || snapshotScheduled || disposed || visualOnly) return;
+    if (patchScheduled || snapshotScheduled || disposed || domSyncDisabled()) return;
     patchScheduled = true;
     const enqueue = runtime.requestAnimationFrame || ((callback: any) => runtime.setTimeout(callback, 16));
     enqueue(flushPatches);
   };
   const queueOperation = (operation: any) => {
-    if (!operation || disposed || visualOnly || snapshotScheduled) return;
+    if (!operation || disposed || domSyncDisabled() || snapshotScheduled) return;
     pendingOperations.push(operation);
     if (pendingOperations.length + pendingElementRefreshes.size + pendingTextRefreshes.size > 500) {
       pendingOperations = [];
@@ -931,7 +959,7 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
   };
   const captureRegion = () => {
     if (!root?.isConnected) root = resolveAnchor();
-    const bounds = root?.getBoundingClientRect?.();
+    const bounds = rootInteractionBounds();
     return captureRegionFor(bounds);
   };
   const captureVisualRegions = () => {
@@ -961,7 +989,7 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
   };
   const capturePoint = (position?: { xRatio?: number; yRatio?: number }) => {
     if (!root?.isConnected) root = resolveAnchor();
-    const bounds = root?.getBoundingClientRect?.();
+    const bounds = rootInteractionBounds();
     if (!bounds || bounds.width <= 0 || bounds.height <= 0) return null;
     const xRatio = Number.isFinite(position?.xRatio) ? Math.max(0, Math.min(1, Number(position?.xRatio))) : 0.5;
     const yRatio = Number.isFinite(position?.yRatio) ? Math.max(0, Math.min(1, Number(position?.yRatio))) : 0.5;
@@ -969,9 +997,91 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
     lastActionElement = root;
     return { x: bounds.left + bounds.width * xRatio, y: bounds.top + bounds.height * yRatio };
   };
+  let selectionDragAnchor: { node: any; offset: number } | null = null;
+  const caretAtComponentPosition = (position?: { xRatio?: number; yRatio?: number }) => {
+    if (!root?.isConnected) root = resolveAnchor();
+    const bounds = rootInteractionBounds();
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) return null;
+    const xRatio = Number.isFinite(position?.xRatio) ? Math.max(0, Math.min(1, Number(position?.xRatio))) : 0.5;
+    const yRatio = Number.isFinite(position?.yRatio) ? Math.max(0, Math.min(1, Number(position?.yRatio))) : 0.5;
+    const x = bounds.left + bounds.width * xRatio;
+    const y = bounds.top + bounds.height * yRatio;
+    let node: any = null;
+    let offset = 0;
+    const caretPosition = doc.caretPositionFromPoint?.(x, y);
+    if (caretPosition) {
+      node = caretPosition.offsetNode;
+      offset = Number(caretPosition.offset) || 0;
+    } else {
+      const caretRange = doc.caretRangeFromPoint?.(x, y);
+      if (caretRange) {
+        node = caretRange.startContainer;
+        offset = Number(caretRange.startOffset) || 0;
+      }
+    }
+    const element = node?.nodeType === 1 ? node : node?.parentElement;
+    if (!node || !element || (element !== root && !root.contains?.(element))) return null;
+    const maximum = node.nodeType === 3 ? String(node.nodeValue || '').length : node.childNodes?.length || 0;
+    return { node, offset: Math.max(0, Math.min(offset, maximum)) };
+  };
+  const selectionDrag = (
+    phase: 'start' | 'move' | 'end',
+    position?: { xRatio?: number; yRatio?: number },
+  ) => {
+    const point = caretAtComponentPosition(position);
+    if (!point) {
+      if (phase === 'end') selectionDragAnchor = null;
+      return false;
+    }
+    if (phase === 'start' || !selectionDragAnchor?.node?.isConnected) selectionDragAnchor = point;
+    const anchor = selectionDragAnchor;
+    const selection = doc.getSelection?.();
+    if (!selection || !anchor) return false;
+    try {
+      if (typeof selection.setBaseAndExtent === 'function') {
+        selection.setBaseAndExtent(anchor.node, anchor.offset, point.node, point.offset);
+      } else {
+        const range = doc.createRange();
+        const forward = anchor.node === point.node
+          ? anchor.offset <= point.offset
+          : Boolean(anchor.node.compareDocumentPosition?.(point.node) & 4);
+        const start = forward ? anchor : point;
+        const end = forward ? point : anchor;
+        range.setStart(start.node, start.offset);
+        range.setEnd(end.node, end.offset);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+      lastActionAt = runtime.Date.now();
+      lastActionElement = point.node?.nodeType === 1 ? point.node : point.node?.parentElement;
+      signalVisualDirty();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (phase === 'end') selectionDragAnchor = null;
+    }
+  };
+  const collapseSelectionAt = (position?: { xRatio?: number; yRatio?: number }) => {
+    const selection = doc.getSelection?.();
+    if (!selection) return false;
+    const point = caretAtComponentPosition(position);
+    try {
+      if (point && typeof selection.collapse === 'function') selection.collapse(point.node, point.offset);
+      else selection.removeAllRanges?.();
+      selectionDragAnchor = null;
+      lastActionAt = runtime.Date.now();
+      lastActionElement = point?.node?.nodeType === 1 ? point.node : point?.node?.parentElement || root;
+      signalVisualDirty();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const selectedText = () => String(doc.getSelection?.() || '');
   const hoverPoint = (position?: { xRatio?: number; yRatio?: number } | null) => {
     if (!root?.isConnected) root = resolveAnchor();
-    const bounds = root?.getBoundingClientRect?.();
+    const bounds = rootInteractionBounds();
     if (!bounds || bounds.width <= 0 || bounds.height <= 0) return null;
     lastActionAt = runtime.Date.now();
     lastActionElement = root;
@@ -1000,7 +1110,9 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
     const referencedNode = reference === null ? root : nodeAtReference(reference);
     const referencedElement = referencedNode?.nodeType === 1 ? referencedNode : referencedNode?.parentElement;
     if (!referencedElement) return false;
-    const bounds = referencedElement.getBoundingClientRect?.();
+    const bounds = reference === null && oversizedVisualRoot()
+      ? rootInteractionBounds()
+      : referencedElement.getBoundingClientRect?.();
     if (!bounds || bounds.width <= 0 || bounds.height <= 0) return false;
     const xRatio = Number.isFinite(position?.xRatio) ? Math.max(0, Math.min(1, Number(position?.xRatio))) : 0.5;
     const yRatio = Number.isFinite(position?.yRatio) ? Math.max(0, Math.min(1, Number(position?.yRatio))) : 0.5;
@@ -1038,6 +1150,35 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
       const limit = scrollLimit(element, axis);
       return limit > 0 && (delta < 0 ? offset > 0 : offset < limit);
     };
+    const requestFeedVisibilityWake = () => {
+      if (deltaY <= 0 || doc.visibilityState !== 'hidden' || !oversizedVisualRoot()) return;
+      const viewportHeight = Math.max(1, Number(runtime.innerHeight) || 1);
+      const viewportBottom = viewportHeight;
+      const articleCandidates = [...(root.querySelectorAll?.('article,[role="article"]') || [])];
+      let itemCandidates = articleCandidates;
+      if (itemCandidates.length < 2) {
+        const feedRoots = [
+          ...(root.matches?.('[role="feed"]') ? [root] : []),
+          ...(root.querySelectorAll?.('[role="feed"]') || []),
+        ];
+        itemCandidates = feedRoots.flatMap((feed: any) => [
+          ...(feed.querySelectorAll?.(':scope > [role="listitem"],:scope > article,:scope > [role="article"]') || []),
+        ]);
+      }
+      if (itemCandidates.length < 2) return;
+      const renderedBottom = itemCandidates.reduce((bottom: number, item: any) => {
+        const bounds = item.getBoundingClientRect?.();
+        if (!bounds || bounds.width <= 0 || bounds.height <= 0) return bottom;
+        return Math.max(bottom, Number(bounds.bottom) || 0);
+      }, -Infinity);
+      // Wake slightly before the final rendered item leaves the viewport. This
+      // gives a resumed feed time to enqueue its next page without periodically
+      // activating Safari during ordinary scrolling.
+      if (Number.isFinite(renderedBottom)
+        && renderedBottom <= viewportBottom + Math.max(320, viewportHeight * 0.75)) {
+        visibilityWakeRequested = true;
+      }
+    };
     const ancestors: any[] = [];
     for (let current = start; current?.nodeType === 1; current = current.parentElement) {
       ancestors.push(current);
@@ -1045,9 +1186,24 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
     }
     const horizontal = ancestors.find((element) => canMove(element, 'x', deltaX));
     const vertical = ancestors.find((element) => canMove(element, 'y', deltaY));
+    if (!horizontal && !vertical && oversizedVisualRoot()) {
+      const pageScroller = doc.scrollingElement || doc.documentElement;
+      const pageCanMoveX = deltaX && scrollLimit(pageScroller, 'x') > 0
+        && (deltaX < 0 ? Number(pageScroller.scrollLeft || 0) > 0 : Number(pageScroller.scrollLeft || 0) < scrollLimit(pageScroller, 'x'));
+      const pageCanMoveY = deltaY && scrollLimit(pageScroller, 'y') > 0
+        && (deltaY < 0 ? Number(pageScroller.scrollTop || 0) > 0 : Number(pageScroller.scrollTop || 0) < scrollLimit(pageScroller, 'y'));
+      if (!pageCanMoveX && !pageCanMoveY) return false;
+      if (pageCanMoveX) pageScroller.scrollLeft += deltaX;
+      if (pageCanMoveY) pageScroller.scrollTop += deltaY;
+      requestFeedVisibilityWake();
+      lastActionAt = runtime.Date.now();
+      lastActionElement = pageScroller;
+      return true;
+    }
     if (!horizontal && !vertical) return false;
     if (horizontal) horizontal.scrollLeft += deltaX;
     if (vertical) vertical.scrollTop += deltaY;
+    requestFeedVisibilityWake();
     lastActionAt = runtime.Date.now();
     lastActionElement = vertical || horizontal;
     return true;
@@ -1157,24 +1313,38 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
     if (runtime.__attuneComponentSmuggleSource === api) delete runtime.__attuneComponentSmuggleSource;
   };
   const api = {
-    drain: () => outbox.splice(0),
+    drain: () => {
+      if (domSyncDisabled()) {
+        outbox.length = 0;
+        return [];
+      }
+      return outbox.splice(0);
+    },
     applyActions,
     capturePoint,
     captureRegion,
     captureVisualRegions,
     clickPoint,
+    collapseSelectionAt,
+    selectionDrag,
+    selectedText,
     focusActiveEditable,
     focusEditableAt,
     focusPrimaryEditable,
     focusPath,
     hoverPoint,
     scrollPoint,
+    consumeVisibilityWakeRequest: () => {
+      const requested = visibilityWakeRequested;
+      visibilityWakeRequested = false;
+      return requested;
+    },
     settleActions: async (revision: number) => {
       await Promise.resolve();
       await Promise.resolve();
       acknowledgedActionRevision = Math.max(acknowledgedActionRevision, Number(revision) || 0);
       for (const packet of outbox) packet.acknowledgedActionRevision = acknowledgedActionRevision;
-      if (!visualOnly) {
+      if (!domSyncDisabled()) {
         flushPatches();
       }
       return { version, acknowledgedActionRevision };
@@ -1189,16 +1359,18 @@ function runComponentSmuggleSource(anchor: ComponentSmuggleAnchor, visualOnly = 
       syncMode: 'incremental',
       rootTag: root?.tagName?.toLowerCase?.() || '',
       visualIslandCount: visualIslandCount(),
+      boundedVisualSource: domSyncDisabled(),
       roles: compact(root?.getAttribute?.('data-attune-host-roles'), 300).split(/\s+/).filter(Boolean),
     }),
   };
   sourceRuntimes[anchor.token] = api;
   runtime.__attuneComponentSmuggleSource = api;
-  if (!visualOnly) snapshot();
+  if (!domSyncDisabled()) snapshot();
   return {
     ok: true,
     connected: root.isConnected,
     visualIslandCount: visualIslandCount(),
+    boundedVisualSource: domSyncDisabled(),
     fontFaces: collectFontFaces(),
   };
 }
@@ -1424,6 +1596,24 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   };
   let decoratedMount: any = null;
   let mountBaseline: any = null;
+  const parkedByReplacementTokens = new Set<string>();
+  const parkedTargetRuntimes = new Set<any>();
+  const releaseParkedTargetRuntimes = () => {
+    for (const parkedRuntime of parkedTargetRuntimes) {
+      try { parkedRuntime.releaseAncestorReplacement?.(anchor.token); } catch {}
+    }
+    parkedTargetRuntimes.clear();
+  };
+  const parkOverlappedTargetRuntimes = (replacementMount: any) => {
+    for (const [token, targetRuntime] of Object.entries(targetRuntimes) as Array<[string, any]>) {
+      if (token === anchor.token) continue;
+      try {
+        if (targetRuntime?.parkForAncestorReplacement?.(anchor.token, replacementMount)) {
+          parkedTargetRuntimes.add(targetRuntime);
+        }
+      } catch {}
+    }
+  };
   const releaseContainedMount = () => {
     decoratedMount?.removeAttribute?.(layoutAttribute);
     decoratedMount = null;
@@ -1461,8 +1651,14 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   };
   const prepareReplacementMount = (element: any) => {
     if (!replacing || !element || decoratedMount === element) return;
+    releaseParkedTargetRuntimes();
     releaseContainedMount();
     decoratedMount = element;
+    // Replacing an ancestor used to hide every older smuggle nested inside it
+    // because the replacement mount itself is display:none. Park those live
+    // hosts beside the ancestor while it is replaced so independent smuggles
+    // remain visible and keep their own input/runtime state.
+    parkOverlappedTargetRuntimes(element);
     element.setAttribute(layoutAttribute, anchor.token);
     const selector = `[${layoutAttribute}=${JSON.stringify(anchor.token)}]`;
     layoutStyle.textContent = `${selector}{display:none!important;}`;
@@ -1547,6 +1743,11 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   };
   const appendHost = () => {
     if (closing) return false;
+    for (const token of parkedByReplacementTokens) {
+      if (!targetRuntimes[token]) parkedByReplacementTokens.delete(token);
+    }
+    if (parkedByReplacementTokens.size && host.isConnected) return true;
+    if (parkedByReplacementTokens.size) parkedByReplacementTokens.clear();
     if (!mount?.isConnected) {
       const resolved = resolveAnchor();
       if (resolved !== mount) {
@@ -1570,6 +1771,20 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     if (!portalHost.isConnected) doc.documentElement.appendChild(portalHost);
     layoutContainedHost();
     runtime.requestAnimationFrame(layoutContainedHost);
+    return true;
+  };
+  const parkForAncestorReplacement = (ownerToken: string, replacementMount: any) => {
+    if (!ownerToken || ownerToken === anchor.token || !host.isConnected
+      || !replacementMount?.contains?.(host)) return false;
+    const container = replacementMount.parentElement;
+    if (!container) return false;
+    parkedByReplacementTokens.add(ownerToken);
+    container.insertBefore(host, replacementMount);
+    return true;
+  };
+  const releaseAncestorReplacement = (ownerToken: string) => {
+    parkedByReplacementTokens.delete(ownerToken);
+    if (!parkedByReplacementTokens.size && !closing) appendHost();
     return true;
   };
   appendHost();
@@ -1604,6 +1819,15 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
       return;
     }
     enqueueAction({ type: 'visual-hover', position, trusted });
+  };
+  const enqueueVisualDrag = (phase: 'start' | 'move' | 'end', position: any, trusted: boolean) => {
+    const previous = actions[actions.length - 1];
+    if (phase === 'move' && previous?.type === 'visual-drag' && previous.phase === 'move') {
+      previous.position = position;
+      previous.trusted = trusted;
+      return;
+    }
+    enqueueAction({ type: 'visual-drag', phase, position, trusted });
   };
   const enqueueVisualWheel = (action: any) => {
     const previous = actions[actions.length - 1];
@@ -1735,13 +1959,37 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
   visualInput.addEventListener('blur', () => {
     if (visualRelayArmed) runtime.queueMicrotask(focusVisualRelay);
   });
+  let visualPointerState: {
+    pointerId?: number;
+    startX: number;
+    startY: number;
+    startPosition: any;
+    clickCount: number;
+    dragging: boolean;
+  } | null = null;
   visualViewport.addEventListener('pointermove', (event: any) => {
+    if (visualPointerState
+      && (visualPointerState.pointerId === undefined || visualPointerState.pointerId === event.pointerId)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const position = visualPosition(event);
+      if (!position) return;
+      const deltaX = (Number(event.clientX) || 0) - visualPointerState.startX;
+      const deltaY = (Number(event.clientY) || 0) - visualPointerState.startY;
+      if (!visualPointerState.dragging && Math.hypot(deltaX, deltaY) >= 4) {
+        visualPointerState.dragging = true;
+        enqueueVisualDrag('start', visualPointerState.startPosition, event.isTrusted);
+      }
+      if (visualPointerState.dragging) enqueueVisualDrag('move', position, event.isTrusted);
+      return;
+    }
     event.stopPropagation();
     const position = visualPosition(event);
     if (position) enqueueVisualHover(position, event.isTrusted);
   }, true);
   visualViewport.addEventListener('pointerleave', (event: any) => {
     event.stopPropagation();
+    if (visualPointerState) return;
     enqueueVisualHover(null, event.isTrusted);
   }, true);
   visualViewport.addEventListener('wheel', (event: any) => {
@@ -1773,14 +2021,34 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     focusVisualRelay();
     const position = visualPosition(event);
     if (!position) return;
-    enqueueAction({
-      type: 'visual-click',
-      trusted: event.isTrusted,
-      position,
+    visualPointerState = {
+      pointerId: Number.isFinite(event.pointerId) ? event.pointerId : undefined,
+      startX: Number(event.clientX) || 0,
+      startY: Number(event.clientY) || 0,
+      startPosition: position,
       clickCount: Math.max(1, Number(event.detail) || 1),
-    });
+      dragging: false,
+    };
+    try { visualViewport.setPointerCapture?.(event.pointerId); } catch {}
   }, true);
-  for (const eventName of ['pointerup', 'click']) visualViewport.addEventListener(eventName, (event: any) => {
+  const finishVisualPointer = (event: any, cancelled = false) => {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    focusVisualRelay();
+    const state = visualPointerState;
+    if (!state || (state.pointerId !== undefined && state.pointerId !== event.pointerId)) return;
+    const position = visualPosition(event) || state.startPosition;
+    if (state.dragging) enqueueVisualDrag('end', position, event.isTrusted);
+    else if (!cancelled) enqueueAction({
+      type: 'visual-click', trusted: event.isTrusted, position,
+      clickCount: state.clickCount,
+    });
+    try { visualViewport.releasePointerCapture?.(event.pointerId); } catch {}
+    visualPointerState = null;
+  };
+  visualViewport.addEventListener('pointerup', (event: any) => finishVisualPointer(event), true);
+  visualViewport.addEventListener('pointercancel', (event: any) => finishVisualPointer(event, true), true);
+  visualViewport.addEventListener('click', (event: any) => {
     event.preventDefault();
     event.stopImmediatePropagation();
     focusVisualRelay();
@@ -2719,6 +2987,7 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     host.remove();
     portalHost.remove();
     releaseContainedMount();
+    releaseParkedTargetRuntimes();
     layoutStyle.remove();
     fontStyle.remove();
     try { mount?.removeAttribute?.('data-attune-smuggle-anchor'); } catch {}
@@ -2735,6 +3004,8 @@ function runComponentSmuggleTarget(anchor: ComponentSmuggleAnchor) {
     resizeTo,
     resetSize,
     scrollView: scrollLocalView,
+    parkForAncestorReplacement,
+    releaseAncestorReplacement,
     isResizing: () => Boolean(resizeState),
     isManipulating: () => Boolean(resizeState || dragState),
     canDrag: () => {
@@ -2893,6 +3164,22 @@ export class CdpPageClient implements ComponentSmugglePageClient {
     await this.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 });
   }
 
+  async drag(phase: 'start' | 'move' | 'end', x: number, y: number): Promise<void> {
+    if (phase === 'start') {
+      await this.send('Input.dispatchMouseEvent', {
+        type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1, pointerType: 'mouse',
+      });
+    } else if (phase === 'move') {
+      await this.send('Input.dispatchMouseEvent', {
+        type: 'mouseMoved', x, y, button: 'left', buttons: 1, pointerType: 'mouse',
+      });
+    } else {
+      await this.send('Input.dispatchMouseEvent', {
+        type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1, pointerType: 'mouse',
+      });
+    }
+  }
+
   async move(x: number, y: number): Promise<void> {
     await this.send('Input.dispatchMouseEvent', {
       type: 'mouseMoved', x, y, button: 'none', buttons: 0, pointerType: 'mouse',
@@ -3036,6 +3323,9 @@ export class ComponentSmuggleBridge {
   private visualStatsStartedAt = 0;
   private lastVisualStatsAt = 0;
   private lastVisualInteractionPosition: { xRatio?: number; yRatio?: number } | null = null;
+  private lastSourceVisibilityWakeAt = 0;
+  private sourceVisibilityWakeRunning = false;
+  private readonly wakeSourcePage?: () => Promise<unknown>;
   private readonly adaptiveCaptureEnabled: boolean;
   private readonly runtimeMaintenanceEnabled: boolean;
   private renderMode: 'dom-twin' | 'hybrid' | 'visual' = 'dom-twin';
@@ -3056,10 +3346,12 @@ export class ComponentSmuggleBridge {
       targetVisual?: ComponentSmugglePageClient;
       adaptiveCapture?: boolean;
       runtimeMaintenance?: boolean;
+      wakeSourcePage?: () => Promise<unknown>;
     } = {},
   ) {
     this.adaptiveCaptureEnabled = pageClients.adaptiveCapture !== false;
     this.runtimeMaintenanceEnabled = pageClients.runtimeMaintenance !== false;
+    this.wakeSourcePage = pageClients.wakeSourcePage;
     const hasVisualStream = Boolean(startFrameStream);
     this.sourceClient = pageClients.source
       ?? new CdpPageClient(source.webSocketDebuggerUrl, `${source.appName} source`);
@@ -3086,6 +3378,68 @@ export class ComponentSmuggleBridge {
     return `globalThis.__attuneComponentSmuggleTargets?.[${JSON.stringify(this.target.anchor.token)}]`;
   }
 
+  private async wakeHiddenSourcePage(): Promise<void> {
+    const now = Date.now();
+    if (!this.wakeSourcePage
+      || this.sourceVisibilityWakeRunning
+      || now - this.lastSourceVisibilityWakeAt < 2_500) return;
+    this.lastSourceVisibilityWakeAt = now;
+    this.sourceVisibilityWakeRunning = true;
+    this.log('source-visibility-wake-started');
+    try {
+      await this.wakeSourcePage();
+      this.log('source-visibility-wake-complete');
+    } catch (error) {
+      this.log('source-visibility-wake-error', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.sourceVisibilityWakeRunning = false;
+    }
+  }
+
+  private async reinstallSourceRuntimeForInput(): Promise<boolean> {
+    this.log('reinstalling-source-for-input');
+    const sourceResult = await this.sourceClient.evaluate(buildComponentSmuggleSourceExpression(
+      this.source.anchor,
+      Boolean(this.startFrameStream && !this.nativeStreamDisabled),
+    ));
+    if (!sourceResult?.ok) {
+      this.log('source-input-reinstall-failed', {
+        reason: sourceResult?.reason || 'source anchor unresolved',
+      });
+      return false;
+    }
+    const nextRenderMode = this.renderModeFor(Math.max(0, Number(sourceResult.visualIslandCount) || 0));
+    if (nextRenderMode !== this.renderMode) {
+      const previousRenderMode = this.renderMode;
+      this.renderMode = nextRenderMode;
+      this.log('render-mode-changed', {
+        previous: previousRenderMode,
+        next: nextRenderMode,
+        visualIslandCount: Number(sourceResult.visualIslandCount) || 0,
+      });
+    }
+    if (this.usesAdaptiveComponentCapture() || this.usesHybridVisualCapture()) {
+      this.requestVisualRefresh();
+    } else {
+      await this.ensureVisualFrameStream();
+    }
+    return true;
+  }
+
+  private async forwardSourceScroll(sourceReference: string | number[] | null, action: any): Promise<boolean> {
+    const evaluateScroll = () => this.sourceClient.evaluate(
+      `(() => { const source = ${this.sourceRuntimeReference()}; if (!source) return { runtimePresent: false, handled: false, visibilityWakeNeeded: false }; const handled = source.scrollPoint?.(${JSON.stringify(sourceReference)}, ${JSON.stringify(action.position || null)}, ${Number(action.deltaX) || 0}, ${Number(action.deltaY) || 0}, ${JSON.stringify(action)}) || false; return { runtimePresent: true, handled: Boolean(handled), visibilityWakeNeeded: Boolean(source.consumeVisibilityWakeRequest?.()) }; })()`,
+    );
+    let result = await evaluateScroll();
+    if (result?.runtimePresent === false && await this.reinstallSourceRuntimeForInput()) {
+      result = await evaluateScroll();
+    }
+    if (result?.visibilityWakeNeeded) await this.wakeHiddenSourcePage();
+    return result?.handled === true;
+  }
+
   async start(): Promise<void> {
     this.log('starting', {
       sourceApp: this.source.appName,
@@ -3109,7 +3463,7 @@ export class ComponentSmuggleBridge {
     let [sourceResult, targetResult] = await Promise.all([
       this.sourceClient.evaluate(buildComponentSmuggleSourceExpression(
         this.source.anchor,
-        false,
+        Boolean(this.startFrameStream && !this.nativeStreamDisabled),
       )),
       this.targetClient.evaluate(buildComponentSmuggleTargetExpression(this.target.anchor)),
     ]);
@@ -3123,6 +3477,7 @@ export class ComponentSmuggleBridge {
       targetConnected: targetResult.connected,
       renderMode: this.renderMode,
       visualIslandCount,
+      boundedVisualSource: Boolean(sourceResult.boundedVisualSource),
     });
     if (this.targetClient.subscribeActionSignal) {
       this.stopActionSignal = await this.targetClient.subscribeActionSignal(() => this.requestPump());
@@ -3143,6 +3498,10 @@ export class ComponentSmuggleBridge {
       this.log('visual-stream-fallback', {
         message: error instanceof Error ? error.message : String(error),
       });
+      sourceResult = await this.sourceClient.evaluate(buildComponentSmuggleSourceExpression(
+        this.source.anchor,
+        false,
+      ));
       this.renderMode = this.renderModeFor(Math.max(0, Number(sourceResult.visualIslandCount) || 0));
       await this.ensureVisualFrameStream(true);
     }
@@ -3212,11 +3571,11 @@ export class ComponentSmuggleBridge {
       this.targetClient.evaluate(`${this.targetRuntimeReference()}?.status?.() || null`),
     ]);
     let reinstalled = false;
-    if (!sourceStatus) {
+    if (!sourceStatus?.connected) {
       this.log('reinstalling-source');
       sourceStatus = await this.sourceClient.evaluate(buildComponentSmuggleSourceExpression(
         this.source.anchor,
-        false,
+        Boolean(this.startFrameStream && !this.nativeStreamDisabled),
       ));
       reinstalled = true;
     }
@@ -3232,7 +3591,7 @@ export class ComponentSmuggleBridge {
       if (previousRenderMode === 'visual' || nextRenderMode === 'visual') {
         sourceStatus = await this.sourceClient.evaluate(buildComponentSmuggleSourceExpression(
           this.source.anchor,
-          false,
+          Boolean(this.startFrameStream && !this.nativeStreamDisabled),
         ));
       }
       this.log('render-mode-changed', {
@@ -3242,7 +3601,7 @@ export class ComponentSmuggleBridge {
       });
       reinstalled = true;
     }
-    if (!targetStatus) {
+    if (!targetStatus?.connected) {
       this.log('reinstalling-target');
       await this.targetClient.evaluate(buildComponentSmuggleTargetExpression(this.target.anchor));
       reinstalled = true;
@@ -3450,6 +3809,7 @@ export class ComponentSmuggleBridge {
     if (!region?.width || !region?.height) return;
     if (!this.startFrameStream) return;
     const captureKey = [
+      region.nativeWindowId,
       region.screenX, region.screenY, region.outerWidth, region.outerHeight,
       region.contentOffsetX, region.contentOffsetY,
       region.x, region.y, region.width, region.height,
@@ -3596,7 +3956,9 @@ export class ComponentSmuggleBridge {
           return counts;
         }, {});
         const diagnosticCounts = Object.fromEntries(
-          Object.entries(actionCounts).filter(([type]) => type !== 'visual-hover' && type !== 'visual-wheel'),
+          Object.entries(actionCounts).filter(([type]) => (
+            type !== 'visual-hover' && type !== 'visual-wheel' && type !== 'visual-drag'
+          )),
         );
         if (Object.keys(diagnosticCounts).length) {
           const oldestQueuedAt = Math.min(...actions.map((action: { queuedAt?: number }) => (
@@ -3620,13 +3982,51 @@ export class ComponentSmuggleBridge {
         }
         if (action.type === 'visual-click') {
           this.lastVisualInteractionPosition = action.position || null;
-          if (this.sourceClient.clickAtComponentPosition) {
-            await this.sourceClient.clickAtComponentPosition(action.position || undefined);
-          } else {
-            const point = await this.sourceClient.evaluate(
-              `${this.sourceRuntimeReference()}?.capturePoint?.(${JSON.stringify(action.position || null)}) || null`,
-            );
-            if (point) await this.sourceClient.click(point.x, point.y);
+          try {
+            if (this.sourceClient.clickAtComponentPosition) {
+              await this.sourceClient.evaluate(
+                `${this.sourceRuntimeReference()}?.collapseSelectionAt?.(${JSON.stringify(action.position || null)}) || false`,
+              );
+              await this.sourceClient.clickAtComponentPosition(action.position || undefined);
+            } else {
+              const point = await this.sourceClient.evaluate(
+                `${this.sourceRuntimeReference()}?.capturePoint?.(${JSON.stringify(action.position || null)}) || null`,
+              );
+              if (point) await this.sourceClient.click(point.x, point.y);
+            }
+          } catch (error) {
+            const normalized = error instanceof Error ? error : new Error(String(error));
+            if (this.isTransientRendererPause(normalized)) throw normalized;
+            // A page-specific handler or unsupported leaf activation should
+            // only lose this click. Runtime maintenance can still detect a
+            // genuinely unavailable source without destroying the smuggle for
+            // an isolated input-injection failure.
+            this.log('visual-click-forward-error', {
+              message: normalized.message,
+              position: action.position || null,
+            });
+          }
+        } else if (action.type === 'visual-drag') {
+          const phase = action.phase === 'start' || action.phase === 'end' ? action.phase : 'move';
+          try {
+            if (this.sourceClient.drag) {
+              const point = await this.sourceClient.evaluate(
+                `${this.sourceRuntimeReference()}?.capturePoint?.(${JSON.stringify(action.position || null)}) || null`,
+              );
+              if (point) await this.sourceClient.drag(phase, point.x, point.y);
+            } else {
+              await this.sourceClient.evaluate(
+                `${this.sourceRuntimeReference()}?.selectionDrag?.(${JSON.stringify(phase)}, ${JSON.stringify(action.position || null)}) || false`,
+              );
+            }
+          } catch (error) {
+            const normalized = error instanceof Error ? error : new Error(String(error));
+            if (this.isTransientRendererPause(normalized)) throw normalized;
+            this.log('visual-drag-forward-error', {
+              phase,
+              message: normalized.message,
+              position: action.position || null,
+            });
           }
         } else if (action.type === 'visual-hover') {
           if (this.sourceClient.moveAtComponentPosition) {
@@ -3638,9 +4038,7 @@ export class ComponentSmuggleBridge {
             if (point) await this.sourceClient.move(point.x, point.y);
           }
         } else if (action.type === 'visual-wheel') {
-          await this.sourceClient.evaluate(
-            `${this.sourceRuntimeReference()}?.scrollPoint?.(null, ${JSON.stringify(action.position || null)}, ${Number(action.deltaX) || 0}, ${Number(action.deltaY) || 0}, ${JSON.stringify(action)}) || false`,
-          );
+          await this.forwardSourceScroll(null, action);
         } else if (action.type === 'hover') {
           const point = sourceReference
             ? await this.sourceClient.evaluate(
@@ -3651,9 +4049,7 @@ export class ComponentSmuggleBridge {
             );
           if (point) await this.sourceClient.move(point.x, point.y);
         } else if (action.type === 'wheel') {
-          await this.sourceClient.evaluate(
-            `${this.sourceRuntimeReference()}?.scrollPoint?.(${JSON.stringify(sourceReference || [])}, ${JSON.stringify(action.position || null)}, ${Number(action.deltaX) || 0}, ${Number(action.deltaY) || 0}, ${JSON.stringify(action)}) || false`,
-          );
+          await this.forwardSourceScroll(sourceReference || [], action);
         } else if (action.type === 'visual-edit' && action.trusted) {
           const handled = await this.replayVisualEdit(action);
           if (!handled) {
@@ -3665,11 +4061,21 @@ export class ComponentSmuggleBridge {
           }
         } else if (action.type === 'visual-key' && action.trusted) {
           try {
-            const focused = await this.focusSourceVisualEditable();
-            if (!focused?.ok) throw new Error('no editable source element is associated with the visual click');
+            const selectionCopy = (action.metaKey || action.ctrlKey) && action.code === 'KeyC';
+            if (!selectionCopy) {
+              const focused = await this.focusSourceVisualEditable();
+              if (!focused?.ok) throw new Error('no editable source element is associated with the visual click');
+            }
             if (action.metaKey || action.ctrlKey) {
               if (!this.forwardKeyChord) throw new Error('native key forwarding is unavailable');
-              const result = await this.forwardKeyChord(action);
+              const clipboardText = selectionCopy
+                ? await this.sourceClient.evaluate(`${this.sourceRuntimeReference()}?.selectedText?.() || ''`)
+                : '';
+              const result = await this.forwardKeyChord(
+                typeof clipboardText === 'string' && clipboardText
+                  ? { ...action, clipboardText }
+                  : action,
+              );
               this.log('visual-shortcut-forwarded', { code: action.code, result });
             } else {
               await this.sourceClient.pressKey(action.key, action.code, action);
@@ -3728,8 +4134,13 @@ export class ComponentSmuggleBridge {
         (latest: number, action: { revision?: number }) => Math.max(latest, Number(action?.revision) || 0),
         0,
       );
+      const sourceClickMayHaveOpenedSatellite = (actions || []).some((action: { type?: string }) => (
+        action.type === 'visual-click' || action.type === 'click'
+      ));
       if (latestActionRevision && (
-        this.sourceClient.pollSourceMutations !== false || replayable.length > 0
+        this.sourceClient.pollSourceMutations !== false
+        || replayable.length > 0
+        || sourceClickMayHaveOpenedSatellite
       )) {
         await this.sourceClient.evaluate(
           `${this.sourceRuntimeReference()}?.settleActions?.(${latestActionRevision}) || null`,
@@ -3744,7 +4155,8 @@ export class ComponentSmuggleBridge {
       // Take the initial snapshot, then leave the visual stream completely
       // free of Safari Apple Events traffic between explicit input commands.
       const shouldPollSourceMutations = this.sourceClient.pollSourceMutations !== false
-        || !this.initialSourceDrainCompleted;
+        || !this.initialSourceDrainCompleted
+        || sourceClickMayHaveOpenedSatellite;
       const packets = shouldPollSourceMutations
         ? await this.sourceClient.evaluate(`${this.sourceRuntimeReference()}?.drain?.() || []`)
         : [];

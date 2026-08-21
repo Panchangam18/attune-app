@@ -105,7 +105,15 @@ export class SafariAppleEventsPageClient implements ComponentSmugglePageClient {
       element.dispatchEvent(new MouseEvent('mousedown', options));
       element.dispatchEvent(new PointerEvent('pointerup', { ...options, buttons: 0 }));
       element.dispatchEvent(new MouseEvent('mouseup', { ...options, buttons: 0 }));
-      element.click();
+      // Safari does not expose HTMLElement.click() on SVGElement. Icon buttons
+      // commonly put the exact hit point on an inner <svg> or <path>, so use
+      // the nearest activatable HTML ancestor and retain an event fallback for
+      // custom controls that have no native click method.
+      const activationTarget = typeof element.click === 'function'
+        ? element
+        : element.closest?.('button,a[href],input,select,textarea,summary,[role="button"],[role="menuitem"],[role="option"],[tabindex]');
+      if (typeof activationTarget?.click === 'function') activationTarget.click();
+      else element.dispatchEvent(new MouseEvent('click', { ...options, buttons: 0 }));
       return true;
     })()`);
   }

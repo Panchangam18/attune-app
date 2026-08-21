@@ -50,7 +50,11 @@ export interface ElementPickerCancellation {
   status: 'cancelled';
 }
 
-export type ElementPickerResult = ElementPickerSelection | ElementPickerCancellation;
+export interface ElementPickerRemoveAll {
+  status: 'remove-all';
+}
+
+export type ElementPickerResult = ElementPickerSelection | ElementPickerCancellation | ElementPickerRemoveAll;
 
 export interface ElementSelectionReceipt extends ElementPickerSelection {
   schemaVersion: 1;
@@ -82,6 +86,7 @@ export function isElementPickerResult(value: unknown): value is ElementPickerRes
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<ElementPickerResult>;
   if (candidate.status === 'cancelled') return true;
+  if (candidate.status === 'remove-all') return true;
   if (candidate.status !== 'selected') return false;
   const selection = candidate as Partial<ElementPickerSelection>;
   return Array.isArray(selection.roles)
@@ -276,6 +281,9 @@ function runElementPicker(
       || isSmuggleManipulationActive()
       || (event.type === 'pointerdown' && isSmuggleDragHandle(event))
     );
+    const isSmuggleInteraction = (event: any) => (event.composedPath?.() || []).some((item: any) => (
+      item?.hasAttribute?.('data-attune-component-smuggle')
+    ));
     const smuggleHostIn = (items: any[]) => items.find((item: any) => (
       item?.getAttribute?.('data-attune-component-smuggle') === 'host'
     )) || null;
@@ -287,6 +295,15 @@ function runElementPicker(
       return (token && win.__attuneComponentSmuggleTargets?.[token])
         || win.__attuneComponentSmuggleTarget
         || null;
+    };
+    const requestCloseAllSmuggles = (trusted: boolean) => {
+      let requested = 0;
+      const runtimes = new Set(Object.values(win.__attuneComponentSmuggleTargets || {}));
+      if (win.__attuneComponentSmuggleTarget) runtimes.add(win.__attuneComponentSmuggleTarget);
+      for (const api of runtimes) {
+        if ((api as any)?.requestClose?.(trusted)) requested += 1;
+      }
+      return requested;
     };
     const rolesFor = (element: any) => clean(element?.getAttribute?.('data-attune-host-roles'), 300).split(/\s+/).filter(Boolean);
     const accessibleLabel = (element: any) => clean(
@@ -549,9 +566,12 @@ function runElementPicker(
     };
     function onPointerMove(event: any) {
       if (isSmuggleResizeInteraction(event)) return;
-      event.stopPropagation();
-      event.stopImmediatePropagation?.();
       const eventPath = event.composedPath?.() || [];
+      const smuggleInteraction = isSmuggleInteraction(event);
+      if (!smuggleInteraction) {
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+      }
       pointerSmuggleHost = smuggleHostIn(eventPath);
       const raw = pointerSmuggleHost
         || eventPath.find((item: any) => item instanceof runtime.Element && !isPickerNode(item))
@@ -586,10 +606,9 @@ function runElementPicker(
         cancel('smuggle-close');
         return;
       }
-      if (pointerSmuggleHost?.isConnected) {
-        event.preventDefault();
-        event.stopPropagation();
-        event.stopImmediatePropagation?.();
+      if (isSmuggleInteraction(event)) {
+        // Existing smuggles remain usable while the picker is open. Their own
+        // close control above and Backspace/Delete below still provide removal.
         return;
       }
       const intent = pickerOptions.mode === 'smuggle-target'
@@ -624,6 +643,12 @@ function runElementPicker(
         cancel('escape');
         return true;
       }
+      if (command === 'remove-all') {
+        requestCloseAllSmuggles(true);
+        finish({ status: 'remove-all' });
+        removeNodes();
+        return true;
+      }
       if (command !== 'up' && command !== 'down') return false;
       if (chain.length) {
         if (command === 'up') chainIndex = Math.min(chain.length - 1, chainIndex + 1);
@@ -633,6 +658,18 @@ function runElementPicker(
       return true;
     }
     function onKeyDown(event: any) {
+      if (isSmuggleInteraction(event)) return;
+      const removeAllSmuggles = (event.key === 'Backspace' || event.key === 'Delete')
+        && event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey;
+      if (removeAllSmuggles) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation?.();
+        requestCloseAllSmuggles(Boolean(event.isTrusted));
+        finish({ status: 'remove-all' });
+        removeNodes();
+        return;
+      }
       const removeSmuggle = (event.key === 'Backspace' || event.key === 'Delete')
         && pointerSmuggleHost?.isConnected
         && !event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey;
@@ -669,6 +706,7 @@ function runElementPicker(
       if (command) applyPickerCommand(command);
     }
     function onKeyUp(event: any) {
+      if (isSmuggleInteraction(event)) return;
       if (event.key !== 'Alt' || pickerOptions.mode !== 'smuggle-target') return;
       insideModifierActive = false;
       positionOverlay();
@@ -688,6 +726,7 @@ function runElementPicker(
     ];
     function blockHostEvent(event: any) {
       if (isSmuggleResizeInteraction(event)) return;
+      if (isSmuggleInteraction(event)) return;
       if (event.cancelable) event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation?.();

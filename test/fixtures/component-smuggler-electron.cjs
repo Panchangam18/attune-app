@@ -225,6 +225,44 @@ async function run() {
     throw new Error(`Cleaning one target removed its sibling: ${JSON.stringify(firstTargetSurvived)}`);
   }
 
+  const ancestorReplacementAnchor = componentSmuggleAnchor(selection({
+    intent: 'smuggle-target', placement: 'replace', roles: [], selector: '#target-row',
+    tag: 'div', label: '', text: 'Target content Second target', attributes: { id: 'target-row' },
+    ancestor: { tag: 'body', domRole: '', label: '' },
+  }), 'target-token-ancestor-replacement');
+  const ancestorReplacementInstall = await targetWindow.webContents.executeJavaScript(
+    buildComponentSmuggleTargetExpression(ancestorReplacementAnchor),
+  );
+  const nestedReplacementState = await targetWindow.webContents.executeJavaScript(`(() => {
+    const firstHost = document.querySelector('[data-attune-component-smuggle-token="target-token"]');
+    const ancestorHost = document.querySelector('[data-attune-component-smuggle-token="target-token-ancestor-replacement"]');
+    const row = document.querySelector('#target-row');
+    return {
+      installed: ${JSON.stringify(Boolean(ancestorReplacementInstall.ok))},
+      firstConnected: window.__attuneComponentSmuggleTargets?.['target-token']?.status?.().connected,
+      firstParkedOutsideHiddenAncestor: firstHost?.parentElement === document.body,
+      ancestorConnected: Boolean(ancestorHost?.isConnected),
+      rowHidden: getComputedStyle(row).display === 'none',
+    };
+  })()`);
+  if (!nestedReplacementState.installed || !nestedReplacementState.firstConnected
+    || !nestedReplacementState.firstParkedOutsideHiddenAncestor
+    || !nestedReplacementState.ancestorConnected || !nestedReplacementState.rowHidden) {
+    throw new Error(`Nested replacement hid an existing smuggle: ${JSON.stringify(nestedReplacementState)}`);
+  }
+  const nestedReplacementCleanup = await targetWindow.webContents.executeJavaScript(`(() => {
+    window.__attuneComponentSmuggleTargets['target-token-ancestor-replacement'].cleanup();
+    window.__attuneComponentSmuggleTarget = window.__attuneComponentSmuggleTargets['target-token'];
+    const firstHost = document.querySelector('[data-attune-component-smuggle-token="target-token"]');
+    return {
+      firstReturnedToMount: firstHost?.parentElement?.matches?.('[data-attune-host-roles~="fixture.target"]'),
+      rowVisible: getComputedStyle(document.querySelector('#target-row')).display !== 'none',
+    };
+  })()`);
+  if (!nestedReplacementCleanup.firstReturnedToMount || !nestedReplacementCleanup.rowVisible) {
+    throw new Error(`Nested replacement cleanup did not restore its sibling: ${JSON.stringify(nestedReplacementCleanup)}`);
+  }
+
   const replaceViewportAnchor = componentSmuggleAnchor(selection({
     intent: 'smuggle-target', placement: 'replace', roles: ['fixture.target.two'],
     selector: '[data-attune-host-roles~="fixture.target.two"]',
@@ -323,6 +361,54 @@ async function run() {
       { colSpan: 2, colspan: '2', scope: 'colgroup' },
     ]) || initial.layout.visualIsland !== 'canvas') {
     throw new Error(`Initial twin was not rendered: ${JSON.stringify(initial)}`);
+  }
+
+  const oversizedSourceAnchor = componentSmuggleAnchor(selection({
+    intent: 'smuggle-source', roles: [], selector: '#fixture-feed',
+    tag: 'div', label: 'Endless feed', text: 'Feed item',
+    attributes: { id: 'fixture-feed' }, ancestor: { tag: 'body', domRole: '', label: '' },
+  }), 'oversized-source-token');
+  await sourceWindow.webContents.executeJavaScript(`(() => {
+    const feed = document.createElement('div');
+    feed.id = 'fixture-feed';
+    feed.setAttribute('aria-label', 'Endless feed');
+    feed.style.cssText = 'height:5000px;width:300px;background:linear-gradient(white,black)';
+    for (let index = 0; index < 3; index += 1) {
+      const article = document.createElement('article');
+      article.style.height = '180px';
+      article.textContent = 'Feed item ' + index;
+      feed.appendChild(article);
+    }
+    document.body.appendChild(feed);
+    window.scrollTo(0, 0);
+  })()`);
+  const oversizedInstall = await sourceWindow.webContents.executeJavaScript(
+    buildComponentSmuggleSourceExpression(oversizedSourceAnchor, true),
+  );
+  const oversizedState = await sourceWindow.webContents.executeJavaScript(`(() => {
+    const api = window.__attuneComponentSmuggleSources['oversized-source-token'];
+    const status = api.status();
+    const packets = api.drain();
+    const region = api.captureRegion();
+    const point = api.capturePoint({ xRatio: 0.5, yRatio: 0.5 });
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+    const handled = api.scrollPoint(null, { xRatio: 0.5, yRatio: 0.5 }, 0, 120, {});
+    const visibilityWakeRequested = api.consumeVisibilityWakeRequest();
+    delete document.visibilityState;
+    const pageScrollTop = document.scrollingElement.scrollTop;
+    api.cleanup();
+    document.getElementById('fixture-feed').remove();
+    window.scrollTo(0, 0);
+    window.__attuneComponentSmuggleSource = window.__attuneComponentSmuggleSources['source-token'];
+    return { status, packetCount: packets.length, region, point, handled, visibilityWakeRequested, pageScrollTop, innerHeight };
+  })()`);
+  if (!oversizedInstall.ok || !oversizedInstall.boundedVisualSource
+    || !oversizedState.status.boundedVisualSource || oversizedState.packetCount !== 0
+    || !(oversizedState.region.height > 0) || oversizedState.region.rootHeight !== oversizedState.region.height
+    || oversizedState.region.rootHeight > oversizedState.innerHeight
+    || !(oversizedState.point.y >= 0 && oversizedState.point.y <= oversizedState.innerHeight)
+    || !oversizedState.handled || !oversizedState.visibilityWakeRequested || oversizedState.pageScrollTop <= 0) {
+    throw new Error(`Oversized visual source was not bounded to its live viewport: ${JSON.stringify({ oversizedInstall, oversizedState })}`);
   }
 
   const boundedScrollState = await sourceWindow.webContents.executeJavaScript(`(() => {
@@ -864,7 +950,11 @@ async function run() {
     const relay = portalShadow.querySelector('[data-attune-component-smuggle="input-relay"]');
     relay.__attuneIdentity = 'preserved';
     viewport.dispatchEvent(new PointerEvent('pointermove', { clientX: 200, clientY: 40, bubbles: true, composed: true }));
-    viewport.dispatchEvent(new PointerEvent('pointerdown', { button: 0, clientX: 20, clientY: 20, bubbles: true, composed: true, cancelable: true }));
+    viewport.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, button: 0, clientX: 20, clientY: 20, bubbles: true, composed: true, cancelable: true }));
+    viewport.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, button: 0, clientX: 20, clientY: 20, bubbles: true, composed: true, cancelable: true }));
+    viewport.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 2, button: 0, clientX: 80, clientY: 40, bubbles: true, composed: true, cancelable: true }));
+    viewport.dispatchEvent(new PointerEvent('pointermove', { pointerId: 2, buttons: 1, clientX: 180, clientY: 40, bubbles: true, composed: true, cancelable: true }));
+    viewport.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2, button: 0, clientX: 220, clientY: 40, bubbles: true, composed: true, cancelable: true }));
     const destinationWheelAllowed = viewport.dispatchEvent(new WheelEvent('wheel', {
       clientX: 200, clientY: 40, deltaX: 2, deltaY: 3, deltaMode: WheelEvent.DOM_DELTA_LINE,
       bubbles: true, composed: true, cancelable: true,
@@ -894,7 +984,7 @@ async function run() {
     || !visualState.interactionTwin || !visualState.interactionTwinInvisible || !visualState.interactionTwinPassive
     || !visualState.pixelsReceivePointers
     || visualState.destinationWheelAllowed
-    || visualActionTypes !== 'visual-hover,visual-click,visual-wheel,visual-key,visual-edit,visual-hover'
+    || visualActionTypes !== 'visual-hover,visual-click,visual-drag,visual-drag,visual-drag,visual-wheel,visual-key,visual-edit,visual-hover'
     || visualWheel?.deltaX !== 32 || visualWheel?.deltaY !== 48
     || !(visualState.actions[0]?.position?.xRatio > 0) || visualState.actions.at(-1)?.position !== null) {
     throw new Error(`Source-rendered capture did not preserve its input relay: ${JSON.stringify(visualState)}`);
